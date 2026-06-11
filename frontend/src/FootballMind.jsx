@@ -484,8 +484,18 @@ function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, ap
 const ROUND_LABEL = {
   round_of_32: "Round of 32", round_of_16: "Round of 16",
   quarter_final: "Quarter-Finals", semi_final: "Semi-Finals",
-  third_place: "3rd Place", final: "Final",
+  final: "Final",
 };
+const BRACKET_ORDER = ["final", "semi_final", "quarter_final", "round_of_16", "round_of_32"];
+
+/** Normalise API bracket to ordered [{round, matches}] (array or legacy object). */
+function normaliseBracket(data) {
+  if (Array.isArray(data)) {
+    return data.filter((r) => r.round !== "third_place" && r.matches?.length);
+  }
+  const b = data || {};
+  return BRACKET_ORDER.filter((k) => b[k]?.length).map((k) => ({ round: k, matches: b[k] }));
+}
 
 function BracketPanel({ apiBase, offline }) {
   const [bracket, setBracket] = useState(null);
@@ -496,8 +506,8 @@ function BracketPanel({ apiBase, offline }) {
     if (!apiBase || offline) return;
     fetch(`${apiBase}/api/bracket?comp=${c}`)
       .then((r) => r.json())
-      .then((d) => setBracket(d.bracket ?? {}))
-      .catch(() => setBracket({}));
+      .then((d) => setBracket(normaliseBracket(d.bracket)))
+      .catch(() => setBracket([]));
   }
 
   function toggle() {
@@ -506,7 +516,7 @@ function BracketPanel({ apiBase, offline }) {
     if (next && bracket === null) load(comp);
   }
 
-  const rounds = bracket ? Object.keys(bracket) : [];
+  const rounds = bracket ?? [];
 
   return (
     <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
@@ -538,13 +548,13 @@ function BracketPanel({ apiBase, offline }) {
             <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>
               No knockout matches yet — check back once the group stage finishes.
             </div>
-          ) : rounds.map((round) => (
+          ) : rounds.map(({ round, matches }) => (
             <div key={round}>
               <div className="border-t px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
                 style={{ borderColor: C.line, color: C.mute, background: C.panel2 }}>
                 {ROUND_LABEL[round] ?? round}
               </div>
-              {bracket[round].map((f, i) => (
+              {matches.map((f, i) => (
                 <div key={i} style={{ borderTop: `1px solid ${C.line}` }}>
                   <div className="flex items-center gap-3 px-4 py-2.5">
                     <span className="flex min-w-0 flex-1 items-center gap-1 text-xs" style={{ color: C.chalk }}>

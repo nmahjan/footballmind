@@ -479,8 +479,9 @@ def api_bracket():
     """Knockout bracket for a tournament. Returns rounds in order."""
     comp = request.args.get("comp", "WC")
     conn = get_conn()
-    KNOCKOUT_ORDER = ["final", "third_place", "semi_final",
-                      "quarter_final", "round_of_16", "round_of_32"]
+    # Final-first; no third-place playoff (CL doesn't have one; hide for WC too).
+    KNOCKOUT_ORDER = ["final", "semi_final", "quarter_final",
+                      "round_of_16", "round_of_32"]
     with conn.cursor() as cur:
         cur.execute(
             "SELECT m.stage, th.name AS home, ta.name AS away, "
@@ -490,7 +491,8 @@ def api_bracket():
             "JOIN competitions c ON c.id = e.competition_id "
             "JOIN teams th ON th.id = m.home_team_id "
             "JOIN teams ta ON ta.id = m.away_team_id "
-            "WHERE c.code = %s AND m.stage NOT IN ('regular_season', 'group') "
+            "WHERE c.code = %s "
+            "  AND m.stage NOT IN ('regular_season', 'group', 'third_place') "
             "ORDER BY m.match_date ASC NULLS LAST",
             (comp,))
         cols = [d[0] for d in cur.description]
@@ -502,11 +504,12 @@ def api_bracket():
         if f.get("match_date"):
             f["match_date"] = f["match_date"].isoformat()
         stage = f["stage"]
-        rounds.setdefault(stage, []).append(f)
+        if stage in rounds:
+            rounds[stage].append(f)
 
-    # return only rounds that exist, in order
-    ordered = {s: rounds[s] for s in KNOCKOUT_ORDER if rounds.get(s)}
-    return jsonify({"bracket": ordered, "comp": comp})
+    # Ordered list so clients never rely on JSON object key order
+    bracket = [{"round": s, "matches": rounds[s]} for s in KNOCKOUT_ORDER if rounds[s]]
+    return jsonify({"bracket": bracket, "comp": comp})
 
 
 @app.post("/api/analyze")
