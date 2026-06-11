@@ -387,7 +387,7 @@ function FixturesPanel({ initialWc, initialPl, onClickFixture, apiBase }) {
     setTab(code);
     if (!cache[code] && apiBase) {
       setLoading(true);
-      fetch(`${apiBase}/api/fixtures?comp=${code}&limit=8`)
+      fetch(`${apiBase}/api/fixtures?comp=${code}&limit=16`)
         .then((r) => r.json())
         .then((d) => setCache((c) => ({ ...c, [code]: d.fixtures ?? [] })))
         .catch(() => setCache((c) => ({ ...c, [code]: [] })))
@@ -414,15 +414,44 @@ function FixturesPanel({ initialWc, initialPl, onClickFixture, apiBase }) {
         </div>
       </div>
       <div>
-        {loading
-          ? <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
-          : rows.length === 0
-            ? <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>No upcoming fixtures found.</div>
-            : rows.slice(0, 6).map((f, i) => (
-                <div key={i} style={{ borderTop: i > 0 ? `1px solid ${C.line}` : "none" }}>
-                  <FixtureRow f={f} onClick={onClickFixture} />
+        {loading ? (
+          <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>No upcoming fixtures found.</div>
+        ) : (() => {
+          // Group by calendar date (UTC date string) — show all games per day, up to 4 days
+          const byDate = [];
+          const seen = new Set();
+          rows.forEach((f) => {
+            const day = f.match_date ? f.match_date.slice(0, 10) : "TBD";
+            if (!seen.has(day)) { seen.add(day); byDate.push({ day, games: [] }); }
+            byDate[byDate.length - 1].games.push(f);
+          });
+          const days = byDate.slice(0, 4);
+          return days.map(({ day, games }) => {
+            const label = day === "TBD" ? "TBD" : (() => {
+              const d = new Date(day + "T12:00:00Z");
+              const today = new Date(); today.setUTCHours(12, 0, 0, 0);
+              const diff = Math.round((d - today) / 86400000);
+              if (diff === 0) return "Today";
+              if (diff === 1) return "Tomorrow";
+              return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+            })();
+            return (
+              <div key={day}>
+                <div className="border-t px-4 py-1 text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ borderColor: C.line, background: C.panel2, color: C.mute }}>
+                  {label} · {games.length} {games.length === 1 ? "match" : "matches"}
                 </div>
-              ))}
+                {games.map((f, i) => (
+                  <div key={i} style={{ borderTop: `1px solid ${C.line}` }}>
+                    <FixtureRow f={f} onClick={onClickFixture} />
+                  </div>
+                ))}
+              </div>
+            );
+          });
+        })()}
       </div>
     </div>
   );
