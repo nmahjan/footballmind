@@ -42,3 +42,55 @@ def grade_predictions(conn):
                 (hg, ag, predicted == actual, pid))
     conn.commit()
     return len(rows)
+
+
+def link_orphan_predictions(conn):
+    """Attach match_id (and team ids) to predictions saved before linkage existed."""
+    from footballmind_mcp_predict import _resolve_team
+
+    linked = 0
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT p.id, p.session_id, p.created_at, p.home_team_id, p.away_team_id "
+            "FROM predictions p "
+            "WHERE p.match_id IS NULL AND p.was_correct IS NULL")
+        rows = cur.fetchall()
+
+        for pid, sid, created_at, home_id, away_id in rows:
+            if not home_id or not away_id:
+                cur.execute(
+                    "SELECT entities_mentioned FROM queries "
+                    "WHERE session_id = %s AND query_type = 'predict' "
+                    "  AND entities_mentioned ? 'home' "
+                    "ORDER BY abs(extract(epoch from (timestamp - %s::timestamptz))) "
+                    "LIMIT 1",
+                    (sid, created_at))
+                ent_row = cur.fetchone()
+                if not ent_row:
+                    continue
+                ent = ent_row[0]
+                try:
+                    home_id, _ = _resolve_team(cur, ent["home"])
+                    away_id, _ = _resolve_team(cur, ent["away"])
+                except ValueError:
+                    continue
+                cur.execute(
+                    "UPDATE predictions SET home_team_id = %s, away_team_id = %s "
+                    "WHERE id = %s",
+                    (home_id, away_id, pid))
+
+            cur.execute(
+                "SELECT id FROM matches "
+                "WHERE home_team_id = %s AND away_team_id = %s "
+                "ORDER BY abs(extract(epoch from (match_date - %s::timestamptz))) "
+                "LIMIT 1",
+                (home_id, away_id, created_at))
+            match_row = cur.fetchone()
+            if not match_row:
+                continue
+            cur.execute("UPDATE predictions SET match_id = %s WHERE id = %s",
+                        (match_row[0], pid))
+            linked += 1
+
+    conn.commit()
+    return linked

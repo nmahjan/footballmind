@@ -25,6 +25,7 @@ from footballmind_sync import (TokenBucket, FootballDataClient,
                                sync_scorers, sync_match_details)
 from footballmind_production import select_and_deploy
 from footballmind_seed_elo import seed_national_elo
+from footballmind_grading import grade_predictions, link_orphan_predictions
 
 # (code, name, comp_type, team_type, season)
 # football-data.org free-tier competitions available without a paid plan:
@@ -63,6 +64,9 @@ def cmd_sync(full=False):
                 print(f"[sync] {code} FAILED: {e}", file=sys.stderr)
         detail_n = sync_match_details(conn, client, limit=50 if full else 15)
         print(f"[sync] match details: {detail_n} checked")
+        linked = link_orphan_predictions(conn)
+        graded = grade_predictions(conn)
+        print(f"[sync] predictions: {linked} linked, {graded} graded")
 
 
 def cmd_seed_elo():

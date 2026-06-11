@@ -275,13 +275,16 @@ def _predict_match(conn, home_team, away_team, match_date,
             f"xG: {lam_h:.2f} – {lam_a:.2f}",
         ]
 
+        from footballmind_grading import find_fixture
+        match_id = find_fixture(cur, home_id, away_id)
+
         cur.execute(
-            "INSERT INTO predictions (session_id, expected_home_goals, "
-            " expected_away_goals, home_win_prob, draw_prob, away_win_prob, "
-            " home_advance_prob, confidence, reasoning) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (session_id, lam_h, lam_a, out["home_win_prob"], out["draw_prob"],
-             out["away_win_prob"],
+            "INSERT INTO predictions (session_id, match_id, home_team_id, away_team_id, "
+            " expected_home_goals, expected_away_goals, home_win_prob, draw_prob, "
+            " away_win_prob, home_advance_prob, confidence, reasoning) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (session_id, match_id, home_id, away_id, lam_h, lam_a,
+             out["home_win_prob"], out["draw_prob"], out["away_win_prob"],
              out["progression"]["home_advance"] if knockout else None,
              confidence, reasoning))
     conn.commit()
