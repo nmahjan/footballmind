@@ -1,0 +1,43 @@
+# FootballMind scheduled jobs. Add repo secrets: DATABASE_URL (Neon pooled),
+# FOOTBALL_DATA_API_KEY.
+name: footballmind-jobs
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"     # sync every 6 hours (offset minute avoids load spikes)
+    - cron: "30 5 * * 1"       # retrain weekly, Monday 05:30 UTC
+  workflow_dispatch:           # manual run from the Actions tab
+    inputs:
+      job:
+        description: "Which job to run"
+        type: choice
+        options: [sync, retrain]
+        default: sync
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python footballmind_migrate.py
+
+      - name: Run sync
+        if: github.event.schedule == '17 */6 * * *' || github.event.inputs.job == 'sync'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: python footballmind_jobs.py sync
+
+      - name: Run retrain
+        if: github.event.schedule == '30 5 * * 1' || github.event.inputs.job == 'retrain'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python footballmind_jobs.py retrain
