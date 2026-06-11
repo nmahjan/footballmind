@@ -1,4 +1,4 @@
-# FootballMind
+# FootballMind [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 A football intelligence app: ask about Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Champions League, or World Cup matches in plain English — get data-driven predictions with confidence intervals, form context, head-to-head history, and an optional AI-written match analysis.
 
@@ -178,3 +178,10 @@ cd frontend && npm install && npm run dev
 - **Prediction orientation matters** — stored probabilities are home/away specific. `find_fixture` links predictions to results using exact orientation.
 - **RPS not accuracy** — football outcomes are ordinal. A model that says "70% home win" when the draw happens is better than one that confidently predicts the wrong team. RPS captures this.
 - **Hybrid cold start** — data-poor teams (WC nations) blend toward Elo by design. Don't override this for international predictions.
+
+---
+
+## License
+
+GNU Affero General Public License v3.0 — see [LICENSE](LICENSE) for details.
+If you run a modified version of this software as a network service, you must publish your source code under the same license.
