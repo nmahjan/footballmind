@@ -1311,26 +1311,6 @@ function StandingsPanel({ apiBase, offline }) {
   );
 }
 
-function AccuracyPanel({ summary }) {
-  const rate = summary?.hit_rate;
-  return (
-    <div className="rounded-xl border p-4" style={{ borderColor: C.line, background: C.panel }}>
-      <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
-        How did my predictions do?
-      </div>
-      <div className="mt-3 flex items-end gap-2">
-        <span className="text-4xl font-bold tabular-nums" style={{ color: rate == null ? C.mute : C.home }}>
-          {rate == null ? "—" : pct(rate)}
-        </span>
-        <span className="mb-1 text-xs" style={{ color: C.mute }}>hit rate</span>
-      </div>
-      <div className="mt-1 text-xs" style={{ color: C.mute }}>
-        {summary?.graded ? `${summary.correct}/${summary.graded} graded` : "No graded predictions yet"}
-      </div>
-    </div>
-  );
-}
-
 // ─── Main app ─────────────────────────────────────────────────────────────
 export default function FootballMind() {
   const [sessionId] = useState(() => (crypto?.randomUUID?.() || String(Math.random())));
@@ -1341,7 +1321,6 @@ export default function FootballMind() {
   const [wcFixtures, setWcFixtures] = useState(API_BASE ? [] : DEMO_FIXTURES);
   const [plFixtures, setPlFixtures] = useState([]);
   const [groups, setGroups] = useState({});
-  const [summary, setSummary] = useState(null);
   const [offline, setOffline] = useState(!API_BASE);
   const [backendStatus, setBackendStatus] = useState(API_BASE ? "connecting" : "demo");
   const [sidebarMode, setSidebarMode] = useState("matches");
@@ -1376,11 +1355,8 @@ export default function FootballMind() {
   useEffect(() => {
     if (!API_BASE) {
       setOffline(true);
-      setSummary({ graded: 0, correct: 0, hit_rate: null });
       return;
     }
-    fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
-      .then((d) => setSummary(d.summary)).catch(() => {});
     loadSidebarData();
     // Render free tier sleeps — retry while it cold-starts
     const t1 = setTimeout(loadSidebarData, 4000);
@@ -1550,7 +1526,6 @@ export default function FootballMind() {
           <SidebarModeToggle mode={sidebarMode} setMode={setSidebarMode} />
           {sidebarMode === "matches" ? (
             <>
-              <AccuracyPanel summary={summary} />
               <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} />
               {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
               <BracketPanel apiBase={API_BASE} offline={offline} />
