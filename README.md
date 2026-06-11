@@ -1,8 +1,36 @@
 # FootballMind [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-A football intelligence app: ask about Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Champions League, or World Cup matches in plain English — get data-driven predictions with confidence intervals, form context, head-to-head history, and an optional AI-written match analysis.
+A football intelligence app: ask about Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Eredivisie, Champions League, or World Cup matches in plain English — get data-driven predictions with confidence, form context, head-to-head history, and optional AI-written match analysis.
 
-**Live:** [nmahjan.github.io/footballmind](https://nmahjan.github.io/footballmind)
+| | URL |
+|---|---|
+| **Live app** | [nmahjan.github.io/footballmind](https://nmahjan.github.io/footballmind) |
+| **API** | [football-mind.onrender.com](https://football-mind.onrender.com) |
+
+---
+
+## Features
+
+### Web app (GitHub Pages)
+
+- **Chat predictions** — type or tap a fixture: *"Predict Mexico vs USA"*
+- **Prediction cards** — W/D/L bar, form dots, H2H, xG, rule-based narrative
+- **Deep analysis** — optional Claude Haiku write-up per prediction (`/api/analyze`)
+- **Upcoming fixtures** — tabbed panel for WC, PL, La Liga, Bundesliga, Serie A, Ligue 1, CL, Eredivisie
+- **League tables** — live standings for all synced domestic leagues + CL
+- **WC group standings** — per-group tables during the tournament
+- **Tournament bracket** — knockout rounds (Final → Semi → QF → R16) for WC and CL
+- **Power rankings** — national team Elo rankings
+- **Standout players** — squad players from top teams, filterable by position
+- **Neutral venue toggle** — disable home-field advantage for WC / neutral-site games
+- **Share prediction** — copy a formatted summary to clipboard
+
+### Backend
+
+- Hybrid **Elo + Dixon-Coles** model with weekly retrain (RPS backtest)
+- football-data.org sync every 6 hours (GitHub Actions)
+- Rate-limited LLM chat (20 req/hr per IP) to protect API cost
+- **MCP server** — 7 tools for Cursor / Claude Desktop (local stdio + remote HTTP)
 
 ---
 
@@ -29,39 +57,23 @@ When enough match data exists, a time-weighted Maximum Likelihood Estimation fit
 - **Home advantage** — a global offset applied when the match is at the home team's ground
 - **ρ (rho) correction** — a small adjustment that improves accuracy for 0-0, 1-0, 0-1, and 1-1 scorelines (Dixon-Coles 1997)
 
-Recent matches are weighted more heavily using an exponential decay (half-life tuned via backtesting). This means a team's form over the last 2 months matters more than results from a year ago.
+Recent matches are weighted more heavily using an exponential decay (half-life tuned via backtesting).
 
 ### 3. Hybrid lambda model (blends Elo + Dixon-Coles)
-
-Neither model is perfect on its own:
-- Dixon-Coles is highly accurate for teams with lots of data but unreliable for teams with few matches (e.g. World Cup qualifiers)
-- Elo works for any team but can't model goal distributions directly
-
-The **Hybrid** blends the expected-goals (lambda) estimates from both:
 
 ```
 λ = credibility × λ_DixonColes + (1 − credibility) × λ_Elo
 ```
 
-`credibility` is determined by how much data the team has: data-rich club teams get full Dixon-Coles weight; WC nations with sparse records blend toward Elo. The optimal `credibility` threshold and Dixon-Coles half-life are selected by **walk-forward backtesting** using Ranked Probability Score (RPS) — a proper scoring rule for ordered outcomes (win/draw/loss).
+`credibility` is tuned by walk-forward backtesting using **Ranked Probability Score (RPS)**. Data-rich club teams get full Dixon-Coles weight; WC nations with sparse records blend toward Elo.
 
 ### 4. Poisson score matrix → probabilities
 
-Given expected goals λ_home and λ_away, the model computes the full N×N scoreline probability matrix (truncated at ~10 goals per side) using independent Poisson distributions. Summing the matrix gives:
-
-- P(home win), P(draw), P(away win)
-- For knockout stages: P(home advances), accounting for extra time and penalties via an Elo-derived edge
+Given expected goals λ_home and λ_away, the model builds a scoreline probability matrix and sums it to W/D/L (and knockout advancement probabilities).
 
 ### 5. Backtesting and deployment
 
-Each weekly retrain:
-1. Sweeps over a grid of half-life × credibility combinations
-2. Evaluates each on a held-out test window using mean RPS
-3. Retrains the best configuration on the full dataset
-4. Stores the serialised model artifact in the database (`model_artifacts` table)
-5. Marks it as the production model — `predict_match` loads it on the next request
-
-Two separate models are deployed: `production_club` and `production_international`.
+Each weekly retrain sweeps half-life × credibility, picks the best RPS, retrains on all data, and stores the artifact in `model_artifacts`. Two models deploy: `production_club` and `production_international`.
 
 ---
 
@@ -71,37 +83,74 @@ Two separate models are deployed: `production_club` and `production_internationa
 football-data.org API
         │
         ▼
-footballmind_sync.py   ← rate-limited ingestion (10 req/min TokenBucket)
+footballmind_sync.py          ← rate-limited ingestion (10 req/min)
         │  upserts teams, matches, players, squads
         ▼
 PostgreSQL (Neon)
         │
-        ├── apply_pending_ratings  ← Elo updates, sequential, exactly once
-        │
-        ├── footballmind_backtest.py   ← walk-forward RPS sweep
-        │
-        └── footballmind_production.py ← select best, retrain, store artifact
+        ├── apply_pending_ratings       ← Elo, sequential, exactly once
+        ├── footballmind_backtest.py    ← walk-forward RPS sweep
+        └── footballmind_production.py  ← select best, retrain, store artifact
                 │
                 ▼
-        model_artifacts (JSONB blob in DB)
+        model_artifacts (JSONB)
                 │
                 ▼
-footballmind_mcp_predict.py   ← load_hybrid → predict_match
+footballmind_mcp_predict.py     ← load_hybrid → predict_match
+        │
+        ├──────────────────────────────────────┐
+        ▼                                      ▼
+footballmind_asgi.py (Render)            server.py (local MCP, stdio)
+  ├── /api/*  Flask REST                   7 MCP tools
+  └── /mcp    streamable-http              (Cursor / Claude Desktop)
         │
         ▼
-footballmind_app.py (Flask on Render)
-        │
-        ├── POST /api/chat       ← rule-based intent → LLM fallback
-        ├── POST /api/predict
-        ├── POST /api/analyze    ← Claude Haiku match analysis
-        ├── GET  /api/standings
-        ├── GET  /api/fixtures
-        ├── GET  /api/groups
-        ├── GET  /api/rankings
-        └── GET  /api/bracket
-                │
-                ▼
-frontend/ (Vite + React → GitHub Pages)
+frontend/  (Vite + React → GitHub Pages)
+```
+
+### REST API (`/api/*`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Liveness probe |
+| POST | `/api/predict` | Direct match prediction |
+| POST | `/api/chat` | Intent router + LLM fallback (rate-limited) |
+| POST | `/api/analyze` | Claude match analysis (rate-limited) |
+| GET | `/api/standings?comp=PL` | League table |
+| GET | `/api/fixtures?comp=WC` | Upcoming fixtures |
+| GET | `/api/groups?comp=WC` | Tournament group standings |
+| GET | `/api/bracket?comp=CL` | Knockout bracket |
+| GET | `/api/rankings?comp=WC` | National Elo power rankings |
+| GET | `/api/standouts?comp=WC` | Notable squad players |
+| GET | `/api/predictions` | Graded prediction history + hit rate |
+
+Shared query logic lives in `footballmind_services.py` (used by both Flask and MCP).
+
+---
+
+## Project structure
+
+```
+footballmind/
+├── frontend/                  # Vite + React UI (GitHub Pages)
+├── migrations/                # Ordered SQL schema migrations
+├── scripts/
+│   └── setup_cursor_mcp.py    # Wire ~/.cursor/mcp.json from .env
+├── server.py                  # MCP server (stdio / streamable-http)
+├── footballmind_asgi.py       # Combined REST + MCP for Render
+├── footballmind_app.py        # Flask REST API
+├── footballmind_services.py   # Shared read/query helpers
+├── footballmind_mcp_predict.py
+├── footballmind_sync.py       # football-data.org ingestion
+├── footballmind_jobs.py       # CLI: sync, retrain, seed-elo
+├── footballmind_elo.py
+├── footballmind_dixoncoles.py
+├── footballmind_predict.py
+├── footballmind_production.py
+├── footballmind_backtest.py
+├── footballmind_llm.py        # LiteLLM / Claude gateway
+├── render.yaml                # Render deploy config
+└── mcp.json.example           # Cursor MCP config template
 ```
 
 ---
@@ -119,6 +168,8 @@ frontend/ (Vite + React → GitHub Pages)
 | DED  | Eredivisie | Club |
 | WC   | FIFA World Cup | National |
 
+Run a full backfill after adding a league: **GitHub Actions → footballmind-jobs → sync → check "Full season backfill".**
+
 ---
 
 ## Quick start (local)
@@ -128,34 +179,29 @@ cd footballmind
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Copy and fill in credentials
-cp .env.example .env
+cp .env.example .env   # fill in DATABASE_URL, API keys
 
-# Apply database schema
 python footballmind_migrate.py
-
-# Pull data + seed national Elo ratings
 python footballmind_jobs.py sync --full
 python footballmind_jobs.py seed-elo
-
-# Train models
 python footballmind_jobs.py retrain
 
-# Start the API (REST only)
-flask --app footballmind_app run
+# REST API only
+flask --app footballmind_app run --port 5000
 
-# Or: REST + remote MCP on http://127.0.0.1:8000/mcp
+# REST + MCP (matches Render locally)
 uvicorn footballmind_asgi:app --reload --port 8000
 
-# MCP server only (stdio — used by Cursor locally)
-python server.py
+# Frontend
+cd frontend && cp .env.example .env   # VITE_API_BASE=http://127.0.0.1:8000
+npm install && npm run dev
 ```
 
 ---
 
 ## MCP server (Cursor / Claude Desktop)
 
-FootballMind exposes **7 MCP tools** via `server.py`:
+FootballMind is an **MCP server** — agents can call football tools directly instead of going through the web UI.
 
 | Tool | What it does |
 |------|----------------|
@@ -169,21 +215,20 @@ FootballMind exposes **7 MCP tools** via `server.py`:
 
 ### Local (stdio)
 
-1. Copy `mcp.json.example` → edit paths, or run:
-   ```bash
-   python scripts/setup_cursor_mcp.py
-   ```
-2. Restart Cursor. You should see **footballmind** under MCP servers.
+```bash
+python scripts/setup_cursor_mcp.py   # writes ~/.cursor/mcp.json from .env
+```
+
+Restart Cursor — you should see **footballmind** under MCP servers.
+
+Or copy `mcp.json.example` and set paths + `DATABASE_URL` manually.
 
 ### Remote (HTTP on Render)
 
-The combined ASGI app (`footballmind_asgi.py`) serves:
-- Flask REST API at `/`
-- MCP streamable-http at `/mcp`
+The combined ASGI app serves MCP at `/mcp` alongside the existing REST API. **The website is unaffected** — same `/api/*` routes, same env vars; only the process wrapper changes from gunicorn to uvicorn.
 
-1. Generate a key: `openssl rand -hex 24`
-2. Add `MCP_API_KEY=<that key>` to Render env vars (same service as the API)
-3. Add to `~/.cursor/mcp.json`:
+1. `openssl rand -hex 24` → set as `MCP_API_KEY` on Render
+2. Add the same key to `~/.cursor/mcp.json`:
    ```json
    "footballmind-remote": {
      "type": "http",
@@ -191,7 +236,11 @@ The combined ASGI app (`footballmind_asgi.py`) serves:
      "headers": { "Authorization": "Bearer YOUR_MCP_API_KEY" }
    }
    ```
-4. Redeploy Render (start command: `uvicorn footballmind_asgi:app --host 0.0.0.0 --port $PORT`)
+3. Ensure Render **Start Command** is:
+   ```
+   uvicorn footballmind_asgi:app --host 0.0.0.0 --port $PORT
+   ```
+4. Verify: `curl https://football-mind.onrender.com/api/health`
 
 ---
 
@@ -199,9 +248,9 @@ The combined ASGI app (`footballmind_asgi.py`) serves:
 
 | Layer | Service | Notes |
 |-------|---------|-------|
-| Database | Neon (free tier) | Persistent, scale-to-zero, pooled connection |
-| Backend API + MCP | Render (free web service) | `uvicorn footballmind_asgi:app` — REST at `/`, MCP at `/mcp` |
-| Frontend | GitHub Pages | Static Vite build, auto-deployed on push to main |
+| Database | [Neon](https://neon.tech) (free tier) | Pooled connection string for `DATABASE_URL` |
+| Backend + MCP | [Render](https://render.com) (free web service) | `uvicorn footballmind_asgi:app` |
+| Frontend | GitHub Pages | Auto-deployed on push to `main` via `.github/workflows/pages.yml` |
 | Scheduled jobs | GitHub Actions | Sync every 6h, retrain Monday 05:30 UTC |
 
 ### Environment variables
@@ -209,21 +258,33 @@ The combined ASGI app (`footballmind_asgi.py`) serves:
 | Variable | Where | Purpose |
 |----------|-------|---------|
 | `DATABASE_URL` | Render + Actions secret | Neon pooled connection string |
-| `MCP_API_KEY` | Render + local `.env` | Bearer token for remote MCP at `/mcp` |
+| `MCP_API_KEY` | Render + local `.env` | Bearer token for remote MCP at `/mcp` (optional for website) |
 | `FOOTBALL_DATA_API_KEY` | Actions secret | football-data.org API key |
-| `ANTHROPIC_API_KEY` | Render env var | Claude API key (optional — enables LLM chat + deep analysis) |
-| `FRONTEND_ORIGIN` | Render env var | GitHub Pages URL for CORS (or `*` for open access) |
-| `VITE_API_BASE` | GitHub Pages variable | Points frontend at the Render backend URL |
+| `ANTHROPIC_API_KEY` | Render env var | Claude API (LLM chat + deep analysis) |
+| `FRONTEND_ORIGIN` | Render env var | GitHub Pages URL for CORS (or `*`) |
+| `VITE_API_BASE` | GitHub Pages repo variable | `https://football-mind.onrender.com` |
+
+**Never commit `.env` or put secrets in `VITE_*` vars** — those are baked into the public frontend bundle.
+
+### Render checklist (existing service)
+
+If you already have a Render web service, updating does **not** break the site:
+
+- [ ] Push latest `main` (triggers auto-deploy)
+- [ ] Update **Start Command** to `uvicorn footballmind_asgi:app --host 0.0.0.0 --port $PORT`
+- [ ] Add `MCP_API_KEY` (optional — only secures `/mcp`)
+- [ ] Confirm `/api/health` returns `{"status":"ok"}` after deploy
 
 ---
 
 ## Key design decisions
 
-- **Elo is sequential and non-idempotent** — `apply_pending_ratings` selects only matches with no entry in `rating_history` yet, ordered by date. Never bypass this.
-- **Clubs and nations are separate ladders** — they never play each other; don't fit one Dixon-Coles across both.
-- **Prediction orientation matters** — stored probabilities are home/away specific. `find_fixture` links predictions to results using exact orientation.
-- **RPS not accuracy** — football outcomes are ordinal. A model that says "70% home win" when the draw happens is better than one that confidently predicts the wrong team. RPS captures this.
-- **Hybrid cold start** — data-poor teams (WC nations) blend toward Elo by design. Don't override this for international predictions.
+- **Elo is sequential and non-idempotent** — only `apply_pending_ratings` may update ratings; never bypass the `rating_history` ledger.
+- **Clubs and nations are separate ladders** — never fit one Dixon-Coles across both.
+- **Prediction orientation matters** — stored probabilities are home/away specific.
+- **RPS not accuracy** — football outcomes are ordinal; RPS is the proper scoring rule.
+- **Hybrid cold start** — data-poor WC teams blend toward Elo by design.
+- **Three interfaces, one brain** — Flask REST, MCP tools, and LiteLLM function-calling all call the same `_predict_match` / `footballmind_services` functions.
 
 ---
 
