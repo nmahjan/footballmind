@@ -51,6 +51,7 @@ const LEAGUES = [
   { code: "SA",  label: "Serie A",         short: "Serie A" },
   { code: "FL1", label: "Ligue 1",         short: "Ligue 1" },
   { code: "CL",  label: "Champions League", short: "CL"  },
+  { code: "DED", label: "Eredivisie",      short: "Eredivisie" },
 ];
 
 // ─── Suggestion chips ─────────────────────────────────────────────────────
