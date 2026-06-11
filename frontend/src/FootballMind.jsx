@@ -90,6 +90,28 @@ function fmtDate(iso) {
     + " " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Local calendar date YYYY-MM-DD — matches what fmtDate shows to the user. */
+function localDayKey(iso) {
+  if (!iso) return "TBD";
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function dayHeaderLabel(dayKey) {
+  if (dayKey === "TBD") return "TBD";
+  const [y, m, d] = dayKey.split("-").map(Number);
+  const target = new Date(y, m - 1, d);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((target - today) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return target.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
 // Demo data — only used when VITE_API_BASE is empty (local preview).
 const DEMO_FIXTURES = [
   { home: "Mexico", away: "South Africa", match_date: "2026-06-11T19:00:00Z", stage: "group" },
@@ -427,24 +449,18 @@ function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, ap
         ) : rows.length === 0 ? (
           <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>No upcoming fixtures found.</div>
         ) : (() => {
-          // Group by calendar date (UTC date string) — show all games per day, up to 4 days
+          // Group by local calendar date (same timezone as fmtDate), up to 4 days
           const byDate = [];
           const seen = new Set();
-          rows.forEach((f) => {
-            const day = f.match_date ? f.match_date.slice(0, 10) : "TBD";
-            if (!seen.has(day)) { seen.add(day); byDate.push({ day, games: [] }); }
-            byDate[byDate.length - 1].games.push(f);
-          });
+          [...rows].sort((a, b) => (a.match_date || "").localeCompare(b.match_date || ""))
+            .forEach((f) => {
+              const day = localDayKey(f.match_date);
+              if (!seen.has(day)) { seen.add(day); byDate.push({ day, games: [] }); }
+              byDate[byDate.length - 1].games.push(f);
+            });
           const days = byDate.slice(0, 4);
           return days.map(({ day, games }) => {
-            const label = day === "TBD" ? "TBD" : (() => {
-              const d = new Date(day + "T12:00:00Z");
-              const today = new Date(); today.setUTCHours(12, 0, 0, 0);
-              const diff = Math.round((d - today) / 86400000);
-              if (diff === 0) return "Today";
-              if (diff === 1) return "Tomorrow";
-              return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-            })();
+            const label = dayHeaderLabel(day);
             return (
               <div key={day}>
                 <div className="border-t px-4 py-1 text-[10px] font-semibold uppercase tracking-wider"
