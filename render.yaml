@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: footballmind
+    runtime: python
+    buildCommand: pip install --timeout 120 --retries 5 -r requirements.txt
+    startCommand: gunicorn footballmind_app:app
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FOOTBALL_DATA_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
