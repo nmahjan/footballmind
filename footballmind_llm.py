@@ -66,8 +66,61 @@ TOOLS = [
 ]
 
 
+ANALYZE_MODEL = os.environ.get("FOOTBALLMIND_ANALYZE_MODEL",
+                               "anthropic/claude-haiku-3-5")  # cheaper for on-demand
+
+
 def is_configured() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def analyze_match(home: str, away: str, prediction: dict) -> str:
+    """Generate a broadcast-style 3–4 sentence match analysis using Claude.
+
+    Uses claude-haiku for cost efficiency (roughly $0.0003 per call).
+    The prediction dict must include home_elo, away_elo, home_xg, away_xg,
+    home_form, away_form, h2h, home_win_prob, draw_prob, away_win_prob.
+    """
+    import litellm
+
+    def form_str(f):
+        return " ".join(f) if f else "unknown"
+
+    h2h = prediction.get("h2h") or {}
+    h2h_line = (f"{h2h.get('home_wins', 0)}W "
+                f"{h2h.get('draws', 0)}D "
+                f"{h2h.get('away_wins', 0)}L for {home} "
+                f"in last {h2h.get('played', 0)} meetings"
+                if h2h.get("played") else "no historical data")
+
+    venue = "neutral venue" if prediction.get("neutral") else f"{home}'s home ground"
+
+    prompt = (
+        f"You are a sharp football analyst writing for a match preview. "
+        f"Write exactly 3–4 sentences in broadcast style explaining why "
+        f"**{prediction['prediction']}** is the expected outcome for "
+        f"**{home} vs {away}**. Use the stats below — be specific but punchy. "
+        f"Do NOT repeat the numbers verbatim; weave them into the narrative.\n\n"
+        f"Stats:\n"
+        f"- Elo ratings: {home} {prediction.get('home_elo', '?')} / "
+        f"{away} {prediction.get('away_elo', '?')}\n"
+        f"- Expected goals: {home} {prediction.get('home_xg', '?')} – "
+        f"{away} {prediction.get('away_xg', '?')}\n"
+        f"- Win probabilities: {home} {round(prediction['home_win_prob']*100)}% · "
+        f"Draw {round(prediction['draw_prob']*100)}% · "
+        f"{away} {round(prediction['away_win_prob']*100)}%\n"
+        f"- {home} last 5: {form_str(prediction.get('home_form'))}\n"
+        f"- {away} last 5: {form_str(prediction.get('away_form'))}\n"
+        f"- Head to head: {h2h_line}\n"
+        f"- Venue: {venue}\n"
+    )
+
+    resp = litellm.completion(
+        model=ANALYZE_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=250,
+    )
+    return (resp.choices[0].message.content or "").strip()
 
 
 def _run_tool(conn, name, args, session_id):

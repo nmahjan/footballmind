@@ -49,6 +49,86 @@ def _resolve_team(cur, name: str):
     raise ValueError(f"Unknown team: {name!r}")
 
 
+def _build_narrative(home, away, home_elo, away_elo, lam_h, lam_a,
+                     home_form, away_form, h2h, neutral) -> str:
+    """Generate a broadcast-style one-paragraph explanation."""
+    parts = []
+
+    # --- Rating edge ---
+    gap = home_elo - away_elo
+    if abs(gap) < 40:
+        parts.append(f"{home} and {away} are closely matched on current ratings "
+                     f"({home_elo:.0f} vs {away_elo:.0f})")
+    elif gap > 250:
+        parts.append(f"{home} are the heavy favourites, rated {gap:.0f} points "
+                     f"above {away} ({home_elo:.0f} vs {away_elo:.0f})")
+    elif gap > 0:
+        parts.append(f"{home} hold a {gap:.0f}-point rating edge over {away} "
+                     f"({home_elo:.0f} vs {away_elo:.0f})")
+    elif gap < -250:
+        parts.append(f"{away} are the heavy favourites, rated {-gap:.0f} points "
+                     f"above {home} ({away_elo:.0f} vs {home_elo:.0f})")
+    else:
+        parts.append(f"{away} carry a {-gap:.0f}-point rating advantage "
+                     f"({away_elo:.0f} vs {home_elo:.0f})")
+
+    # --- xG / attacking model ---
+    if lam_h > lam_a * 1.6:
+        parts.append(f"the model expects a dominant attacking display from {home} "
+                     f"(xG {lam_h:.2f} vs {lam_a:.2f})")
+    elif lam_a > lam_h * 1.6:
+        parts.append(f"the model gives {away} a clear attacking edge "
+                     f"(xG {lam_h:.2f} vs {lam_a:.2f})")
+    else:
+        parts.append(f"both sides are expected to find the net "
+                     f"(xG {lam_h:.2f}–{lam_a:.2f})")
+
+    # --- Form ---
+    def _form_phrase(team, form):
+        if not form:
+            return None
+        wins = form.count("W")
+        losses = form.count("L")
+        seq = " ".join(form)
+        if wins >= 4:
+            return f"{team} arrive in excellent form ({seq})"
+        if wins == 3:
+            return f"{team} have been solid recently ({seq})"
+        if losses >= 3:
+            return f"{team} have been struggling ({seq})"
+        if losses >= 2 and wins <= 1:
+            return f"{team} come in on the back of a difficult run ({seq})"
+        return None
+
+    h_phrase = _form_phrase(home, home_form)
+    a_phrase = _form_phrase(away, away_form)
+    if h_phrase and a_phrase:
+        parts.append(h_phrase + ", while " + a_phrase[0].lower() + a_phrase[1:])
+    elif h_phrase:
+        parts.append(h_phrase)
+    elif a_phrase:
+        parts.append(a_phrase)
+
+    # --- H2H ---
+    if h2h and h2h.get("played", 0) >= 3:
+        hw, d, aw, pl = h2h["home_wins"], h2h["draws"], h2h["away_wins"], h2h["played"]
+        if hw > aw + 1:
+            parts.append(f"historically {home} have dominated this fixture, "
+                         f"winning {hw} of the last {pl} meetings")
+        elif aw > hw + 1:
+            parts.append(f"historically {away} have the better of this matchup, "
+                         f"winning {aw} of the last {pl} meetings")
+
+    # --- Venue ---
+    if not neutral:
+        parts.append(f"home advantage gives {home} an additional boost")
+
+    # Join into one flowing sentence chain
+    if len(parts) == 1:
+        return parts[0].capitalize() + "."
+    return parts[0].capitalize() + "; " + "; ".join(parts[1:]) + "."
+
+
 def _current_rating(cur, team_id: int) -> float:
     cur.execute("SELECT rating FROM team_ratings WHERE team_id = %s", (team_id,))
     row = cur.fetchone()
@@ -146,18 +226,18 @@ def _predict_match(conn, home_team, away_team, match_date,
             label = max(probs, key=probs.get)
             confidence = probs[label]
 
-        reasoning = (f"{home_team} rated {home_elo:.0f} vs {away_team} {away_elo:.0f}"
-                     f"{'' if neutral else ' (+home edge)'}; "
-                     f"expected goals {lam_h:.2f}-{lam_a:.2f}.")
-        key_factors = [
-            f"Rating gap: {home_elo - away_elo:+.0f}",
-            "Neutral venue" if neutral else "Home advantage applied",
-            f"xG: {lam_h:.2f} - {lam_a:.2f}",
-        ]
-
         home_form = _team_form(cur, home_id)
         away_form = _team_form(cur, away_id)
         h2h = _head_to_head(cur, home_id, away_id)
+
+        # Replace terse numeric string with full narrative
+        reasoning = _build_narrative(home_team, away_team, home_elo, away_elo,
+                                     lam_h, lam_a, home_form, away_form, h2h, neutral)
+        key_factors = [
+            f"Rating gap: {home_elo - away_elo:+.0f}",
+            "Neutral venue" if neutral else "Home advantage applied",
+            f"xG: {lam_h:.2f} – {lam_a:.2f}",
+        ]
 
         cur.execute(
             "INSERT INTO predictions (session_id, expected_home_goals, "
@@ -182,6 +262,12 @@ def _predict_match(conn, home_team, away_team, match_date,
         "home_form":     home_form,
         "away_form":     away_form,
         "h2h":           h2h,
+        # expose raw numbers so /api/analyze can pass them to Claude
+        "home_elo":      round(home_elo),
+        "away_elo":      round(away_elo),
+        "home_xg":       round(lam_h, 2),
+        "away_xg":       round(lam_a, 2),
+        "neutral":       neutral,
     }
 
 

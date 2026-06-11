@@ -169,6 +169,9 @@ function FormDots({ results, label }) {
 function PredictionCard({ p, home, away }) {
   const color = outcomeColor(p.prediction, home, away);
   const [copied, setCopied] = useState(false);
+  const [analysis, setAnalysis] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState(null);
 
   function share() {
     const txt = `${flag(home)}${home} ${pct(p.home_win_prob)} · Draw ${pct(p.draw_prob)} · ${flag(away)}${away} ${pct(p.away_win_prob)}\nPrediction: ${p.prediction} (${pct(p.confidence)} confidence)\nvia FootballMind`;
@@ -176,6 +179,25 @@ function PredictionCard({ p, home, away }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  }
+
+  async function analyze() {
+    if (analyzing || analysis) return;
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/analyze`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ home, away, prediction: p }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setAnalysis(data.analysis);
+    } catch (e) {
+      setAnalyzeError(e.message || "Analysis unavailable");
+    } finally {
+      setAnalyzing(false);
+    }
   }
 
   const h2h = p.h2h;
@@ -232,6 +254,31 @@ function PredictionCard({ p, home, away }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {/* AI analysis section */}
+      {!analysis && !analyzeError && API_BASE && (
+        <button onClick={analyze} disabled={analyzing}
+          className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border py-1.5 text-xs font-medium transition-opacity hover:opacity-70 disabled:opacity-40"
+          style={{ borderColor: C.line, color: C.mute }}>
+          {analyzing
+            ? <><span className="animate-spin">⟳</span> Analyzing match…</>
+            : <>✨ Deep analysis</>}
+        </button>
+      )}
+      {analysis && (
+        <div className="mt-3 rounded-lg border-l-2 pl-3 pr-2 py-2.5 text-xs leading-relaxed"
+          style={{ borderColor: color, background: C.panel2, color: C.chalk }}>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+            ✨ AI Analysis
+          </div>
+          {analysis}
+        </div>
+      )}
+      {analyzeError && (
+        <div className="mt-2 text-[11px]" style={{ color: C.away }}>
+          {analyzeError}
+        </div>
       )}
     </div>
   );

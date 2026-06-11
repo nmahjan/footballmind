@@ -420,6 +420,26 @@ def api_rankings():
     return jsonify({"rankings": rankings, "comp": comp})
 
 
+@app.post("/api/analyze")
+@limiter.limit("10 per hour")   # stricter: each call hits Claude
+def api_analyze():
+    """Generate a Claude-written match analysis for a prediction already made."""
+    data = request.get_json(force=True) or {}
+    home = data.get("home")
+    away = data.get("away")
+    prediction = data.get("prediction")
+    if not home or not away or not prediction:
+        return jsonify({"error": "home, away, and prediction are required"}), 400
+    import footballmind_llm
+    if not footballmind_llm.is_configured():
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured on the server"}), 503
+    try:
+        analysis = footballmind_llm.analyze_match(home, away, prediction)
+    except Exception as e:
+        return jsonify({"error": f"Analysis failed: {e}"}), 500
+    return jsonify({"analysis": analysis})
+
+
 @app.get("/api/health")
 @limiter.exempt
 def health():
