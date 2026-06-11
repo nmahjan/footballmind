@@ -426,8 +426,8 @@ def api_bracket():
     """Knockout bracket for a tournament. Returns rounds in order."""
     comp = request.args.get("comp", "WC")
     conn = get_conn()
-    KNOCKOUT_ORDER = ["round_of_32", "round_of_16", "quarter_final",
-                      "semi_final", "third_place", "final"]
+    KNOCKOUT_ORDER = ["final", "third_place", "semi_final",
+                      "quarter_final", "round_of_16", "round_of_32"]
     with conn.cursor() as cur:
         cur.execute(
             "SELECT m.stage, th.name AS home, ta.name AS away, "
