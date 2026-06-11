@@ -21,7 +21,8 @@ from datetime import date, timedelta
 
 from footballmind_db import get_connection
 from footballmind_sync import (TokenBucket, FootballDataClient,
-                               sync_competition, sync_teams_and_squads)
+                               sync_competition, sync_teams_and_squads,
+                               sync_scorers, sync_match_details)
 from footballmind_production import select_and_deploy
 from footballmind_seed_elo import seed_national_elo
 
@@ -56,9 +57,12 @@ def cmd_sync(full=False):
                 sync_competition(conn, client, code, name, ctype, season,
                                  team_type=team_type, since=since)
                 n = sync_teams_and_squads(conn, client, code, team_type=team_type)
-                print(f"[sync] {code} ok ({n} squads)")
+                ns = sync_scorers(conn, client, code, season, team_type=team_type)
+                print(f"[sync] {code} ok ({n} squads, {ns} scorers)")
             except Exception as e:        # one bad competition shouldn't kill the run
                 print(f"[sync] {code} FAILED: {e}", file=sys.stderr)
+        detail_n = sync_match_details(conn, client, limit=50 if full else 15)
+        print(f"[sync] match details: {detail_n} checked")
 
 
 def cmd_seed_elo():

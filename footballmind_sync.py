@@ -16,6 +16,7 @@ from threading import Lock
 import requests
 
 from footballmind_elo import apply_match_result
+from footballmind_services import normalize_position
 
 # football-data.org stage strings -> our match_stage enum
 STAGE_MAP = {
@@ -93,6 +94,13 @@ class FootballDataClient:
 
     def teams(self, comp):
         return self._get(f"/competitions/{comp}/teams").get("teams", [])
+
+    def scorers(self, comp, limit=100):
+        params = {"limit": limit}
+        return self._get(f"/competitions/{comp}/scorers", params).get("scorers", [])
+
+    def match(self, match_id):
+        return self._get(f"/matches/{match_id}")
 
 
 # ----------------------------------------------------------------------
@@ -218,15 +226,17 @@ def sync_squad(cur, squad, team_id, kind):
     today = date.today()
     for p in squad:
         nationality_id = upsert_country(cur, p.get("nationality"))
+        pos = normalize_position(p.get("position"))
         cur.execute(
-            "INSERT INTO players (name, external_id, birth_date, nationality) "
-            "VALUES (%s,%s,%s,%s) "
+            "INSERT INTO players (name, external_id, birth_date, nationality, position) "
+            "VALUES (%s,%s,%s,%s,%s) "
             "ON CONFLICT (external_id) WHERE external_id IS NOT NULL "
             "DO UPDATE SET name = EXCLUDED.name, "
             "  birth_date = COALESCE(EXCLUDED.birth_date, players.birth_date), "
-            "  nationality = COALESCE(EXCLUDED.nationality, players.nationality) "
+            "  nationality = COALESCE(EXCLUDED.nationality, players.nationality), "
+            "  position = COALESCE(EXCLUDED.position, players.position) "
             "RETURNING id",
-            (p["name"], str(p["id"]), p.get("dateOfBirth"), nationality_id))
+            (p["name"], str(p["id"]), p.get("dateOfBirth"), nationality_id, pos))
         player_id = cur.fetchone()[0]
 
         cur.execute("SELECT id, team_id FROM player_affiliations "
@@ -241,6 +251,221 @@ def sync_squad(cur, squad, team_id, kind):
         cur.execute("INSERT INTO player_affiliations "
                     "(player_id, team_id, kind, start_date) VALUES (%s,%s,%s,%s)",
                     (player_id, team_id, kind, today))
+
+
+# ----------------------------------------------------------------------
+# Scorers + match detail (lineups / events when API provides them)
+# ----------------------------------------------------------------------
+_EVENT_MAP = {
+    "REGULAR": "GOAL", "OWN": "OWN_GOAL", "PENALTY": "PENALTY",
+    "YELLOW": "YELLOW_CARD", "RED": "RED_CARD", "YELLOW_RED": "RED_CARD",
+}
+
+
+def _edition_id(cur, comp_code, season):
+    cur.execute(
+        "SELECT e.id FROM competition_editions e "
+        "JOIN competitions c ON c.id = e.competition_id "
+        "WHERE c.code = %s AND e.season = %s",
+        (comp_code, season))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def upsert_player_row(cur, p, team_id, kind):
+    """Upsert one API player object; ensure affiliation to team_id."""
+    nationality_id = upsert_country(cur, p.get("nationality"))
+    pos = normalize_position(p.get("position") or p.get("section"))
+    ext = p.get("id")
+    if ext is None:
+        return None
+    cur.execute(
+        "INSERT INTO players (name, external_id, birth_date, nationality, position) "
+        "VALUES (%s,%s,%s,%s,%s) "
+        "ON CONFLICT (external_id) WHERE external_id IS NOT NULL "
+        "DO UPDATE SET name = EXCLUDED.name, "
+        "  birth_date = COALESCE(EXCLUDED.birth_date, players.birth_date), "
+        "  nationality = COALESCE(EXCLUDED.nationality, players.nationality), "
+        "  position = COALESCE(EXCLUDED.position, players.position) "
+        "RETURNING id",
+        (p["name"], str(ext), p.get("dateOfBirth"), nationality_id, pos))
+    player_id = cur.fetchone()[0]
+    today = date.today()
+    cur.execute("SELECT id, team_id FROM player_affiliations "
+                "WHERE player_id = %s AND kind = %s AND end_date IS NULL",
+                (player_id, kind))
+    open_row = cur.fetchone()
+    if open_row and open_row[1] == team_id:
+        return player_id
+    if open_row:
+        cur.execute("UPDATE player_affiliations SET end_date = %s WHERE id = %s",
+                    (today, open_row[0]))
+    cur.execute("INSERT INTO player_affiliations "
+                "(player_id, team_id, kind, start_date) VALUES (%s,%s,%s,%s)",
+                (player_id, team_id, kind, today))
+    return player_id
+
+
+def sync_scorers(conn, client, comp_code, season, team_type="club"):
+    """Pull competition top scorers -> player_edition_stats."""
+    kind = "national" if team_type == "national" else "club"
+    rows = client.scorers(comp_code)
+    with conn.cursor() as cur:
+        edition_id = _edition_id(cur, comp_code, season)
+        if edition_id is None:
+            return 0
+        n = 0
+        for row in rows:
+            player = row.get("player") or {}
+            team = row.get("team") or {}
+            if not player.get("name") or not team.get("name"):
+                continue
+            team_id = upsert_team(cur, team["name"], team_type, team["id"])
+            player_id = upsert_player_row(cur, player, team_id, kind)
+            if not player_id:
+                continue
+            cur.execute(
+                "INSERT INTO player_edition_stats "
+                "(player_id, edition_id, team_id, goals, assists, appearances, penalties) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (player_id, edition_id) DO UPDATE SET "
+                "  team_id = EXCLUDED.team_id, goals = EXCLUDED.goals, "
+                "  assists = EXCLUDED.assists, appearances = EXCLUDED.appearances, "
+                "  penalties = EXCLUDED.penalties, synced_at = now()",
+                (player_id, edition_id, team_id,
+                 row.get("goals") or 0, row.get("assists") or 0,
+                 row.get("playedMatches") or 0, row.get("penalties") or 0))
+            n += 1
+    conn.commit()
+    return n
+
+
+def _resolve_player_id(cur, p, team_id, kind):
+    if not p or not p.get("name"):
+        return None
+    if p.get("id"):
+        return upsert_player_row(cur, p, team_id, kind)
+    cur.execute("SELECT id FROM players WHERE lower(name) = lower(%s) LIMIT 1",
+                (p["name"],))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _sync_side_lineup(cur, match_id, team_side, team_type, kind):
+    team_api = team_side or {}
+    team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"])
+    formation = team_api.get("formation")
+    if formation:
+        cur.execute(
+            "INSERT INTO match_team_lineups (match_id, team_id, formation) "
+            "VALUES (%s,%s,%s) "
+            "ON CONFLICT (match_id, team_id) DO UPDATE SET formation = EXCLUDED.formation",
+            (match_id, team_id, formation))
+    for role, players in (("starter", team_api.get("lineup") or []),
+                          ("bench", team_api.get("bench") or [])):
+        for p in players:
+            player_id = _resolve_player_id(cur, p, team_id, kind)
+            if not player_id:
+                continue
+            pos = normalize_position(p.get("position"))
+            cur.execute(
+                "INSERT INTO match_lineup_players "
+                "(match_id, team_id, player_id, role, shirt_number, position) "
+                "VALUES (%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (match_id, team_id, player_id) DO UPDATE SET "
+                "  role = EXCLUDED.role, shirt_number = EXCLUDED.shirt_number, "
+                "  position = COALESCE(EXCLUDED.position, match_lineup_players.position)",
+                (match_id, team_id, player_id, role,
+                 p.get("shirtNumber"), pos))
+
+
+def _sync_match_events(cur, match_id, m, team_type, kind):
+    cur.execute("DELETE FROM match_events WHERE match_id = %s", (match_id,))
+    cur.execute("DELETE FROM match_lineup_players WHERE match_id = %s", (match_id,))
+    cur.execute("DELETE FROM match_team_lineups WHERE match_id = %s", (match_id,))
+
+    for side in ("homeTeam", "awayTeam"):
+        team_api = m.get(side) or {}
+        team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"])
+        _sync_side_lineup(cur, match_id, team_api, team_type, kind)
+
+    for goal in m.get("goals") or []:
+        team_api = goal.get("team") or {}
+        team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"]) \
+            if team_api.get("name") else None
+        scorer_id = _resolve_player_id(cur, goal.get("scorer"), team_id, kind) \
+            if team_id else None
+        assist_id = _resolve_player_id(cur, goal.get("assist"), team_id, kind) \
+            if team_id else None
+        etype = _EVENT_MAP.get(goal.get("type", "REGULAR"), "GOAL")
+        cur.execute(
+            "INSERT INTO match_events "
+            "(match_id, team_id, player_id, assist_player_id, event_type, minute) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (match_id, team_id, scorer_id, assist_id, etype, goal.get("minute")))
+
+    for booking in m.get("bookings") or []:
+        team_api = booking.get("team") or {}
+        team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"]) \
+            if team_api.get("name") else None
+        player_id = _resolve_player_id(cur, booking.get("player"), team_id, kind) \
+            if team_id else None
+        etype = _EVENT_MAP.get(booking.get("card", "YELLOW"), "YELLOW_CARD")
+        cur.execute(
+            "INSERT INTO match_events "
+            "(match_id, team_id, player_id, event_type, minute) "
+            "VALUES (%s,%s,%s,%s,%s)",
+            (match_id, team_id, player_id, etype, booking.get("minute")))
+
+    for sub in m.get("substitutions") or []:
+        team_api = sub.get("team") or {}
+        team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"]) \
+            if team_api.get("name") else None
+        out_id = _resolve_player_id(cur, sub.get("playerOut"), team_id, kind) \
+            if team_id else None
+        cur.execute(
+            "INSERT INTO match_events "
+            "(match_id, team_id, player_id, event_type, minute, detail) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (match_id, team_id, out_id, "SUBSTITUTION", sub.get("minute"),
+             (sub.get("playerIn") or {}).get("name")))
+
+
+def sync_match_details(conn, client, limit=20):
+    """Fetch /matches/{id} for finished games missing detail sync.
+
+    Free tier often omits lineups/goals; those rows are marked synced anyway
+    so we do not burn quota re-fetching them every run.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT m.id, m.external_id, c.code, t.type "
+            "FROM matches m "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "JOIN teams t ON t.id = m.home_team_id "
+            "WHERE m.home_goals IS NOT NULL AND m.details_synced = FALSE "
+            "  AND m.external_id IS NOT NULL "
+            "ORDER BY m.match_date DESC LIMIT %s",
+            (limit,))
+        pending = cur.fetchall()
+
+    synced = 0
+    for match_id, external_id, _comp, team_type in pending:
+        kind = "national" if team_type == "national" else "club"
+        try:
+            m = client.match(external_id)
+        except Exception:
+            continue
+        has_detail = bool(m.get("goals") or (m.get("homeTeam") or {}).get("lineup"))
+        with conn.cursor() as cur:
+            if has_detail:
+                _sync_match_events(cur, match_id, m, team_type, kind)
+            cur.execute("UPDATE matches SET details_synced = TRUE WHERE id = %s",
+                        (match_id,))
+        conn.commit()
+        synced += 1
+    return synced
 
 
 if __name__ == "__main__":

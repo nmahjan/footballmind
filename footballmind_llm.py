@@ -19,7 +19,10 @@ MAX_TOOL_ROUNDS = 4
 SYSTEM = (
     "You are FootballMind, a football (soccer) intelligence assistant covering "
     "the Premier League, Champions League, and World Cup. Use the tools for any "
-    "prediction or standings question; never invent probabilities or tables. "
+    "prediction, standings, squad, or player question; never invent probabilities, "
+    "tables, or player facts. When discussing players, use search_players or "
+    "get_team_squad for real squad data, then explain their role and why the "
+    "team works tactically based on team rating and squad composition. "
     "Be concise: 1-3 sentences unless the user asks for detail. If a question "
     "is outside football, say so briefly."
 )
@@ -60,6 +63,103 @@ TOOLS = [
                     "season": {"type": "string",
                                "description": "e.g. '2025/26'; omit for all"},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_players",
+            "description": "Find players by name (partial match). Returns squad "
+                           "position, team, age, and team rating.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Player name or fragment"},
+                    "comp": {"type": "string",
+                             "description": "Optional comp filter: WC, PL, CL, etc."},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_team_squad",
+            "description": "Full squad for a team with positions grouped. Use to "
+                           "explain how a team is built or who plays where.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "team": {"type": "string"},
+                    "comp": {"type": "string",
+                             "description": "Optional comp: WC, PL, CL, etc."},
+                },
+                "required": ["team"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_standout_players",
+            "description": "Notable players from strongest teams in a competition. "
+                           "position filter: FWD, MID, DEF, GK.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "comp": {"type": "string", "default": "WC"},
+                    "position": {"type": "string"},
+                    "limit": {"type": "integer", "default": 15},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_top_scorers",
+            "description": "Competition top scorers with goals, assists, appearances.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "comp": {"type": "string", "default": "PL"},
+                    "limit": {"type": "integer", "default": 15},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_team_formations",
+            "description": "Recent formations used by a team (when lineup data exists).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "team": {"type": "string"},
+                    "comp": {"type": "string"},
+                    "limit": {"type": "integer", "default": 5},
+                },
+                "required": ["team"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_match_lineup",
+            "description": "Lineups and formations from the most recent finished "
+                           "meeting between two teams.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "home": {"type": "string"},
+                    "away": {"type": "string"},
+                    "comp": {"type": "string"},
+                },
+                "required": ["home", "away"],
             },
         },
     },
@@ -125,13 +225,39 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
 
 def _run_tool(conn, name, args, session_id):
     from footballmind_mcp_predict import _predict_match
-    from footballmind_services import get_standings
+    from footballmind_services import (
+        get_standings,
+        get_standouts,
+        get_team_formations,
+        get_team_squad,
+        get_match_lineup,
+        get_top_scorers,
+        search_players,
+    )
     if name == "predict_match":
         return _predict_match(conn, args["home_team"], args["away_team"], None,
                               args.get("stage", "regular_season"),
                               session_id=session_id)
     if name == "get_standings":
         return get_standings(conn, args.get("comp", "PL"), args.get("season"))
+    if name == "search_players":
+        return search_players(conn, args["query"], args.get("comp"))
+    if name == "get_team_squad":
+        return get_team_squad(conn, args["team"], args.get("comp"))
+    if name == "list_standout_players":
+        return get_standouts(conn, args.get("comp", "WC"),
+                             args.get("position"), args.get("limit", 15))
+    if name == "get_top_scorers":
+        return get_top_scorers(conn, args.get("comp", "PL"), args.get("limit", 15))
+    if name == "get_team_formations":
+        try:
+            return get_team_formations(conn, args["team"], args.get("comp"),
+                                       args.get("limit", 5))
+        except ValueError as e:
+            return {"error": str(e)}
+    if name == "get_match_lineup":
+        result = get_match_lineup(conn, args["home"], args["away"], args.get("comp"))
+        return result or {"error": "No finished match with lineup data found"}
     return {"error": f"unknown tool {name}"}
 
 

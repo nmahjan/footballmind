@@ -30,9 +30,16 @@ from footballmind_services import (
     get_bracket,
     get_fixtures,
     get_groups,
+    get_match_lineup,
+    get_player_profile,
     get_rankings,
     get_standings,
     get_standouts,
+    get_team_formations,
+    get_team_squad,
+    get_teams_in_comp,
+    get_top_scorers,
+    search_players,
 )
 
 app = Flask(__name__)
@@ -293,6 +300,89 @@ def api_standouts():
     limit = min(int(request.args.get("limit", 20)), 60)
     standouts = get_standouts(get_conn(), comp, pos_filter, limit)
     return jsonify({"standouts": standouts, "comp": comp})
+
+
+@app.get("/api/players/search")
+@limiter.exempt
+def api_players_search():
+    q = request.args.get("q", "").strip()
+    comp = request.args.get("comp") or None
+    limit = min(int(request.args.get("limit", 15)), 30)
+    players = search_players(get_conn(), q, comp, limit)
+    return jsonify({"players": players, "query": q, "comp": comp})
+
+
+@app.get("/api/players/squad")
+@limiter.exempt
+def api_players_squad():
+    team = request.args.get("team", "").strip()
+    if not team:
+        return jsonify({"error": "team is required"}), 400
+    comp = request.args.get("comp") or None
+    try:
+        squad = get_team_squad(get_conn(), team, comp)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(squad)
+
+
+@app.get("/api/players/teams")
+@limiter.exempt
+def api_players_teams():
+    comp = request.args.get("comp", "WC")
+    teams = get_teams_in_comp(get_conn(), comp)
+    return jsonify({"teams": teams, "comp": comp})
+
+
+@app.get("/api/players/profile")
+@limiter.exempt
+def api_players_profile():
+    name = request.args.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    comp = request.args.get("comp") or None
+    profile = get_player_profile(get_conn(), name, comp)
+    if not profile:
+        return jsonify({"error": f"No player found matching {name!r}"}), 404
+    return jsonify({"player": profile, "comp": comp})
+
+
+@app.get("/api/players/scorers")
+@limiter.exempt
+def api_players_scorers():
+    comp = request.args.get("comp", "PL")
+    limit = min(int(request.args.get("limit", 20)), 50)
+    scorers = get_top_scorers(get_conn(), comp, limit)
+    return jsonify({"scorers": scorers, "comp": comp})
+
+
+@app.get("/api/players/formations")
+@limiter.exempt
+def api_players_formations():
+    team = request.args.get("team", "").strip()
+    if not team:
+        return jsonify({"error": "team is required"}), 400
+    comp = request.args.get("comp") or None
+    limit = min(int(request.args.get("limit", 5)), 10)
+    try:
+        formations = get_team_formations(get_conn(), team, comp, limit)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"team": team, "comp": comp, "formations": formations})
+
+
+@app.get("/api/players/lineup")
+@limiter.exempt
+def api_players_lineup():
+    home = request.args.get("home", "").strip()
+    away = request.args.get("away", "").strip()
+    if not home or not away:
+        return jsonify({"error": "home and away are required"}), 400
+    comp = request.args.get("comp") or None
+    lineup = get_match_lineup(get_conn(), home, away, comp)
+    if not lineup:
+        return jsonify({"error": f"No finished match found for {home} vs {away}"}), 404
+    return jsonify(lineup)
 
 
 @app.get("/api/bracket")

@@ -34,9 +34,15 @@ from footballmind_services import (
     get_bracket,
     get_fixtures,
     get_groups,
+    get_match_lineup as fetch_match_lineup,
+    get_player_profile as lookup_player,
     get_rankings,
     get_standings,
     get_standouts,
+    get_team_formations as fetch_team_formations,
+    get_team_squad as fetch_team_squad,
+    get_top_scorers as fetch_top_scorers,
+    search_players as find_players,
 )
 
 load_dotenv()
@@ -114,6 +120,58 @@ def list_standout_players(
     """Notable squad players from top-rated teams. position: FWD, MID, DEF, GK."""
     with get_connection() as conn:
         return get_standouts(conn, comp, position, limit)
+
+
+@mcp.tool()
+def search_players(
+    query: str,
+    comp: str | None = None,
+    limit: int = 15,
+) -> list:
+    """Find players by name. comp optional: WC, PL, CL, etc."""
+    with get_connection() as conn:
+        return find_players(conn, query, comp, limit)
+
+
+@mcp.tool()
+def get_team_squad(team: str, comp: str | None = None) -> dict:
+    """Full squad for a team with positions. Use for tactical / roster questions."""
+    with get_connection() as conn:
+        return fetch_team_squad(conn, team, comp)
+
+
+@mcp.tool()
+def get_player_profile(name: str, comp: str | None = None) -> dict:
+    """Look up a single player by name (includes goals/assists when synced)."""
+    with get_connection() as conn:
+        profile = lookup_player(conn, name, comp)
+        if profile is None:
+            return {"error": f"No player found matching {name!r}"}
+        return profile
+
+
+@mcp.tool()
+def get_top_scorers(comp: str = "PL", limit: int = 20) -> list:
+    """Competition top scorers with goals, assists, and appearances."""
+    with get_connection() as conn:
+        return fetch_top_scorers(conn, comp, limit)
+
+
+@mcp.tool()
+def get_team_formations(team: str, comp: str | None = None, limit: int = 5) -> list:
+    """Recent formations for a team (when match lineup data is available)."""
+    with get_connection() as conn:
+        return fetch_team_formations(conn, team, comp, limit)
+
+
+@mcp.tool()
+def get_match_lineup(home: str, away: str, comp: str | None = None) -> dict:
+    """Lineups from the latest finished meeting between two teams."""
+    with get_connection() as conn:
+        result = fetch_match_lineup(conn, home, away, comp)
+        if result is None:
+            return {"error": f"No finished match found for {home} vs {away}"}
+        return result
 
 
 def main() -> None:

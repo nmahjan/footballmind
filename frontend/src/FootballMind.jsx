@@ -62,6 +62,18 @@ const CHIPS = [
   "Predict Brazil vs Argentina",
 ];
 
+const PLAYER_CHIPS = [
+  "Who is top scorer in the Premier League?",
+  "Tell me about Brazil's squad and how they play",
+  "What formation does Manchester City use?",
+  "Who are Spain's key midfielders?",
+];
+
+const COMP_OPTIONS = [
+  ["WC", "🌍 World Cup"], ["PL", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL"], ["PD", "🇪🇸 La Liga"],
+  ["BL1", "🇩🇪 Bundesliga"], ["SA", "🇮🇹 Serie A"], ["FL1", "🇫🇷 Ligue 1"], ["CL", "⭐ CL"],
+];
+
 // ─── Intent parser ────────────────────────────────────────────────────────
 function parseVs(msg) {
   const m = msg.match(/^\s*(?:predict|forecast)?\s*(.+?)\s+(?:vs\.?|versus|v|against)\s+(.+?)\s*[?.!]*$/i);
@@ -596,114 +608,337 @@ const POS_TABS = [
   { key: "GK",  label: "🧤 Keepers" },
 ];
 
-function StandoutsPanel({ apiBase, offline }) {
-  const [players, setPlayers] = useState(null);
-  const [open, setOpen] = useState(false);
+function SidebarModeToggle({ mode, setMode }) {
+  return (
+    <div className="flex rounded-lg border p-0.5" style={{ borderColor: C.line, background: C.panel2 }}>
+      {[
+        { key: "matches", label: "⚽ Matches" },
+        { key: "players", label: "👤 Players" },
+      ].map(({ key, label }) => (
+        <button key={key} onClick={() => setMode(key)}
+          className="flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors"
+          style={{
+            background: mode === key ? C.home : "transparent",
+            color: mode === key ? "#08120F" : C.mute,
+          }}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PlayerCard({ p, onSelect, compact }) {
+  const pm = POS_META[p.position] ?? POS_META["?"];
+  return (
+    <button type="button" onClick={() => onSelect?.(p)}
+      className={`rounded-lg border text-left transition-opacity hover:opacity-80 w-full ${compact ? "p-2" : "p-2.5 flex flex-col gap-1"}`}
+      style={{ borderColor: C.line, background: C.panel2 }}>
+      <div className="flex items-start justify-between gap-1">
+        <span className={`font-semibold leading-tight ${compact ? "text-[11px]" : "text-xs"}`} style={{ color: C.chalk }}>
+          {p.name}
+        </span>
+        <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase"
+          style={{ background: pm.bg, color: pm.fg }}>
+          {pm.label}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-1 mt-0.5">
+        <span className="text-[10px] truncate" style={{ color: C.mute }}>
+          {flag(p.team)}{p.team}
+          {p.nationality && p.nationality !== p.team ? ` · ${p.nationality}` : ""}
+        </span>
+        {p.age && <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>{p.age}y</span>}
+      </div>
+      {(p.goals != null || p.assists != null) && (
+        <div className="text-[10px] font-semibold tabular-nums mt-0.5" style={{ color: C.home }}>
+          {p.goals ?? 0}G{p.assists != null ? ` · ${p.assists}A` : ""}
+          {p.appearances != null ? ` · ${p.appearances} apps` : ""}
+        </div>
+      )}
+      {p.team_rating != null && !compact && !(p.goals != null) && (
+        <div className="h-0.5 w-full overflow-hidden rounded-full mt-1" style={{ background: C.line }}>
+          <div className="h-full rounded-full"
+            style={{
+              width: `${Math.min(100, Math.round((p.team_rating - 1200) / 8))}%`,
+              background: pm.bg === "#7B1F1F" ? C.away : pm.bg === "#1A6B47" ? C.home : C.draw,
+            }} />
+        </div>
+      )}
+    </button>
+  );
+}
+
+function PlayersSidebar({ apiBase, offline, onAsk }) {
   const [comp, setComp] = useState("WC");
   const [posTab, setPosTab] = useState("ALL");
+  const [tab, setTab] = useState("standouts");
+  const [standouts, setStandouts] = useState(null);
+  const [teams, setTeams] = useState([]);
+  const [team, setTeam] = useState("");
+  const [squad, setSquad] = useState(null);
+  const [search, setSearch] = useState("");
+  const [searchHits, setSearchHits] = useState(null);
+  const [scorers, setScorers] = useState(null);
 
-  function load(c) {
-    if (!apiBase || offline) { setPlayers([]); return; }
-    setPlayers(null);
-    fetch(`${apiBase}/api/standouts?comp=${c}&limit=32`)
+  function loadScorers(c) {
+    if (!apiBase || offline) { setScorers([]); return; }
+    setScorers(null);
+    fetch(`${apiBase}/api/players/scorers?comp=${c}&limit=25`)
       .then((r) => r.json())
-      .then((d) => setPlayers(d.standouts ?? []))
-      .catch(() => setPlayers([]));
+      .then((d) => setScorers(d.scorers ?? []))
+      .catch(() => setScorers([]));
   }
 
-  function toggle() {
-    const next = !open;
-    setOpen(next);
-    if (next && players === null) load(comp);
+  function loadStandouts(c) {
+    if (!apiBase || offline) { setStandouts([]); return; }
+    setStandouts(null);
+    fetch(`${apiBase}/api/standouts?comp=${c}&limit=40`)
+      .then((r) => r.json())
+      .then((d) => setStandouts(d.standouts ?? []))
+      .catch(() => setStandouts([]));
   }
 
-  const visible = players
-    ? posTab === "ALL" ? players : players.filter((p) => p.position === posTab)
+  function loadTeams(c) {
+    if (!apiBase || offline) { setTeams([]); return; }
+    fetch(`${apiBase}/api/players/teams?comp=${c}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const list = d.teams ?? [];
+        setTeams(list);
+        if (list.length && !list.includes(team)) setTeam(list[0]);
+      })
+      .catch(() => setTeams([]));
+  }
+
+  function loadSquad(t, c) {
+    if (!apiBase || offline || !t) { setSquad(null); return; }
+    setSquad(null);
+    fetch(`${apiBase}/api/players/squad?team=${encodeURIComponent(t)}&comp=${c}`)
+      .then((r) => r.json())
+      .then((d) => (d.error ? setSquad({ error: d.error }) : setSquad(d)))
+      .catch(() => setSquad({ error: "Failed to load squad" }));
+  }
+
+  useEffect(() => {
+    loadStandouts(comp);
+    loadTeams(comp);
+    if (tab === "scorers") loadScorers(comp);
+  }, [comp, apiBase, offline]);
+
+  useEffect(() => {
+    if (tab === "squad" && team) loadSquad(team, comp);
+    if (tab === "scorers") loadScorers(comp);
+  }, [tab, team, comp, apiBase, offline]);
+
+  function pickComp(c) {
+    setComp(c);
+    setPosTab("ALL");
+  }
+
+  function askPlayer(p) {
+    onAsk(`Tell me about ${p.name} (${p.team}) — their role, strengths, and why they matter`);
+  }
+
+  function askTeamSquad(t) {
+    onAsk(`Explain ${t}'s squad — key players by position and why this team works tactically`);
+  }
+
+  function runSearch(e) {
+    e?.preventDefault();
+    const q = search.trim();
+    if (!q || !apiBase || offline) return;
+    setSearchHits(null);
+    fetch(`${apiBase}/api/players/search?q=${encodeURIComponent(q)}&comp=${comp}`)
+      .then((r) => r.json())
+      .then((d) => setSearchHits(d.players ?? []))
+      .catch(() => setSearchHits([]));
+  }
+
+  const visibleStandouts = standouts
+    ? (posTab === "ALL" ? standouts : standouts.filter((p) => p.position === posTab))
     : [];
 
-  return (
-    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
-      <button onClick={toggle}
-        className="flex w-full items-center justify-between px-4 py-2.5 text-left transition-opacity hover:opacity-70"
-        style={{ borderBottom: open ? `1px solid ${C.line}` : "none" }}>
-        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
-          ⚡ Standout Players
-        </span>
-        <span className="text-xs" style={{ color: C.mute }}>{open ? "hide ▴" : "show ▾"}</span>
-      </button>
+  const squadList = squad?.squad ?? [];
+  const squadByPos = squad?.by_position ?? {};
 
-      {open && (
-        <div>
-          {/* Comp + pos selectors */}
-          <div className="border-b px-3 pt-2 pb-2 space-y-1.5" style={{ borderColor: C.line }}>
-            <div className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
-              {[["WC","🌍 World Cup"],["PL","🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL"],["PD","🇪🇸 La Liga"],["BL1","🇩🇪 Bundesliga"],
-                ["SA","🇮🇹 Serie A"],["FL1","🇫🇷 Ligue 1"],["CL","⭐ CL"]].map(([c,lbl]) => (
-                <button key={c} onClick={() => { setComp(c); load(c); }}
-                  className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                  style={{ background: c === comp ? C.home : C.line, color: c === comp ? "#08120F" : C.mute }}>
-                  {lbl}
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+  return (
+    <div className="rounded-xl border flex flex-col max-h-[calc(100vh-8rem)]" style={{ borderColor: C.line, background: C.panel }}>
+      <div className="border-b px-4 py-2.5 shrink-0" style={{ borderColor: C.line }}>
+        <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+          Players & Squads
+        </div>
+        <p className="mt-1 text-[10px]" style={{ color: C.mute }}>
+          Tap a player or team to ask the chat about them.
+        </p>
+      </div>
+
+      <div className="border-b px-3 pt-2 pb-2 space-y-1.5 shrink-0" style={{ borderColor: C.line }}>
+        <div className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+          {COMP_OPTIONS.map(([c, lbl]) => (
+            <button key={c} onClick={() => pickComp(c)}
+              className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+              style={{ background: c === comp ? C.home : C.line, color: c === comp ? "#08120F" : C.mute }}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-1 flex-wrap">
+          {[["standouts", "⚡ Standouts"], ["scorers", "🥅 Top scorers"], ["squad", "📋 Team squad"]].map(([k, lbl]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className="flex-1 min-w-[30%] rounded-md px-2 py-1 text-[11px] font-semibold transition-colors"
+              style={{ background: tab === k ? C.home : C.line, color: tab === k ? "#08120F" : C.mute }}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {tab === "standouts" && (
+          <>
+            <div className="flex gap-1 overflow-x-auto px-3 py-2 border-b" style={{ borderColor: C.line, scrollbarWidth: "none" }}>
               {POS_TABS.map(({ key, label }) => (
                 <button key={key} onClick={() => setPosTab(key)}
-                  className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                  className="shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold transition-colors"
                   style={{ background: key === posTab ? C.home : C.line, color: key === posTab ? "#08120F" : C.mute }}>
                   {label}
                 </button>
               ))}
             </div>
-          </div>
+            {standouts === null ? (
+              <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
+            ) : visibleStandouts.length === 0 ? (
+              <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>
+                {offline || !apiBase ? "Connect to the backend to browse players." : "No squad data — run sync to populate."}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 p-3">
+                {visibleStandouts.map((p, i) => (
+                  <PlayerCard key={`${p.name}-${i}`} p={p} onSelect={askPlayer} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
 
-          {players === null ? (
-            <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
-          ) : visible.length === 0 ? (
-            <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>
-              {offline || !apiBase
-                ? "Available when backend is connected."
-                : "No squad data yet — run sync to populate."}
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2 p-3">
-              {visible.map((p, i) => {
-                const pm = POS_META[p.position] ?? POS_META["?"];
-                return (
-                  <div key={i} className="rounded-lg border p-2.5 flex flex-col gap-1"
-                    style={{ borderColor: C.line, background: C.panel2 }}>
-                    <div className="flex items-start justify-between gap-1">
-                      <span className="text-xs font-semibold leading-tight" style={{ color: C.chalk }}>
-                        {p.name}
-                      </span>
-                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase"
-                        style={{ background: pm.bg, color: pm.fg }}>
-                        {pm.label}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-[11px] truncate" style={{ color: C.mute }}>
+        {tab === "scorers" && (
+          <>
+            {scorers === null ? (
+              <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>Loading scorers…</div>
+            ) : scorers.length === 0 ? (
+              <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>
+                {offline || !apiBase
+                  ? "Connect to the backend."
+                  : "No scorer stats yet — run sync to pull league data."}
+              </div>
+            ) : (
+              <div className="divide-y" style={{ borderColor: C.line }}>
+                {scorers.map((p) => (
+                  <button key={p.rank} type="button" onClick={() => askPlayer(p)}
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:opacity-80"
+                    style={{ borderColor: C.line }}>
+                    <span className="w-5 shrink-0 text-xs font-bold tabular-nums" style={{ color: C.mute }}>
+                      {p.rank}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold truncate" style={{ color: C.chalk }}>{p.name}</div>
+                      <div className="text-[10px] truncate" style={{ color: C.mute }}>
                         {flag(p.team)}{p.team}
-                      </span>
-                      {p.age && (
-                        <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>
-                          {p.age}y
-                        </span>
-                      )}
+                      </div>
                     </div>
-                    {/* Strength bar using team_rating (1000–2100 range) */}
-                    <div className="h-0.5 w-full overflow-hidden rounded-full" style={{ background: C.line }}>
-                      <div className="h-full rounded-full"
-                        style={{ width: `${Math.min(100, Math.round((p.team_rating - 1200) / 8))}%`,
-                                 background: pm.bg === "#7B1F1F" ? C.away : pm.bg === "#1A6B47" ? C.home : C.draw }} />
+                    <div className="shrink-0 text-right">
+                      <div className="text-sm font-bold tabular-nums" style={{ color: C.home }}>{p.goals}</div>
+                      <div className="text-[10px] tabular-nums" style={{ color: C.mute }}>{p.assists}A</div>
                     </div>
-                  </div>
-                );
-              })}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "squad" && (
+          <div className="p-3 space-y-3">
+            <div className="flex gap-2">
+              <select value={team} onChange={(e) => setTeam(e.target.value)}
+                className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none"
+                style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }}>
+                {teams.length === 0
+                  ? <option value="">No teams</option>
+                  : teams.map((t) => <option key={t} value={t}>{flag(t)}{t}</option>)}
+              </select>
+              {team && (
+                <button type="button" onClick={() => askTeamSquad(team)}
+                  className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] font-semibold"
+                  style={{ background: C.home, color: "#08120F" }}>
+                  Ask AI
+                </button>
+              )}
             </div>
-          )}
+            {squad === null ? (
+              <div className="text-center text-xs py-4" style={{ color: C.mute }}>Loading squad…</div>
+            ) : squad.error ? (
+              <div className="text-center text-xs py-4" style={{ color: C.mute }}>{squad.error}</div>
+            ) : squadList.length === 0 ? (
+              <div className="text-center text-xs py-4" style={{ color: C.mute }}>No squad on file for {team}.</div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between text-[10px]" style={{ color: C.mute }}>
+                  <span>{flag(squad.team)}{squad.team}</span>
+                  <span>{squad.squad_size} players{squad.team_rating ? ` · Elo ${squad.team_rating}` : ""}</span>
+                </div>
+                {["GK", "DEF", "MID", "FWD"].map((pos) => {
+                  const group = squadByPos[pos];
+                  if (!group?.length) return null;
+                  const pm = POS_META[pos];
+                  return (
+                    <div key={pos}>
+                      <div className="mb-1 text-[10px] font-bold uppercase tracking-wider"
+                        style={{ color: pm.fg, background: pm.bg, display: "inline-block", padding: "2px 6px", borderRadius: 4 }}>
+                        {pm.label} ({group.length})
+                      </div>
+                      <div className="space-y-1 mt-1">
+                        {group.map((p) => (
+                          <button key={p.name} type="button" onClick={() => askPlayer({ ...p, team: squad.team })}
+                            className="flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-left hover:opacity-80"
+                            style={{ borderColor: C.line, background: C.panel2 }}>
+                            <span className="text-xs font-medium truncate" style={{ color: C.chalk }}>{p.name}</span>
+                            <span className="text-[10px] shrink-0 ml-2" style={{ color: C.mute }}>
+                              {p.age ? `${p.age}y` : ""}{p.nationality ? ` · ${p.nationality}` : ""}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      <form onSubmit={runSearch} className="border-t p-3 shrink-0 space-y-2" style={{ borderColor: C.line }}>
+        <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.mute }}>Search players</div>
+        <div className="flex gap-1">
+          <input value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="e.g. Yamal, Martinez"
+            className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none"
+            style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }} />
+          <button type="submit" className="rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+            style={{ background: C.line, color: C.chalk }}>Go</button>
         </div>
-      )}
+        {searchHits && (
+          searchHits.length === 0
+            ? <div className="text-[10px]" style={{ color: C.mute }}>No matches.</div>
+            : <div className="grid grid-cols-1 gap-1 max-h-32 overflow-y-auto">
+                {searchHits.map((p, i) => (
+                  <PlayerCard key={i} p={p} onSelect={askPlayer} compact />
+                ))}
+              </div>
+        )}
+      </form>
     </div>
   );
 }
@@ -872,6 +1107,7 @@ export default function FootballMind() {
   const [summary, setSummary] = useState(null);
   const [offline, setOffline] = useState(!API_BASE);
   const [backendStatus, setBackendStatus] = useState(API_BASE ? "connecting" : "demo");
+  const [sidebarMode, setSidebarMode] = useState("matches");
   const [sidebarLoaded, setSidebarLoaded] = useState(false);
   const scroller = useRef(null);
 
@@ -919,7 +1155,11 @@ export default function FootballMind() {
 
   function handleFixtureClick(f) {
     setInput(`Predict ${f.home} vs ${f.away}`);
-    // scroll chat into view on mobile
+    scroller.current?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  function handlePlayerAsk(text) {
+    send(text);
     scroller.current?.scrollIntoView({ behavior: "smooth" });
   }
 
@@ -991,9 +1231,15 @@ export default function FootballMind() {
           <div ref={scroller} className="flex-1 space-y-4 overflow-y-auto p-4" style={{ maxHeight: "70vh" }}>
             {messages.length === 0 && (
               <div className="mt-10 text-center">
-                <div className="text-sm" style={{ color: C.chalk }}>Ask anything about a match.</div>
+                <div className="text-sm" style={{ color: C.chalk }}>
+                  {sidebarMode === "players"
+                    ? "Ask about players, squads, or why a team works."
+                    : "Ask anything about a match."}
+                </div>
                 <div className="mt-1 text-xs" style={{ color: C.mute }}>
-                  Tap a fixture on the right, or type a question below.
+                  {sidebarMode === "players"
+                    ? "Switch to Players on the right, tap a name, or type a question below."
+                    : "Tap a fixture on the right, or type a question below."}
                 </div>
               </div>
             )}
@@ -1016,7 +1262,7 @@ export default function FootballMind() {
           {/* Suggestion chips */}
           {showChips && (
             <div className="flex flex-wrap gap-2 px-3 pt-3 pb-0">
-              {CHIPS.map((c) => (
+              {(sidebarMode === "players" ? PLAYER_CHIPS : CHIPS).map((c) => (
                 <button key={c} onClick={() => send(c)}
                   className="rounded-full border px-3 py-1 text-[11px] font-medium transition-opacity hover:opacity-70"
                   style={{ borderColor: C.line, color: C.chalk, background: C.panel }}>
@@ -1050,7 +1296,9 @@ export default function FootballMind() {
               <input
                 value={input} onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && send()}
-                placeholder="Predict Mexico vs South Africa"
+                placeholder={sidebarMode === "players"
+                  ? "Who are Brazil's key players?"
+                  : "Predict Mexico vs South Africa"}
                 className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
                 style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }} />
               <button onClick={() => send()} disabled={busy}
@@ -1062,13 +1310,19 @@ export default function FootballMind() {
 
         {/* ── Sidebar ── */}
         <aside className="flex flex-col gap-4 md:basis-[40%]">
-          <AccuracyPanel summary={summary} />
-          <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} />
-          {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
-          <BracketPanel apiBase={API_BASE} offline={offline} />
-          <StandoutsPanel apiBase={API_BASE} offline={offline} />
-          <RankingsPanel apiBase={API_BASE} offline={offline} />
-          <StandingsPanel apiBase={API_BASE} offline={offline} />
+          <SidebarModeToggle mode={sidebarMode} setMode={setSidebarMode} />
+          {sidebarMode === "matches" ? (
+            <>
+              <AccuracyPanel summary={summary} />
+              <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} />
+              {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
+              <BracketPanel apiBase={API_BASE} offline={offline} />
+              <RankingsPanel apiBase={API_BASE} offline={offline} />
+              <StandingsPanel apiBase={API_BASE} offline={offline} />
+            </>
+          ) : (
+            <PlayersSidebar apiBase={API_BASE} offline={offline} onAsk={handlePlayerAsk} />
+          )}
         </aside>
       </div>
     </div>
