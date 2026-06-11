@@ -165,11 +165,15 @@ def api_predict():
         return jsonify({"error": "home and away are required"}), 400
     if data.get("session_id"):                  # predictions.session_id is a FK
         touch_session(get_conn(), data["session_id"], client_ip())
+    # neutral: explicit bool from caller; None = auto-detect
+    neutral_raw = data.get("neutral")
+    neutral = bool(neutral_raw) if neutral_raw is not None else None
     try:
         result = _predict_match(get_conn(), data["home"], data["away"],
                                 data.get("match_date"),
                                 data.get("stage", "regular_season"),
-                                session_id=data.get("session_id"))
+                                session_id=data.get("session_id"),
+                                neutral=neutral)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(result)
@@ -192,11 +196,20 @@ def api_chat():
 
     if intent["type"] == "predict":
         entities = {"home": intent["home"], "away": intent["away"]}
+        # detect venue override from natural language
+        neutral_override = None
+        low = message.lower()
+        if any(w in low for w in ("neutral", "at a neutral", "at neutral")):
+            neutral_override = True
+        elif any(w in low for w in ("at home", "home ground", "home stadium", "wembley")):
+            neutral_override = False
         try:
             prediction = _predict_match(conn, intent["home"], intent["away"],
-                                        None, "regular_season", session_id=session_id)
+                                        None, "regular_season", session_id=session_id,
+                                        neutral=neutral_override)
+            venue_note = "" if neutral_override is None else (" (neutral venue)" if neutral_override else " (home advantage)")
             reply = (f"{prediction['prediction']} "
-                     f"({round(prediction['confidence'] * 100)}% confidence). "
+                     f"({round(prediction['confidence'] * 100)}% confidence){venue_note}. "
                      f"{prediction['reasoning']}")
         except ValueError as e:
             reply = f"I couldn't run that prediction: {e}"

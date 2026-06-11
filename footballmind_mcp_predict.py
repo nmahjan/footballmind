@@ -56,7 +56,14 @@ def _current_rating(cur, team_id: int) -> float:
 
 
 def _predict_match(conn, home_team, away_team, match_date,
-                   stage="regular_season", session_id=None):
+                   stage="regular_season", session_id=None, neutral=None):
+    """Predict a match.
+
+    neutral: True  = no home-field bonus (WC / Euros / all international tournaments)
+             False = home-field bonus applied (club home ground)
+             None  = auto-detect: always neutral for national teams; for clubs,
+                     neutral only in knockout rounds.
+    """
     with conn.cursor() as cur:
         home_id, home_type = _resolve_team(cur, home_team)
         away_id, away_type = _resolve_team(cur, away_team)
@@ -69,7 +76,12 @@ def _predict_match(conn, home_team, away_team, match_date,
 
         home_elo = _current_rating(cur, home_id)
         away_elo = _current_rating(cur, away_id)
-        neutral = stage != "regular_season"
+
+        if neutral is None:
+            # National team tournaments are always at neutral venues.
+            # Club matches: neutral only in knockout rounds (Champions League
+            # finals, etc.) — domestic league games always have a home team.
+            neutral = (home_type == "national") or (stage != "regular_season")
 
         # Use the deployed Dixon-Coles/Elo hybrid if one exists; otherwise fall
         # back to pure Elo so the tool still works on a fresh database.

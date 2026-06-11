@@ -399,6 +399,7 @@ export default function FootballMind() {
   const [sessionId] = useState(() => (crypto?.randomUUID?.() || String(Math.random())));
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
+  const [venueMode, setVenueMode] = useState(null); // null=auto, true=neutral, false=home
   const [busy, setBusy] = useState(false);
   const [wcFixtures, setWcFixtures] = useState(DEMO_FIXTURES);
   const [plFixtures, setPlFixtures] = useState([]);
@@ -436,9 +437,11 @@ export default function FootballMind() {
     setBusy(true);
     try {
       if (!API_BASE) throw new Error("offline");
+      const body = { message: text, session_id: sessionId };
+      if (venueMode !== null) body.neutral = venueMode;
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session_id: sessionId }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
@@ -500,7 +503,7 @@ export default function FootballMind() {
 
           {/* Suggestion chips */}
           {showChips && (
-            <div className="flex flex-wrap gap-2 border-t px-3 pt-3 pb-0" style={{ borderColor: C.line }}>
+            <div className="flex flex-wrap gap-2 px-3 pt-3 pb-0">
               {CHIPS.map((c) => (
                 <button key={c} onClick={() => send(c)}
                   className="rounded-full border px-3 py-1 text-[11px] font-medium transition-opacity hover:opacity-70"
@@ -511,17 +514,37 @@ export default function FootballMind() {
             </div>
           )}
 
-          {/* Input row */}
-          <div className="flex gap-2 border-t p-3" style={{ borderColor: C.line }}>
-            <input
-              value={input} onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder="Predict Mexico vs South Africa"
-              className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-              style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }} />
-            <button onClick={() => send()} disabled={busy}
-              className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
-              style={{ background: C.home, color: "#08120F" }}>Ask</button>
+          {/* Venue toggle + input row */}
+          <div className="border-t px-3 pt-2 pb-0" style={{ borderColor: C.line }}>
+            <div className="mb-2 flex items-center gap-1.5">
+              <span className="text-[10px] font-medium" style={{ color: C.mute }}>Venue:</span>
+              {[
+                [null,  "⚡ Auto",    "auto-detect based on teams"],
+                [false, "🏠 Home",   "home team has advantage"],
+                [true,  "🏟 Neutral","no home advantage"],
+              ].map(([val, label, title]) => (
+                <button key={String(val)} title={title}
+                  onClick={() => setVenueMode(val)}
+                  className="rounded px-2 py-0.5 text-[10px] font-semibold transition-colors"
+                  style={{
+                    background: venueMode === val ? (val === false ? C.away : val === true ? C.home : C.mute) : C.line,
+                    color: venueMode === val ? "#08120F" : C.mute,
+                  }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 pb-3">
+              <input
+                value={input} onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && send()}
+                placeholder="Predict Mexico vs South Africa"
+                className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
+                style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }} />
+              <button onClick={() => send()} disabled={busy}
+                className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                style={{ background: C.home, color: "#08120F" }}>Ask</button>
+            </div>
           </div>
         </section>
 

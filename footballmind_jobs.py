@@ -26,10 +26,17 @@ from footballmind_production import select_and_deploy
 from footballmind_seed_elo import seed_national_elo
 
 # (code, name, comp_type, team_type, season)
+# football-data.org free-tier competitions available without a paid plan:
+#   PL, CL, FL1, BL1, SA, PD, DED  (WC is free during tournament year)
 COMPETITIONS = [
-    ("PL", "Premier League",        "domestic_league",  "club",     "2025/26"),
-    ("CL", "UEFA Champions League", "continental_club", "club",     "2025/26"),
-    ("WC", "FIFA World Cup",        "international",     "national", "2026"),
+    ("PL",  "Premier League",        "domestic_league",   "club",     "2025/26"),
+    ("CL",  "UEFA Champions League", "continental_club",  "club",     "2025/26"),
+    ("PD",  "La Liga",               "domestic_league",   "club",     "2025/26"),
+    ("BL1", "Bundesliga",            "domestic_league",   "club",     "2025/26"),
+    ("SA",  "Serie A",               "domestic_league",   "club",     "2025/26"),
+    ("FL1", "Ligue 1",               "domestic_league",   "club",     "2025/26"),
+    ("DED", "Eredivisie",            "domestic_league",   "club",     "2025/26"),
+    ("WC",  "FIFA World Cup",        "international",     "national", "2026"),
 ]
 
 
