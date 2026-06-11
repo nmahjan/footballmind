@@ -24,6 +24,54 @@ function parseVs(msg) {
   return { home: clean(m[1]), away: clean(m[2]) };
 }
 
+const DEMO_FIXTURES = [
+  { home: "Mexico", away: "South Africa", match_date: "2026-06-11T19:00:00Z", stage: "GROUP_STAGE" },
+  { home: "USA", away: "Canada", match_date: "2026-06-12T19:00:00Z", stage: "GROUP_STAGE" },
+  { home: "Spain", away: "Cape Verde Islands", match_date: "2026-06-13T19:00:00Z", stage: "GROUP_STAGE" },
+  { home: "Argentina", away: "Algeria", match_date: "2026-06-14T19:00:00Z", stage: "GROUP_STAGE" },
+];
+
+const STAGE_LABEL = {
+  group: "Group", GROUP_STAGE: "Group", round_of_32: "R32", LAST_32: "R32",
+  round_of_16: "R16", LAST_16: "R16", quarter_final: "QF", QUARTER_FINALS: "QF",
+  semi_final: "SF", SEMI_FINALS: "SF", final: "Final", FINAL: "Final",
+};
+
+function fmt_date(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-GB", { weekday: "short", month: "short", day: "numeric" })
+    + " " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+function FixturesPanel({ fixtures, onClickFixture }) {
+  return (
+    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+      <div className="border-b px-4 py-2.5 text-xs font-semibold uppercase tracking-wider" style={{ borderColor: C.line, color: C.mute }}>
+        World Cup 2026
+      </div>
+      <div className="divide-y" style={{ borderColor: C.line }}>
+        {fixtures.slice(0, 8).map((f, i) => (
+          <button key={i} onClick={() => onClickFixture(f)}
+            className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:opacity-80"
+            style={{ background: "transparent" }}>
+            <span className="w-6 shrink-0 rounded px-1 py-0.5 text-center text-[10px] font-semibold"
+              style={{ background: C.line, color: C.mute }}>
+              {STAGE_LABEL[f.stage] || "●"}
+            </span>
+            <span className="flex-1 text-xs font-medium truncate" style={{ color: C.chalk }}>
+              {f.home} <span style={{ color: C.mute }}>vs</span> {f.away}
+            </span>
+            {f.home_goals != null
+              ? <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: C.home }}>{f.home_goals}–{f.away_goals}</span>
+              : <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>{fmt_date(f.match_date)}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const DEMO_STANDINGS = [
   { rank: 1, team: "Arsenal", P: 24, W: 17, D: 4, L: 3, GD: 31, Pts: 55 },
   { rank: 2, team: "Liverpool", P: 24, W: 16, D: 5, L: 3, GD: 28, Pts: 53 },
@@ -160,6 +208,7 @@ export default function FootballMind() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [standings, setStandings] = useState(DEMO_STANDINGS);
+  const [fixtures, setFixtures] = useState(DEMO_FIXTURES);
   const [summary, setSummary] = useState(null);
   const [offline, setOffline] = useState(false);
   const scroller = useRef(null);
@@ -170,7 +219,13 @@ export default function FootballMind() {
       .then((d) => Array.isArray(d) && d.length && setStandings(d)).catch(() => setOffline(true));
     fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
       .then((d) => setSummary(d.summary)).catch(() => {});
+    fetch(`${API_BASE}/api/fixtures?comp=WC&limit=16`).then((r) => r.json())
+      .then((d) => d.fixtures?.length && setFixtures(d.fixtures)).catch(() => {});
   }, []);
+
+  function handleFixtureClick(f) {
+    setInput(`Predict ${f.home} vs ${f.away}`);
+  }
 
   useEffect(() => { scroller.current?.scrollTo(0, scroller.current.scrollHeight); }, [messages, busy]);
 
@@ -240,7 +295,7 @@ export default function FootballMind() {
             <input
               value={input} onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder="Predict Arsenal vs Chelsea"
+              placeholder="Predict Mexico vs South Africa"
               className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
               style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }} />
             <button onClick={send} disabled={busy}
@@ -252,6 +307,7 @@ export default function FootballMind() {
         {/* Sidebar */}
         <aside className="flex flex-col gap-4 md:basis-[40%]">
           <AccuracyPanel summary={summary} />
+          <FixturesPanel fixtures={fixtures} onClickFixture={handleFixtureClick} />
           <StandingsTable rows={standings} />
         </aside>
       </div>

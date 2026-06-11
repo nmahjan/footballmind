@@ -94,9 +94,13 @@ _VS = re.compile(
 
 
 def _clean_team(s):
-    s = re.sub(r"^(the|a)\s+", "", s.strip(), flags=re.I)            # leading article
+    s = s.strip()
+    # strip leading question/filler words before the team name
+    s = re.sub(r"^(who\s+will\s+win\s+|who\s+wins\s+|will\s+|can\s+|"
+               r"what\s+about\s+|how\s+about\s+|the\s+|a\s+)", "", s, flags=re.I)
+    # strip trailing context filler
     s = re.sub(r"\s+(match|game|fixture|this weekend|today|tomorrow|on \w+)\b.*$",
-               "", s, flags=re.I)                                    # trailing filler
+               "", s, flags=re.I)
     return s.strip()
 
 
@@ -264,6 +268,31 @@ def api_history():
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     return jsonify({"history": rows})
+
+
+@app.get("/api/fixtures")
+@limiter.exempt
+def api_fixtures():
+    """Upcoming matches for a competition. Defaults to WC, limit 16."""
+    comp = request.args.get("comp", "WC")
+    limit = min(int(request.args.get("limit", 16)), 64)
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT th.name AS home, ta.name AS away, "
+            "       m.match_date, m.stage, m.home_goals, m.away_goals "
+            "FROM matches m "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "JOIN teams th ON th.id = m.home_team_id "
+            "JOIN teams ta ON ta.id = m.away_team_id "
+            "WHERE c.code = %s "
+            "  AND m.match_date >= now() - interval '3 hours' "
+            "ORDER BY m.match_date ASC LIMIT %s",
+            (comp, limit))
+        cols = [d[0] for d in cur.description]
+        fixtures = [dict(zip(cols, r)) for r in cur.fetchall()]
+    return jsonify({"fixtures": fixtures, "comp": comp})
 
 
 @app.get("/api/health")

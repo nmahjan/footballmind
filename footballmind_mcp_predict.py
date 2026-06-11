@@ -16,12 +16,37 @@ from footballmind_production import load_hybrid
 
 
 def _resolve_team(cur, name: str):
-    """Look up a team by name; returns (id, type) or raises."""
-    cur.execute("SELECT id, type FROM teams WHERE lower(name) = lower(%s)", (name,))
+    """Look up a team by name; returns (id, type) or raises.
+
+    Tries in order:
+      1. Exact case-insensitive match   ("Arsenal FC")
+      2. Starts-with match              ("Arsenal" -> "Arsenal FC")
+      3. Contains match                 ("city"    -> "Manchester City FC")
+    If multiple rows match steps 2/3 the shortest name wins (most specific).
+    """
+    term = name.strip()
+    cur.execute("SELECT id, type, name FROM teams WHERE lower(name) = lower(%s)", (term,))
     row = cur.fetchone()
-    if row is None:
-        raise ValueError(f"Unknown team: {name!r}")
-    return row[0], row[1]
+    if row:
+        return row[0], row[1]
+
+    cur.execute(
+        "SELECT id, type, name FROM teams "
+        "WHERE lower(name) LIKE lower(%s) || '%%' "
+        "ORDER BY length(name) LIMIT 1", (term,))
+    row = cur.fetchone()
+    if row:
+        return row[0], row[1]
+
+    cur.execute(
+        "SELECT id, type, name FROM teams "
+        "WHERE lower(name) LIKE '%%' || lower(%s) || '%%' "
+        "ORDER BY length(name) LIMIT 1", (term,))
+    row = cur.fetchone()
+    if row:
+        return row[0], row[1]
+
+    raise ValueError(f"Unknown team: {name!r}")
 
 
 def _current_rating(cur, team_id: int) -> float:
