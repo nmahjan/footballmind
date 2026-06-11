@@ -420,6 +420,42 @@ def api_rankings():
     return jsonify({"rankings": rankings, "comp": comp})
 
 
+@app.get("/api/bracket")
+@limiter.exempt
+def api_bracket():
+    """Knockout bracket for a tournament. Returns rounds in order."""
+    comp = request.args.get("comp", "WC")
+    conn = get_conn()
+    KNOCKOUT_ORDER = ["round_of_32", "round_of_16", "quarter_final",
+                      "semi_final", "third_place", "final"]
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT m.stage, th.name AS home, ta.name AS away, "
+            "       m.match_date, m.home_goals, m.away_goals "
+            "FROM matches m "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "JOIN teams th ON th.id = m.home_team_id "
+            "JOIN teams ta ON ta.id = m.away_team_id "
+            "WHERE c.code = %s AND m.stage NOT IN ('regular_season', 'group') "
+            "ORDER BY m.match_date ASC NULLS LAST",
+            (comp,))
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+
+    rounds = {s: [] for s in KNOCKOUT_ORDER}
+    for row in rows:
+        f = dict(zip(cols, row))
+        if f.get("match_date"):
+            f["match_date"] = f["match_date"].isoformat()
+        stage = f["stage"]
+        rounds.setdefault(stage, []).append(f)
+
+    # return only rounds that exist, in order
+    ordered = {s: rounds[s] for s in KNOCKOUT_ORDER if rounds.get(s)}
+    return jsonify({"bracket": ordered, "comp": comp})
+
+
 @app.post("/api/analyze")
 @limiter.limit("10 per hour")   # stricter: each call hits Claude
 def api_analyze():

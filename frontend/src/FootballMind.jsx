@@ -344,10 +344,58 @@ function RankingsPanel({ apiBase, offline }) {
   );
 }
 
-function FixturesPanel({ wcFixtures, plFixtures, onClickFixture }) {
-  const [tab, setTab] = useState("wc");
-  const rows = tab === "wc" ? wcFixtures : plFixtures;
-  const title = tab === "wc" ? "World Cup 2026" : "Premier League";
+const FIXTURE_TABS = [
+  { code: "WC",  label: "🌍 WC"         },
+  { code: "PL",  label: "🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL"          },
+  { code: "PD",  label: "🇪🇸 La Liga"   },
+  { code: "BL1", label: "🇩🇪 Bundesliga" },
+  { code: "SA",  label: "🇮🇹 Serie A"   },
+  { code: "FL1", label: "🇫🇷 Ligue 1"   },
+  { code: "CL",  label: "⭐ CL"         },
+  { code: "DED", label: "🇳🇱 Eredivisie" },
+];
+
+function FixtureRow({ f, onClick }) {
+  return (
+    <button onClick={() => onClick(f)}
+      className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-opacity hover:opacity-70"
+      style={{ background: "transparent" }}>
+      <span className="shrink-0 rounded px-2 py-0.5 text-center text-[10px] font-semibold"
+        style={{ background: C.line, color: C.mute, minWidth: "2.25rem" }}>
+        {STAGE_BADGE[f.stage] ?? "GS"}
+      </span>
+      <span className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium" style={{ color: C.chalk }}>
+        <span className="truncate">{flag(f.home)}{f.home}</span>
+        <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>vs</span>
+        <span className="truncate">{flag(f.away)}{f.away}</span>
+      </span>
+      {f.live && <span className="shrink-0 animate-pulse text-[9px] font-bold" style={{ color: C.away }}>LIVE</span>}
+      {f.home_goals != null
+        ? <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: C.home }}>{f.home_goals}–{f.away_goals}</span>
+        : <span className="shrink-0 text-[10px] whitespace-nowrap" style={{ color: C.mute }}>{fmtDate(f.match_date)}</span>}
+    </button>
+  );
+}
+
+function FixturesPanel({ initialWc, initialPl, onClickFixture, apiBase }) {
+  const [tab, setTab] = useState("WC");
+  // cache fetched fixtures per comp; seed WC and PL from props
+  const [cache, setCache] = useState({ WC: initialWc, PL: initialPl });
+  const [loading, setLoading] = useState(false);
+
+  function switchTab(code) {
+    setTab(code);
+    if (!cache[code] && apiBase) {
+      setLoading(true);
+      fetch(`${apiBase}/api/fixtures?comp=${code}&limit=8`)
+        .then((r) => r.json())
+        .then((d) => setCache((c) => ({ ...c, [code]: d.fixtures ?? [] })))
+        .catch(() => setCache((c) => ({ ...c, [code]: [] })))
+        .finally(() => setLoading(false));
+    }
+  }
+
+  const rows = cache[tab] ?? [];
 
   return (
     <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
@@ -355,43 +403,117 @@ function FixturesPanel({ wcFixtures, plFixtures, onClickFixture }) {
         <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
           Upcoming Fixtures
         </div>
-        <div className="flex gap-1 pb-2">
-          {[["wc", "🌍 World Cup"], ["pl", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League"]].map(([k, label]) => (
-            <button key={k} onClick={() => setTab(k)}
+        <div className="flex gap-1 overflow-x-auto pb-2" style={{ scrollbarWidth: "none" }}>
+          {FIXTURE_TABS.map(({ code, label }) => (
+            <button key={code} onClick={() => switchTab(code)}
               className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-              style={{ background: k === tab ? C.home : C.line, color: k === tab ? "#08120F" : C.mute }}>
+              style={{ background: code === tab ? C.home : C.line, color: code === tab ? "#08120F" : C.mute }}>
               {label}
             </button>
           ))}
         </div>
       </div>
       <div>
-        {rows.slice(0, 6).map((f, i) => (
-          <button key={i} onClick={() => onClickFixture(f)}
-            className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-opacity hover:opacity-70"
-            style={{ background: "transparent", borderTop: i > 0 ? `1px solid ${C.line}` : "none" }}>
-            <span className="shrink-0 rounded px-2 py-0.5 text-center text-[10px] font-semibold"
-              style={{ background: C.line, color: C.mute, minWidth: "2.25rem" }}>
-              {STAGE_BADGE[f.stage] ?? "GS"}
-            </span>
-            <span className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium" style={{ color: C.chalk }}>
-              <span className="truncate">{flag(f.home)}{f.home}</span>
-              <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>vs</span>
-              <span className="truncate">{flag(f.away)}{f.away}</span>
-            </span>
-            {f.live && (
-              <span className="shrink-0 animate-pulse text-[9px] font-bold" style={{ color: C.away }}>LIVE</span>
-            )}
-            {f.home_goals != null
-              ? <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: C.home }}>
-                  {f.home_goals}–{f.away_goals}
-                </span>
-              : <span className="shrink-0 text-[10px] whitespace-nowrap" style={{ color: C.mute }}>
-                  {fmtDate(f.match_date)}
-                </span>}
-          </button>
-        ))}
+        {loading
+          ? <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
+          : rows.length === 0
+            ? <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>No upcoming fixtures found.</div>
+            : rows.slice(0, 6).map((f, i) => (
+                <div key={i} style={{ borderTop: i > 0 ? `1px solid ${C.line}` : "none" }}>
+                  <FixtureRow f={f} onClick={onClickFixture} />
+                </div>
+              ))}
       </div>
+    </div>
+  );
+}
+
+const ROUND_LABEL = {
+  round_of_32: "Round of 32", round_of_16: "Round of 16",
+  quarter_final: "Quarter-Finals", semi_final: "Semi-Finals",
+  third_place: "3rd Place", final: "Final",
+};
+
+function BracketPanel({ apiBase, offline }) {
+  const [bracket, setBracket] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [comp, setComp] = useState("WC");
+
+  function load(c) {
+    if (!apiBase || offline) return;
+    fetch(`${apiBase}/api/bracket?comp=${c}`)
+      .then((r) => r.json())
+      .then((d) => setBracket(d.bracket ?? {}))
+      .catch(() => setBracket({}));
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && bracket === null) load(comp);
+  }
+
+  const rounds = bracket ? Object.keys(bracket) : [];
+
+  return (
+    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+      <button onClick={toggle}
+        className="flex w-full items-center justify-between px-4 py-2.5 text-left transition-opacity hover:opacity-70"
+        style={{ borderBottom: open ? `1px solid ${C.line}` : "none" }}>
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+          🏆 Tournament Bracket
+        </span>
+        <span className="text-xs" style={{ color: C.mute }}>{open ? "hide ▴" : "show ▾"}</span>
+      </button>
+
+      {open && (
+        <div>
+          {/* Comp selector */}
+          <div className="flex gap-1 overflow-x-auto px-3 pt-2 pb-1" style={{ scrollbarWidth: "none" }}>
+            {[["WC", "🌍 World Cup"], ["CL", "⭐ Champions League"]].map(([c, lbl]) => (
+              <button key={c} onClick={() => { setComp(c); setBracket(null); load(c); }}
+                className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                style={{ background: c === comp ? C.home : C.line, color: c === comp ? "#08120F" : C.mute }}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+
+          {bracket === null ? (
+            <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
+          ) : rounds.length === 0 ? (
+            <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>
+              No knockout matches yet — check back once the group stage finishes.
+            </div>
+          ) : rounds.map((round) => (
+            <div key={round}>
+              <div className="border-t px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+                style={{ borderColor: C.line, color: C.mute, background: C.panel2 }}>
+                {ROUND_LABEL[round] ?? round}
+              </div>
+              {bracket[round].map((f, i) => (
+                <div key={i} style={{ borderTop: `1px solid ${C.line}` }}>
+                  <div className="flex items-center gap-3 px-4 py-2.5">
+                    <span className="flex min-w-0 flex-1 items-center gap-1 text-xs" style={{ color: C.chalk }}>
+                      <span className="truncate font-medium">{flag(f.home)}{f.home}</span>
+                      <span className="shrink-0" style={{ color: C.mute }}>vs</span>
+                      <span className="truncate font-medium">{flag(f.away)}{f.away}</span>
+                    </span>
+                    {f.home_goals != null
+                      ? <span className="shrink-0 text-xs font-bold tabular-nums"
+                          style={{ color: C.home }}>{f.home_goals}–{f.away_goals}</span>
+                      : f.match_date
+                        ? <span className="shrink-0 text-[10px] whitespace-nowrap" style={{ color: C.mute }}>
+                            {fmtDate(f.match_date)}
+                          </span>
+                        : <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>TBD</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -704,8 +826,9 @@ export default function FootballMind() {
         {/* ── Sidebar ── */}
         <aside className="flex flex-col gap-4 md:basis-[40%]">
           <AccuracyPanel summary={summary} />
-          <FixturesPanel wcFixtures={wcFixtures} plFixtures={plFixtures} onClickFixture={handleFixtureClick} />
+          <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} onClickFixture={handleFixtureClick} apiBase={API_BASE} />
           {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
+          <BracketPanel apiBase={API_BASE} offline={offline} />
           <RankingsPanel apiBase={API_BASE} offline={offline} />
           <StandingsPanel apiBase={API_BASE} offline={offline} />
         </aside>
