@@ -356,8 +356,68 @@ def api_fixtures():
             "ORDER BY m.match_date ASC LIMIT %s",
             (comp, limit))
         cols = [d[0] for d in cur.description]
-        fixtures = [dict(zip(cols, r)) for r in cur.fetchall()]
+        fixtures = []
+        for row in cur.fetchall():
+            f = dict(zip(cols, row))
+            # Mark as live if match started ≤ 115 min ago and result not yet stored
+            if f.get("match_date") and f.get("home_goals") is None:
+                import datetime as _dt
+                kick_off = f["match_date"]
+                if hasattr(kick_off, "tzinfo") and kick_off.tzinfo is None:
+                    kick_off = kick_off.replace(tzinfo=_dt.timezone.utc)
+                now = _dt.datetime.now(_dt.timezone.utc)
+                elapsed = (now - kick_off).total_seconds() / 60
+                f["live"] = 0 < elapsed < 115
+            else:
+                f["live"] = False
+            # serialise datetime for JSON
+            if f.get("match_date"):
+                f["match_date"] = f["match_date"].isoformat()
+            fixtures.append(f)
     return jsonify({"fixtures": fixtures, "comp": comp})
+
+
+@app.get("/api/rankings")
+@limiter.exempt
+def api_rankings():
+    """National team Elo power rankings, sorted strongest first."""
+    comp = request.args.get("comp", "WC")   # comp filter is optional; defaults to all nationals
+    limit = min(int(request.args.get("limit", 48)), 100)
+    conn = get_conn()
+    with conn.cursor() as cur:
+        if comp:
+            # If a competition is specified, only return teams in that edition
+            cur.execute(
+                "SELECT DISTINCT t.name, tr.rating "
+                "FROM team_ratings tr "
+                "JOIN teams t ON t.id = tr.team_id "
+                "WHERE t.type = 'national' "
+                "  AND EXISTS ("
+                "    SELECT 1 FROM matches m "
+                "    JOIN competition_editions e ON e.id = m.edition_id "
+                "    JOIN competitions c ON c.id = e.competition_id "
+                "    WHERE c.code = %s "
+                "      AND (m.home_team_id = t.id OR m.away_team_id = t.id)"
+                "  ) "
+                "ORDER BY tr.rating DESC LIMIT %s", (comp, limit))
+        else:
+            cur.execute(
+                "SELECT t.name, tr.rating FROM team_ratings tr "
+                "JOIN teams t ON t.id = tr.team_id "
+                "WHERE t.type = 'national' "
+                "ORDER BY tr.rating DESC LIMIT %s", (limit,))
+        rows = cur.fetchall()
+    if not rows:
+        return jsonify({"rankings": [], "comp": comp})
+    max_r = rows[0][1]
+    min_r = rows[-1][1] if len(rows) > 1 else rows[0][1]
+    span = max(max_r - min_r, 1)
+    rankings = [
+        {"rank": i + 1, "team": name, "rating": round(rating),
+         "strength": round((rating - min_r) / span, 3)}
+        for i, (name, rating) in enumerate(rows)
+    ]
+    return jsonify({"rankings": rankings, "comp": comp})
 
 
 @app.get("/api/health")

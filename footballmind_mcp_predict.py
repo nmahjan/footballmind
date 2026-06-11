@@ -55,6 +55,47 @@ def _current_rating(cur, team_id: int) -> float:
     return row[0] if row else 1500.0
 
 
+def _team_form(cur, team_id: int, n: int = 5) -> list[str]:
+    """Last n results for a team: list of 'W'/'D'/'L' newest-first."""
+    cur.execute(
+        "SELECT home_team_id, home_goals, away_goals FROM matches "
+        "WHERE (home_team_id = %s OR away_team_id = %s) "
+        "  AND home_goals IS NOT NULL "
+        "ORDER BY match_date DESC LIMIT %s",
+        (team_id, team_id, n))
+    results = []
+    for home_id, hg, ag in cur.fetchall():
+        if home_id == team_id:
+            results.append("W" if hg > ag else ("D" if hg == ag else "L"))
+        else:
+            results.append("W" if ag > hg else ("D" if ag == hg else "L"))
+    return results
+
+
+def _head_to_head(cur, home_id: int, away_id: int, n: int = 5) -> dict:
+    """Last n meetings between two teams regardless of orientation."""
+    cur.execute(
+        "SELECT home_team_id, home_goals, away_goals FROM matches "
+        "WHERE ((home_team_id = %s AND away_team_id = %s) "
+        "    OR (home_team_id = %s AND away_team_id = %s)) "
+        "  AND home_goals IS NOT NULL "
+        "ORDER BY match_date DESC LIMIT %s",
+        (home_id, away_id, away_id, home_id, n))
+    h_wins = d = a_wins = 0
+    for side_home, hg, ag in cur.fetchall():
+        # normalise: "home" refers to the home_id team regardless of who was home
+        first_won = hg > ag if side_home == home_id else ag > hg
+        second_won = hg > ag if side_home == away_id else ag > hg
+        if hg == ag:
+            d += 1
+        elif first_won:
+            h_wins += 1
+        else:
+            a_wins += 1
+    return {"home_wins": h_wins, "draws": d, "away_wins": a_wins,
+            "played": h_wins + d + a_wins}
+
+
 def _predict_match(conn, home_team, away_team, match_date,
                    stage="regular_season", session_id=None, neutral=None):
     """Predict a match.
@@ -114,6 +155,10 @@ def _predict_match(conn, home_team, away_team, match_date,
             f"xG: {lam_h:.2f} - {lam_a:.2f}",
         ]
 
+        home_form = _team_form(cur, home_id)
+        away_form = _team_form(cur, away_id)
+        h2h = _head_to_head(cur, home_id, away_id)
+
         cur.execute(
             "INSERT INTO predictions (session_id, expected_home_goals, "
             " expected_away_goals, home_win_prob, draw_prob, away_win_prob, "
@@ -134,6 +179,9 @@ def _predict_match(conn, home_team, away_team, match_date,
         "progression":   out.get("progression"),
         "reasoning":     reasoning,
         "key_factors":   key_factors,
+        "home_form":     home_form,
+        "away_form":     away_form,
+        "h2h":           h2h,
     }
 
 

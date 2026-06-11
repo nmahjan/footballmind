@@ -149,6 +149,23 @@ function ProbBar({ home, draw, away, homeName, awayName }) {
   );
 }
 
+const FORM_COLOR = { W: C.home, D: C.draw, L: C.away };
+
+function FormDots({ results, label }) {
+  if (!results?.length) return null;
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px]" style={{ color: C.mute }}>{label}</span>
+      {results.map((r, i) => (
+        <span key={i} className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-[9px] font-bold"
+          style={{ background: FORM_COLOR[r] ?? C.line, color: "#08120F" }}>
+          {r}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function PredictionCard({ p, home, away }) {
   const color = outcomeColor(p.prediction, home, away);
   const [copied, setCopied] = useState(false);
@@ -160,6 +177,9 @@ function PredictionCard({ p, home, away }) {
       setTimeout(() => setCopied(false), 2000);
     });
   }
+
+  const h2h = p.h2h;
+  const hasH2h = h2h?.played > 0;
 
   return (
     <div className="mt-2 rounded-xl border p-4" style={{ borderColor: C.line, background: C.panel, boxShadow: `0 0 0 1px ${C.glow}` }}>
@@ -178,17 +198,100 @@ function PredictionCard({ p, home, away }) {
           </button>
         </div>
       </div>
+
+      {/* Form guides */}
+      {(p.home_form?.length > 0 || p.away_form?.length > 0) && (
+        <div className="mt-2.5 flex flex-col gap-1">
+          <FormDots results={p.home_form} label={home.split(" ")[0]} />
+          <FormDots results={p.away_form} label={away.split(" ")[0]} />
+        </div>
+      )}
+
       <div className="mt-3">
         <ProbBar home={p.home_win_prob} draw={p.draw_prob} away={p.away_win_prob} homeName={home} awayName={away} />
       </div>
+
+      {/* Head-to-head */}
+      {hasH2h && (
+        <div className="mt-2.5 flex items-center gap-1.5 text-[11px]" style={{ color: C.mute }}>
+          <span>H2H ({h2h.played}):</span>
+          <span style={{ color: C.home }}>{h2h.home_wins}W</span>
+          <span>·</span>
+          <span style={{ color: C.draw }}>{h2h.draws}D</span>
+          <span>·</span>
+          <span style={{ color: C.away }}>{h2h.away_wins}L</span>
+          <span style={{ color: C.mute }}>for {home.split(" ")[0]}</span>
+        </div>
+      )}
+
       {p.key_factors?.length > 0 && (
-        <ul className="mt-3 space-y-1">
+        <ul className="mt-2.5 space-y-1">
           {p.key_factors.map((f, i) => (
             <li key={i} className="flex gap-2 text-xs" style={{ color: C.mute }}>
               <span style={{ color: color }}>▸</span>{f}
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+function RankingsPanel({ apiBase, offline }) {
+  const [rows, setRows] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  function load() {
+    if (loaded || offline || !apiBase) return;
+    fetch(`${apiBase}/api/rankings?comp=WC&limit=48`)
+      .then((r) => r.json())
+      .then((d) => { setRows(d.rankings ?? []); setLoaded(true); })
+      .catch(() => setLoaded(true));
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => { setOpen(true); load(); }}
+        className="flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left transition-opacity hover:opacity-70"
+        style={{ borderColor: C.line, background: C.panel }}>
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+          🏆 WC Power Rankings
+        </span>
+        <span className="text-xs" style={{ color: C.mute }}>show ▾</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+      <button onClick={() => setOpen(false)}
+        className="flex w-full items-center justify-between border-b px-4 py-2.5 text-left transition-opacity hover:opacity-70"
+        style={{ borderColor: C.line }}>
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+          🏆 WC Power Rankings
+        </span>
+        <span className="text-xs" style={{ color: C.mute }}>hide ▴</span>
+      </button>
+      {rows.length === 0 ? (
+        <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>
+          {offline ? "Available when backend is connected." : "Run seed-elo + sync to populate."}
+        </div>
+      ) : (
+        <div className="divide-y" style={{ divideColor: C.line }}>
+          {rows.map((r) => (
+            <div key={r.rank} className="flex items-center gap-3 px-4 py-1.5"
+              style={{ borderTop: r.rank > 1 ? `1px solid ${C.line}` : "none" }}>
+              <span className="w-5 shrink-0 text-[11px] tabular-nums text-right" style={{ color: C.mute }}>{r.rank}</span>
+              <span className="flex-1 text-xs" style={{ color: C.chalk }}>{flag(r.team)}{r.team}</span>
+              {/* Strength bar */}
+              <div className="h-1.5 w-20 overflow-hidden rounded-full" style={{ background: C.line }}>
+                <div className="h-full rounded-full" style={{ width: `${Math.round(r.strength * 100)}%`, background: C.home }} />
+              </div>
+              <span className="w-12 shrink-0 text-right text-[11px] tabular-nums" style={{ color: C.mute }}>{r.rating}</span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -229,6 +332,9 @@ function FixturesPanel({ wcFixtures, plFixtures, onClickFixture }) {
               <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>vs</span>
               <span className="truncate">{flag(f.away)}{f.away}</span>
             </span>
+            {f.live && (
+              <span className="shrink-0 animate-pulse text-[9px] font-bold" style={{ color: C.away }}>LIVE</span>
+            )}
             {f.home_goals != null
               ? <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: C.home }}>
                   {f.home_goals}–{f.away_goals}
@@ -553,6 +659,7 @@ export default function FootballMind() {
           <AccuracyPanel summary={summary} />
           <FixturesPanel wcFixtures={wcFixtures} plFixtures={plFixtures} onClickFixture={handleFixtureClick} />
           {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
+          <RankingsPanel apiBase={API_BASE} offline={offline} />
           <StandingsPanel apiBase={API_BASE} offline={offline} />
         </aside>
       </div>
