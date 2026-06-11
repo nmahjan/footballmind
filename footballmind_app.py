@@ -270,6 +270,58 @@ def api_history():
     return jsonify({"history": rows})
 
 
+@app.get("/api/groups")
+@limiter.exempt
+def api_groups():
+    """Per-group standings for a tournament (default WC). Returns {A: [...], B: [...]}."""
+    comp = request.args.get("comp", "WC")
+    conn = get_conn()
+    with conn.cursor() as cur:
+        # Aggregate home and away stats per team per group
+        cur.execute(
+            "SELECT g, team, SUM(W) W, SUM(D) D, SUM(L) L, "
+            "       SUM(GF) GF, SUM(GA) GA, SUM(Pts) Pts "
+            "FROM ("
+            "  SELECT m.group_name g, th.name team,"
+            "    COUNT(*) FILTER (WHERE m.home_goals > m.away_goals) W,"
+            "    COUNT(*) FILTER (WHERE m.home_goals = m.away_goals) D,"
+            "    COUNT(*) FILTER (WHERE m.home_goals < m.away_goals) L,"
+            "    COALESCE(SUM(m.home_goals),0) GF, COALESCE(SUM(m.away_goals),0) GA,"
+            "    SUM(CASE WHEN m.home_goals > m.away_goals THEN 3"
+            "             WHEN m.home_goals = m.away_goals THEN 1 ELSE 0 END) Pts"
+            "  FROM matches m"
+            "  JOIN competition_editions e ON e.id = m.edition_id"
+            "  JOIN competitions c ON c.id = e.competition_id"
+            "  JOIN teams th ON th.id = m.home_team_id"
+            "  WHERE c.code = %s AND m.home_goals IS NOT NULL AND m.group_name IS NOT NULL"
+            "  GROUP BY m.group_name, th.name"
+            "  UNION ALL"
+            "  SELECT m.group_name, ta.name,"
+            "    COUNT(*) FILTER (WHERE m.away_goals > m.home_goals),"
+            "    COUNT(*) FILTER (WHERE m.away_goals = m.home_goals),"
+            "    COUNT(*) FILTER (WHERE m.away_goals < m.home_goals),"
+            "    COALESCE(SUM(m.away_goals),0), COALESCE(SUM(m.home_goals),0),"
+            "    SUM(CASE WHEN m.away_goals > m.home_goals THEN 3"
+            "             WHEN m.away_goals = m.home_goals THEN 1 ELSE 0 END)"
+            "  FROM matches m"
+            "  JOIN competition_editions e ON e.id = m.edition_id"
+            "  JOIN competitions c ON c.id = e.competition_id"
+            "  JOIN teams ta ON ta.id = m.away_team_id"
+            "  WHERE c.code = %s AND m.home_goals IS NOT NULL AND m.group_name IS NOT NULL"
+            "  GROUP BY m.group_name, ta.name"
+            ") s GROUP BY g, team ORDER BY g, Pts DESC, (SUM(GF)-SUM(GA)) DESC",
+            (comp, comp))
+        rows = cur.fetchall()
+
+    groups = {}
+    for g, team, W, D, L, GF, GA, Pts in rows:
+        groups.setdefault(g, []).append({
+            "team": team, "W": W, "D": D, "L": L,
+            "GD": GF - GA, "GF": GF, "GA": GA, "Pts": Pts,
+        })
+    return jsonify({"groups": groups, "comp": comp})
+
+
 @app.get("/api/fixtures")
 @limiter.exempt
 def api_fixtures():

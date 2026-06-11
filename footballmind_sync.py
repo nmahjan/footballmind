@@ -141,15 +141,19 @@ def upsert_match(cur, edition_id, m, team_type):
     away_id = upsert_team(cur, m["awayTeam"]["name"], team_type, m["awayTeam"]["id"])
     stage = STAGE_MAP.get(m.get("stage", "REGULAR_SEASON"), "regular_season")
     ft = (m.get("score") or {}).get("fullTime") or {}
+    group_name = m.get("group")   # e.g. "GROUP_A" from football-data.org
+    if group_name:
+        # normalise "GROUP_A" -> "A"
+        group_name = group_name.replace("GROUP_", "").replace("Group ", "").strip()
     cur.execute(
         "INSERT INTO matches (edition_id, stage, match_date, home_team_id, "
-        " away_team_id, home_goals, away_goals, external_id) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+        " away_team_id, home_goals, away_goals, external_id, group_name) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
         "ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET "
         "  home_goals = EXCLUDED.home_goals, away_goals = EXCLUDED.away_goals, "
-        "  stage = EXCLUDED.stage",
+        "  stage = EXCLUDED.stage, group_name = EXCLUDED.group_name",
         (edition_id, stage, m["utcDate"], home_id, away_id,
-         ft.get("home"), ft.get("away"), str(m["id"])))
+         ft.get("home"), ft.get("away"), str(m["id"]), group_name))
 
 
 # ----------------------------------------------------------------------

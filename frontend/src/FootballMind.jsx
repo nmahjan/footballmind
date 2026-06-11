@@ -151,14 +151,31 @@ function ProbBar({ home, draw, away, homeName, awayName }) {
 
 function PredictionCard({ p, home, away }) {
   const color = outcomeColor(p.prediction, home, away);
+  const [copied, setCopied] = useState(false);
+
+  function share() {
+    const txt = `${flag(home)}${home} ${pct(p.home_win_prob)} · Draw ${pct(p.draw_prob)} · ${flag(away)}${away} ${pct(p.away_win_prob)}\nPrediction: ${p.prediction} (${pct(p.confidence)} confidence)\nvia FootballMind`;
+    navigator.clipboard?.writeText(txt).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
   return (
     <div className="mt-2 rounded-xl border p-4" style={{ borderColor: C.line, background: C.panel, boxShadow: `0 0 0 1px ${C.glow}` }}>
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm font-semibold" style={{ color: C.chalk }}>
           {flag(home)}{home} <span style={{ color: C.mute }}>vs</span> {flag(away)}{away}
         </div>
-        <div className="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ background: color, color: "#08120F" }}>
-          {p.prediction} · {pct(p.confidence)}
+        <div className="flex items-center gap-2">
+          <div className="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ background: color, color: "#08120F" }}>
+            {p.prediction} · {pct(p.confidence)}
+          </div>
+          <button onClick={share} title="Copy prediction"
+            className="rounded px-1.5 py-0.5 text-[11px] transition-opacity hover:opacity-70"
+            style={{ background: C.line, color: copied ? C.home : C.mute }}>
+            {copied ? "✓" : "⎘"}
+          </button>
         </div>
       </div>
       <div className="mt-3">
@@ -177,30 +194,41 @@ function PredictionCard({ p, home, away }) {
   );
 }
 
-function FixturesPanel({ fixtures, onClickFixture }) {
+function FixturesPanel({ wcFixtures, plFixtures, onClickFixture }) {
+  const [tab, setTab] = useState("wc");
+  const rows = tab === "wc" ? wcFixtures : plFixtures;
+  const title = tab === "wc" ? "World Cup 2026" : "Premier League";
+
   return (
     <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
-      <div className="border-b px-4 py-2.5 text-xs font-semibold uppercase tracking-wider"
-        style={{ borderColor: C.line, color: C.mute }}>
-        World Cup 2026
+      <div className="border-b px-4 pt-3 pb-0" style={{ borderColor: C.line }}>
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+          Upcoming Fixtures
+        </div>
+        <div className="flex gap-1 pb-2">
+          {[["wc", "🌍 World Cup"], ["pl", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League"]].map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+              style={{ background: k === tab ? C.home : C.line, color: k === tab ? "#08120F" : C.mute }}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="divide-y" style={{ divideColor: C.line }}>
-        {fixtures.slice(0, 8).map((f, i) => (
+      <div>
+        {rows.slice(0, 6).map((f, i) => (
           <button key={i} onClick={() => onClickFixture(f)}
             className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-opacity hover:opacity-70"
             style={{ background: "transparent", borderTop: i > 0 ? `1px solid ${C.line}` : "none" }}>
-            {/* Stage badge — fixed width so team names always start at the same column */}
-            <span className="shrink-0 rounded px-2 py-0.5 text-center text-[10px] font-semibold tabular-nums"
+            <span className="shrink-0 rounded px-2 py-0.5 text-center text-[10px] font-semibold"
               style={{ background: C.line, color: C.mute, minWidth: "2.25rem" }}>
-              {STAGE_BADGE[f.stage] ?? "●"}
+              {STAGE_BADGE[f.stage] ?? "GS"}
             </span>
-            {/* Teams */}
             <span className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium" style={{ color: C.chalk }}>
               <span className="truncate">{flag(f.home)}{f.home}</span>
               <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>vs</span>
               <span className="truncate">{flag(f.away)}{f.away}</span>
             </span>
-            {/* Score or date */}
             {f.home_goals != null
               ? <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: C.home }}>
                   {f.home_goals}–{f.away_goals}
@@ -211,6 +239,64 @@ function FixturesPanel({ fixtures, onClickFixture }) {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function GroupsPanel({ groups }) {
+  const letters = Object.keys(groups).sort();
+  const [open, setOpen] = useState(letters[0] ?? null);
+
+  if (letters.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+      <div className="border-b px-4 py-2.5 text-xs font-semibold uppercase tracking-wider"
+        style={{ borderColor: C.line, color: C.mute }}>
+        WC Group Standings
+      </div>
+      {/* Group tabs */}
+      <div className="flex flex-wrap gap-1 px-3 pt-2 pb-1">
+        {letters.map((g) => (
+          <button key={g} onClick={() => setOpen(g)}
+            className="rounded px-2 py-0.5 text-[11px] font-semibold transition-colors"
+            style={{ background: g === open ? C.home : C.line, color: g === open ? "#08120F" : C.mute }}>
+            {g}
+          </button>
+        ))}
+      </div>
+      {open && groups[open] && (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[10px] uppercase" style={{ color: C.mute }}>
+              <th className="px-3 py-1 text-left font-medium">Team</th>
+              <th className="px-2 py-1 text-center font-medium">W</th>
+              <th className="px-2 py-1 text-center font-medium">D</th>
+              <th className="px-2 py-1 text-center font-medium">L</th>
+              <th className="px-2 py-1 text-right font-medium">GD</th>
+              <th className="px-3 py-1 text-right font-medium">Pts</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups[open].map((r, i) => (
+              <tr key={i} className="border-t" style={{ borderColor: C.line }}>
+                <td className="px-3 py-1.5 text-xs" style={{ color: C.chalk }}>
+                  {flag(r.team)}{r.team}
+                </td>
+                <td className="px-2 py-1.5 text-center text-xs tabular-nums" style={{ color: C.chalk }}>{r.W}</td>
+                <td className="px-2 py-1.5 text-center text-xs tabular-nums" style={{ color: C.mute }}>{r.D}</td>
+                <td className="px-2 py-1.5 text-center text-xs tabular-nums" style={{ color: C.mute }}>{r.L}</td>
+                <td className="px-2 py-1.5 text-right text-xs tabular-nums" style={{ color: C.mute }}>
+                  {r.GD > 0 ? `+${r.GD}` : r.GD}
+                </td>
+                <td className="px-3 py-1.5 text-right text-xs font-bold tabular-nums" style={{ color: r.Pts > 0 ? C.home : C.chalk }}>
+                  {r.Pts}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
@@ -314,7 +400,9 @@ export default function FootballMind() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [fixtures, setFixtures] = useState(DEMO_FIXTURES);
+  const [wcFixtures, setWcFixtures] = useState(DEMO_FIXTURES);
+  const [plFixtures, setPlFixtures] = useState([]);
+  const [groups, setGroups] = useState({});
   const [summary, setSummary] = useState(null);
   const [offline, setOffline] = useState(false);
   const scroller = useRef(null);
@@ -324,13 +412,19 @@ export default function FootballMind() {
     fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
       .then((d) => setSummary(d.summary)).catch(() => {});
     fetch(`${API_BASE}/api/fixtures?comp=WC&limit=16`).then((r) => r.json())
-      .then((d) => d.fixtures?.length && setFixtures(d.fixtures)).catch(() => {});
+      .then((d) => d.fixtures?.length && setWcFixtures(d.fixtures)).catch(() => {});
+    fetch(`${API_BASE}/api/fixtures?comp=PL&limit=10`).then((r) => r.json())
+      .then((d) => d.fixtures?.length && setPlFixtures(d.fixtures)).catch(() => {});
+    fetch(`${API_BASE}/api/groups?comp=WC`).then((r) => r.json())
+      .then((d) => d.groups && setGroups(d.groups)).catch(() => {});
   }, []);
 
   useEffect(() => { scroller.current?.scrollTo(0, scroller.current.scrollHeight); }, [messages, busy]);
 
   function handleFixtureClick(f) {
     setInput(`Predict ${f.home} vs ${f.away}`);
+    // scroll chat into view on mobile
+    scroller.current?.scrollIntoView({ behavior: "smooth" });
   }
 
   async function send(text) {
@@ -434,7 +528,8 @@ export default function FootballMind() {
         {/* ── Sidebar ── */}
         <aside className="flex flex-col gap-4 md:basis-[40%]">
           <AccuracyPanel summary={summary} />
-          <FixturesPanel fixtures={fixtures} onClickFixture={handleFixtureClick} />
+          <FixturesPanel wcFixtures={wcFixtures} plFixtures={plFixtures} onClickFixture={handleFixtureClick} />
+          {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
           <StandingsPanel apiBase={API_BASE} offline={offline} />
         </aside>
       </div>
