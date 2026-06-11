@@ -377,25 +377,32 @@ function FixtureRow({ f, onClick }) {
   );
 }
 
-function FixturesPanel({ initialWc, initialPl, onClickFixture, apiBase }) {
+function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, apiBase }) {
   const [tab, setTab] = useState("WC");
-  // cache fetched fixtures per comp; seed WC and PL from props
-  const [cache, setCache] = useState({ WC: initialWc, PL: initialPl });
+  // Lazy-loaded tabs only (WC/PL come from parent after async fetch)
+  const [cache, setCache] = useState({});
+  const [loaded, setLoaded] = useState(new Set());
   const [loading, setLoading] = useState(false);
+
+  function rowsFor(code) {
+    if (code === "WC") return initialWc ?? [];
+    if (code === "PL") return initialPl ?? [];
+    return cache[code] ?? [];
+  }
 
   function switchTab(code) {
     setTab(code);
-    if (!cache[code] && apiBase) {
-      setLoading(true);
-      fetch(`${apiBase}/api/fixtures?comp=${code}&limit=16`)
-        .then((r) => r.json())
-        .then((d) => setCache((c) => ({ ...c, [code]: d.fixtures ?? [] })))
-        .catch(() => setCache((c) => ({ ...c, [code]: [] })))
-        .finally(() => setLoading(false));
-    }
+    if (code === "WC" || code === "PL" || loaded.has(code) || !apiBase) return;
+    setLoading(true);
+    fetch(`${apiBase}/api/fixtures?comp=${code}&limit=16`)
+      .then((r) => r.json())
+      .then((d) => setCache((c) => ({ ...c, [code]: d.fixtures ?? [] })))
+      .catch(() => setCache((c) => ({ ...c, [code]: [] })))
+      .finally(() => { setLoaded((s) => new Set(s).add(code)); setLoading(false); });
   }
 
-  const rows = cache[tab] ?? [];
+  const rows = rowsFor(tab);
+  const waitingParent = (tab === "WC" || tab === "PL") && apiBase && !sidebarLoaded;
 
   return (
     <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
@@ -414,7 +421,7 @@ function FixturesPanel({ initialWc, initialPl, onClickFixture, apiBase }) {
         </div>
       </div>
       <div>
-        {loading ? (
+        {loading || waitingParent ? (
           <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
         ) : rows.length === 0 ? (
           <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>No upcoming fixtures found.</div>
@@ -838,6 +845,7 @@ export default function FootballMind() {
   const [summary, setSummary] = useState(null);
   const [offline, setOffline] = useState(!API_BASE);
   const [backendStatus, setBackendStatus] = useState(API_BASE ? "connecting" : "demo");
+  const [sidebarLoaded, setSidebarLoaded] = useState(false);
   const scroller = useRef(null);
 
   async function loadSidebarData() {
@@ -853,13 +861,15 @@ export default function FootballMind() {
       const wcData = await wcRes.json();
       const plData = await plRes.json();
       const grpData = await grpRes.json();
-      if (wcData.fixtures?.length) setWcFixtures(wcData.fixtures);
-      if (plData.fixtures?.length) setPlFixtures(plData.fixtures);
+      if (wcData.fixtures) setWcFixtures(wcData.fixtures);
+      if (plData.fixtures) setPlFixtures(plData.fixtures);
       if (grpData.groups) setGroups(grpData.groups);
       setOffline(false);
       setBackendStatus("live");
     } catch {
       setBackendStatus((s) => (s === "live" ? "live" : "unreachable"));
+    } finally {
+      setSidebarLoaded(true);
     }
   }
 
@@ -1026,7 +1036,7 @@ export default function FootballMind() {
         {/* ── Sidebar ── */}
         <aside className="flex flex-col gap-4 md:basis-[40%]">
           <AccuracyPanel summary={summary} />
-          <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} onClickFixture={handleFixtureClick} apiBase={API_BASE} />
+          <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} />
           {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
           <BracketPanel apiBase={API_BASE} offline={offline} />
           <StandoutsPanel apiBase={API_BASE} offline={offline} />
