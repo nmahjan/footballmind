@@ -89,12 +89,12 @@ function fmtDate(iso) {
     + " " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
-// ─── Demo data ────────────────────────────────────────────────────────────
+// Demo data — only used when VITE_API_BASE is empty (local preview).
 const DEMO_FIXTURES = [
-  { home: "Mexico", away: "South Africa", match_date: "2026-06-11T19:00:00Z", stage: "GROUP_STAGE" },
-  { home: "USA", away: "Canada", match_date: "2026-06-12T19:00:00Z", stage: "GROUP_STAGE" },
-  { home: "Spain", away: "Cape Verde Islands", match_date: "2026-06-13T19:00:00Z", stage: "GROUP_STAGE" },
-  { home: "Brazil", away: "Morocco", match_date: "2026-06-13T15:00:00Z", stage: "GROUP_STAGE" },
+  { home: "Mexico", away: "South Africa", match_date: "2026-06-11T19:00:00Z", stage: "group" },
+  { home: "South Korea", away: "Czechia", match_date: "2026-06-12T02:00:00Z", stage: "group" },
+  { home: "United States", away: "Paraguay", match_date: "2026-06-13T01:00:00Z", stage: "group" },
+  { home: "Brazil", away: "Morocco", match_date: "2026-06-13T22:00:00Z", stage: "group" },
 ];
 
 const DEMO_STANDINGS = [
@@ -832,23 +832,50 @@ export default function FootballMind() {
   const [input, setInput] = useState("");
   const [venueMode, setVenueMode] = useState(null); // null=auto, true=neutral, false=home
   const [busy, setBusy] = useState(false);
-  const [wcFixtures, setWcFixtures] = useState(DEMO_FIXTURES);
+  const [wcFixtures, setWcFixtures] = useState(API_BASE ? [] : DEMO_FIXTURES);
   const [plFixtures, setPlFixtures] = useState([]);
   const [groups, setGroups] = useState({});
   const [summary, setSummary] = useState(null);
-  const [offline, setOffline] = useState(false);
+  const [offline, setOffline] = useState(!API_BASE);
+  const [backendStatus, setBackendStatus] = useState(API_BASE ? "connecting" : "demo");
   const scroller = useRef(null);
 
+  async function loadSidebarData() {
+    if (!API_BASE) return;
+    try {
+      const [healthRes, wcRes, plRes, grpRes] = await Promise.all([
+        fetch(`${API_BASE}/api/health`),
+        fetch(`${API_BASE}/api/fixtures?comp=WC&limit=16`),
+        fetch(`${API_BASE}/api/fixtures?comp=PL&limit=10`),
+        fetch(`${API_BASE}/api/groups?comp=WC`),
+      ]);
+      if (!healthRes.ok) throw new Error("health");
+      const wcData = await wcRes.json();
+      const plData = await plRes.json();
+      const grpData = await grpRes.json();
+      if (wcData.fixtures?.length) setWcFixtures(wcData.fixtures);
+      if (plData.fixtures?.length) setPlFixtures(plData.fixtures);
+      if (grpData.groups) setGroups(grpData.groups);
+      setOffline(false);
+      setBackendStatus("live");
+    } catch {
+      setBackendStatus((s) => (s === "live" ? "live" : "unreachable"));
+    }
+  }
+
   useEffect(() => {
-    if (!API_BASE) { setOffline(true); setSummary({ graded: 0, correct: 0, hit_rate: null }); return; }
+    if (!API_BASE) {
+      setOffline(true);
+      setSummary({ graded: 0, correct: 0, hit_rate: null });
+      return;
+    }
     fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
       .then((d) => setSummary(d.summary)).catch(() => {});
-    fetch(`${API_BASE}/api/fixtures?comp=WC&limit=16`).then((r) => r.json())
-      .then((d) => d.fixtures?.length && setWcFixtures(d.fixtures)).catch(() => {});
-    fetch(`${API_BASE}/api/fixtures?comp=PL&limit=10`).then((r) => r.json())
-      .then((d) => d.fixtures?.length && setPlFixtures(d.fixtures)).catch(() => {});
-    fetch(`${API_BASE}/api/groups?comp=WC`).then((r) => r.json())
-      .then((d) => d.groups && setGroups(d.groups)).catch(() => {});
+    loadSidebarData();
+    // Render free tier sleeps — retry while it cold-starts
+    const t1 = setTimeout(loadSidebarData, 4000);
+    const t2 = setTimeout(loadSidebarData, 12000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
   useEffect(() => { scroller.current?.scrollTo(0, scroller.current.scrollHeight); }, [messages, busy]);
@@ -878,11 +905,16 @@ export default function FootballMind() {
       const data = await res.json();
       setMessages((m) => [...m, { role: "bot", text: data.reply, prediction: data.prediction, teams }]);
     } catch {
-      if (teams) {
-        const p = demoPredict(teams.home, teams.away);
-        setMessages((m) => [...m, { role: "bot", text: `${p.prediction} (${pct(p.confidence)} confidence). ${p.reasoning}`, prediction: p, teams, demo: true }]);
+      if (!API_BASE) {
+        if (teams) {
+          const p = demoPredict(teams.home, teams.away);
+          setMessages((m) => [...m, { role: "bot", text: `${p.prediction} (${pct(p.confidence)} confidence). ${p.reasoning}`, prediction: p, teams, demo: true }]);
+        } else {
+          setMessages((m) => [...m, { role: "bot", text: 'Try a matchup like "Predict Mexico vs USA", or "show the table".', demo: true }]);
+        }
       } else {
-        setMessages((m) => [...m, { role: "bot", text: 'Try a matchup like "Predict Mexico vs USA", or "show the table".', demo: true }]);
+        setMessages((m) => [...m, { role: "bot", text: "Backend unavailable — Render may be waking up. Wait ~30s and try again." }]);
+        loadSidebarData();
       }
     } finally { setBusy(false); }
   }
@@ -896,9 +928,21 @@ export default function FootballMind() {
           <span className="text-lg font-bold tracking-tight">Football Mind</span>
           <span className="text-xs" style={{ color: C.mute }}>match intelligence</span>
         </div>
-        {offline && (
+        {offline ? (
           <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: C.panel, color: C.away }}>
             demo data
+          </span>
+        ) : backendStatus === "connecting" ? (
+          <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: C.panel, color: C.mute }}>
+            connecting…
+          </span>
+        ) : backendStatus === "unreachable" ? (
+          <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: C.panel, color: C.away }}>
+            backend waking up
+          </span>
+        ) : (
+          <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: C.panel, color: C.home }}>
+            live
           </span>
         )}
       </header>
