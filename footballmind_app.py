@@ -25,6 +25,7 @@ from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 from flask_limiter import Limiter
 
+from footballmind_lineup import get_predicted_lineup
 from footballmind_mcp_predict import _predict_match
 from footballmind_services import (
     get_bracket,
@@ -369,6 +370,22 @@ def api_players_formations():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"team": team, "comp": comp, "formations": formations})
+
+
+@app.get("/api/players/predicted-lineup")
+@limiter.exempt
+def api_players_predicted_lineup():
+    team = request.args.get("team", "").strip()
+    if not team:
+        return jsonify({"error": "team is required"}), 400
+    comp = request.args.get("comp", "WC")
+    try:
+        result = get_predicted_lineup(get_conn(), team, comp)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if result.get("error"):
+        return jsonify(result), 404
+    return jsonify(result)
 
 
 @app.get("/api/players/lineup")

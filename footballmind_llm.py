@@ -165,6 +165,22 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_predicted_lineup",
+            "description": "Predict the most likely starting XI for a team. "
+                           "Adjusts for red-card suspensions and injury flags.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "team": {"type": "string"},
+                    "comp": {"type": "string", "default": "WC"},
+                },
+                "required": ["team"],
+            },
+        },
+    },
 ]
 
 
@@ -260,6 +276,13 @@ def _run_tool(conn, name, args, session_id):
     if name == "get_match_lineup":
         result = get_match_lineup(conn, args["home"], args["away"], args.get("comp"))
         return result or {"error": "No finished match with lineup data found"}
+    if name == "get_predicted_lineup":
+        from footballmind_lineup import get_predicted_lineup
+        try:
+            result = get_predicted_lineup(conn, args["team"], args.get("comp", "WC"))
+        except ValueError as e:
+            return {"error": str(e)}
+        return result
     return {"error": f"unknown tool {name}"}
 
 

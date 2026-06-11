@@ -30,6 +30,7 @@ from mcp.server.fastmcp import FastMCP
 
 from footballmind_db import get_connection
 from footballmind_mcp_predict import _predict_match
+from footballmind_lineup import get_predicted_lineup as fetch_predicted_lineup
 from footballmind_services import (
     get_bracket,
     get_fixtures,
@@ -171,6 +172,19 @@ def get_match_lineup(home: str, away: str, comp: str | None = None) -> dict:
         result = fetch_match_lineup(conn, home, away, comp)
         if result is None:
             return {"error": f"No finished match found for {home} vs {away}"}
+        return result
+
+
+@mcp.tool()
+def get_predicted_lineup(team: str, comp: str = "WC") -> dict:
+    """Most likely starting XI for a team, accounting for injuries and red-card suspensions."""
+    with get_connection() as conn:
+        try:
+            result = fetch_predicted_lineup(conn, team, comp)
+        except ValueError as e:
+            return {"error": str(e)}
+        if result.get("error"):
+            return result
         return result
 
 

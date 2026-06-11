@@ -740,7 +740,9 @@ function PlayerCard({ p, onSelect, compact }) {
       <div className="flex items-center justify-between gap-1 mt-0.5">
         <span className="text-[10px] truncate" style={{ color: C.mute }}>
           {flag(p.team)}{p.team}
-          {p.nationality && p.nationality !== p.team ? ` · ${p.nationality}` : ""}
+          {p.club_team && p.club_team !== p.team
+            ? ` · ${p.club_team}`
+            : p.nationality && p.nationality !== p.team ? ` · ${p.nationality}` : ""}
         </span>
         {p.age && <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>{p.age}y</span>}
       </div>
@@ -750,7 +752,21 @@ function PlayerCard({ p, onSelect, compact }) {
           {p.appearances != null ? ` · ${p.appearances} apps` : ""}
         </div>
       )}
-      {p.team_rating != null && !compact && !(p.goals != null) && (
+      {p.standout_rating != null && !compact && (
+        <div className="mt-1 flex items-center gap-1.5">
+          <div className="h-1 flex-1 overflow-hidden rounded-full" style={{ background: C.line }}>
+            <div className="h-full rounded-full"
+              style={{
+                width: `${Math.min(100, Math.round(p.standout_rating))}%`,
+                background: pm.bg === "#7B1F1F" ? C.away : pm.bg === "#1A6B47" ? C.home : C.draw,
+              }} />
+          </div>
+          <span className="shrink-0 text-[9px] font-bold tabular-nums" style={{ color: C.mute }}>
+            {Math.round(p.standout_rating)}
+          </span>
+        </div>
+      )}
+      {p.team_rating != null && !compact && p.standout_rating == null && !(p.goals != null) && (
         <div className="h-0.5 w-full overflow-hidden rounded-full mt-1" style={{ background: C.line }}>
           <div className="h-full rounded-full"
             style={{
@@ -760,6 +776,36 @@ function PlayerCard({ p, onSelect, compact }) {
         </div>
       )}
     </button>
+  );
+}
+
+function PredictedPitch({ rows, formation }) {
+  return (
+    <div className="rounded-xl border overflow-hidden" style={{ borderColor: "#2a5c3e", background: "linear-gradient(180deg, #1a4d35 0%, #143d2a 100%)" }}>
+      <div className="px-3 py-2 flex items-center justify-between border-b" style={{ borderColor: "#2a5c3e55" }}>
+        <span className="text-[11px] font-bold tracking-wider" style={{ color: "#b8e6c8" }}>{formation}</span>
+        <span className="text-[9px] uppercase tracking-wider" style={{ color: "#7ab896" }}>Predicted XI</span>
+      </div>
+      <div className="px-2 py-3 space-y-2 min-h-[220px] flex flex-col justify-around">
+        {(rows ?? []).map((row, ri) => (
+          <div key={ri} className="flex justify-center gap-1.5 flex-wrap">
+            {row.players.map((p, pi) => (
+              <div key={pi} className="flex flex-col items-center w-[72px]">
+                <div className="w-9 h-9 rounded-full flex items-center justify-center text-[9px] font-bold border-2"
+                  style={{ background: "#0d2818", borderColor: "#4ade80", color: "#ecfdf5" }}>
+                  {POS_META[row.line]?.label?.slice(0, 1) ?? "?"}
+                </div>
+                <span className="mt-1 text-[9px] font-semibold text-center leading-tight line-clamp-2 w-full"
+                  style={{ color: "#f0fdf4" }}>
+                  {p.name.split(" ").pop()}
+                </span>
+                <span className="text-[8px] tabular-nums" style={{ color: "#86efac88" }}>{Math.round(p.score)}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -774,6 +820,16 @@ function PlayersSidebar({ apiBase, offline, onAsk }) {
   const [search, setSearch] = useState("");
   const [searchHits, setSearchHits] = useState(null);
   const [scorers, setScorers] = useState(null);
+  const [lineup, setLineup] = useState(null);
+
+  function loadPredictedLineup(t, c) {
+    if (!apiBase || offline || !t) { setLineup(null); return; }
+    setLineup(null);
+    fetch(`${apiBase}/api/players/predicted-lineup?team=${encodeURIComponent(t)}&comp=${c}`)
+      .then((r) => r.json())
+      .then((d) => (d.error ? setLineup({ error: d.error }) : setLineup(d)))
+      .catch(() => setLineup({ error: "Failed to load predicted lineup" }));
+  }
 
   function loadScorers(c) {
     if (!apiBase || offline) { setScorers([]); return; }
@@ -800,7 +856,8 @@ function PlayersSidebar({ apiBase, offline, onAsk }) {
       .then((d) => {
         const list = d.teams ?? [];
         setTeams(list);
-        if (list.length && !list.includes(team)) setTeam(list[0]);
+        const preferred = list.includes("Spain") ? "Spain" : list[0];
+        if (list.length && (!team || !list.includes(team))) setTeam(preferred);
       })
       .catch(() => setTeams([]));
   }
@@ -823,6 +880,7 @@ function PlayersSidebar({ apiBase, offline, onAsk }) {
   useEffect(() => {
     if (tab === "squad" && team) loadSquad(team, comp);
     if (tab === "scorers") loadScorers(comp);
+    if (tab === "lineup" && team) loadPredictedLineup(team, comp);
   }, [tab, team, comp, apiBase, offline]);
 
   function pickComp(c) {
@@ -832,6 +890,10 @@ function PlayersSidebar({ apiBase, offline, onAsk }) {
 
   function askPlayer(p) {
     onAsk(`Tell me about ${p.name} (${p.team}) — their role, strengths, and why they matter`);
+  }
+
+  function askTeamLineup(t) {
+    onAsk(`What's ${t}'s most likely starting XI for ${comp}? Who's out injured or suspended?`);
   }
 
   function askTeamSquad(t) {
@@ -863,7 +925,7 @@ function PlayersSidebar({ apiBase, offline, onAsk }) {
           Players & Squads
         </div>
         <p className="mt-1 text-[10px]" style={{ color: C.mute }}>
-          Tap a player or team to ask the chat about them.
+          Tap a player to ask the chat. Standouts ranked by form + team strength (max 2 per nation).
         </p>
       </div>
 
@@ -878,9 +940,9 @@ function PlayersSidebar({ apiBase, offline, onAsk }) {
           ))}
         </div>
         <div className="flex gap-1 flex-wrap">
-          {[["standouts", "⚡ Standouts"], ["scorers", "🥅 Top scorers"], ["squad", "📋 Team squad"]].map(([k, lbl]) => (
+          {[["standouts", "⚡ Standouts"], ["scorers", "🥅 Scorers"], ["lineup", "⚽ Predicted XI"], ["squad", "📋 Squad"]].map(([k, lbl]) => (
             <button key={k} onClick={() => setTab(k)}
-              className="flex-1 min-w-[30%] rounded-md px-2 py-1 text-[11px] font-semibold transition-colors"
+              className="flex-1 min-w-[45%] rounded-md px-2 py-1 text-[11px] font-semibold transition-colors"
               style={{ background: tab === k ? C.home : C.line, color: tab === k ? "#08120F" : C.mute }}>
               {lbl}
             </button>
@@ -950,6 +1012,87 @@ function PlayersSidebar({ apiBase, offline, onAsk }) {
               </div>
             )}
           </>
+        )}
+
+        {tab === "lineup" && (
+          <div className="p-3 space-y-3">
+            <div className="flex gap-2">
+              <select value={team} onChange={(e) => setTeam(e.target.value)}
+                className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none"
+                style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }}>
+                {teams.length === 0
+                  ? <option value="">No teams</option>
+                  : teams.map((t) => <option key={t} value={t}>{flag(t)}{t}</option>)}
+              </select>
+              {team && (
+                <button type="button" onClick={() => askTeamLineup(team)}
+                  className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] font-semibold"
+                  style={{ background: C.home, color: "#08120F" }}>
+                  Ask AI
+                </button>
+              )}
+            </div>
+            {lineup === null ? (
+              <div className="text-center text-xs py-4" style={{ color: C.mute }}>Building predicted XI…</div>
+            ) : lineup.error ? (
+              <div className="text-center text-xs py-4" style={{ color: C.mute }}>{lineup.error}</div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]" style={{ color: C.mute }}>
+                  <span>{flag(lineup.team)}{lineup.team}</span>
+                  <span>·</span>
+                  <span>{lineup.source === "recent_lineup" ? "Based on recent formation" : "Depth + form model"}</span>
+                  {lineup.next_opponent && (
+                    <>
+                      <span>·</span>
+                      <span>Next: vs {flag(lineup.next_opponent)}{lineup.next_opponent}</span>
+                    </>
+                  )}
+                </div>
+                {lineup.recent_formations?.length > 0 && (
+                  <div className="text-[10px]" style={{ color: C.mute }}>
+                    Recent: {lineup.recent_formations.join(", ")}
+                  </div>
+                )}
+                <PredictedPitch rows={lineup.rows} formation={lineup.formation} />
+                {lineup.unavailable?.length > 0 && (
+                  <div>
+                    <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: C.away }}>
+                      Out ({lineup.unavailable.length})
+                    </div>
+                    <div className="space-y-1">
+                      {lineup.unavailable.map((u) => (
+                        <div key={u.player_id} className="flex items-center justify-between rounded-md border px-2 py-1.5 text-[11px]"
+                          style={{ borderColor: C.line, background: C.panel2 }}>
+                          <span style={{ color: C.chalk }}>{u.name}</span>
+                          <span className="shrink-0 ml-2 text-[10px] font-semibold capitalize"
+                            style={{ color: u.status === "suspended" ? C.away : u.status === "injured" ? "#e67e22" : C.mute }}>
+                            {u.status}{u.reason ? ` · ${u.reason}` : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {lineup.bench?.length > 0 && (
+                  <div>
+                    <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: C.mute }}>
+                      Bench
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      {lineup.bench.map((p) => (
+                        <div key={p.name} className="rounded-md border px-2 py-1 text-[10px]"
+                          style={{ borderColor: C.line, background: C.panel2, color: C.chalk }}>
+                          <span className="font-medium">{p.name}</span>
+                          <span className="ml-1" style={{ color: C.mute }}>{p.position}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {tab === "squad" && (

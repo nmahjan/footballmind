@@ -22,7 +22,8 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **WC group standings** — per-group tables during the tournament
 - **Tournament bracket** — knockout rounds (Final → Semi → QF → R16) for WC and CL
 - **Power rankings** — national team Elo rankings
-- **Players panel** — standouts, top scorers (goals/assists), full team squads by position; tap a player to ask the chat
+- **Players panel** — standouts, top scorers, **predicted starting XI** (pitch view), full team squads; tap a player to ask the chat
+- **Predicted XI** — most likely lineup per team; adjusts for red-card suspensions and injury flags; prefers recent formations when synced
 - **Player chat** — LLM answers with squad/scorer tools; markdown replies render as formatted text
 - **Neutral venue toggle** — disable home-field advantage for WC / neutral-site games
 - **Share prediction** — copy a formatted summary to clipboard
@@ -33,7 +34,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - football-data.org sync every 6 hours (GitHub Actions) — matches, squads, **top scorers** (100/comp)
 - Migrations run automatically before each Actions sync (`footballmind_migrate.py`)
 - Rate-limited LLM chat (20 req/hr per IP) to protect API cost
-- **MCP server** — 12+ tools for Cursor / Claude Desktop (local stdio + remote HTTP)
+- **MCP server** — 13+ tools for Cursor / Claude Desktop (local stdio + remote HTTP)
 
 ---
 
@@ -124,12 +125,13 @@ frontend/  (Vite + React → GitHub Pages)
 | GET | `/api/groups?comp=WC` | Tournament group standings |
 | GET | `/api/bracket?comp=CL` | Knockout bracket |
 | GET | `/api/rankings?comp=WC` | National Elo power rankings |
-| GET | `/api/standouts?comp=WC` | Notable players (by goals when synced, else team Elo) |
+| GET | `/api/standouts?comp=WC` | Notable players ranked by form + team strength (max 2 per nation) |
 | GET | `/api/players/scorers?comp=PL` | Top scorers with goals, assists, appearances |
 | GET | `/api/players/squad?team=…&comp=…` | Full squad by position |
 | GET | `/api/players/search?q=…` | Player name search |
 | GET | `/api/players/profile?name=…` | Player profile + competition stats |
 | GET | `/api/players/formations?team=…` | Recent formations (when lineup data exists) |
+| GET | `/api/players/predicted-lineup?team=…&comp=WC` | Most likely starting XI (injuries + suspensions) |
 | GET | `/api/players/lineup?home=…&away=…` | Last H2H lineups |
 | GET | `/api/predictions` | Graded prediction history + hit rate |
 
@@ -140,7 +142,6 @@ Shared query logic lives in `footballmind_services.py` (used by both Flask and M
 ## Project structure
 
 ```
-footballmind/
 ├── frontend/                  # Vite + React UI (GitHub Pages)
 ├── migrations/                # Ordered SQL schema migrations
 ├── scripts/
@@ -149,6 +150,7 @@ footballmind/
 ├── footballmind_asgi.py       # Combined REST + MCP for Render
 ├── footballmind_app.py        # Flask REST API
 ├── footballmind_services.py   # Shared read/query helpers
+├── footballmind_lineup.py     # Predicted XI + availability logic
 ├── footballmind_mcp_predict.py
 ├── footballmind_sync.py       # football-data.org ingestion
 ├── footballmind_jobs.py       # CLI: sync, retrain, seed-elo
@@ -179,13 +181,35 @@ footballmind/
 
 Run a full backfill after adding a league: **GitHub Actions → footballmind-jobs → Run workflow → sync → check "Full season backfill".**
 
-Migrations (`006` player positions, `007` scorer stats / lineup schema) run automatically at the start of each Actions job. To check locally:
+Migrations (`006` player positions, `007` scorer stats / lineup schema, `008` prediction team links, `009` player availability) run automatically at the start of each Actions job. To check locally:
 
 ```bash
 python footballmind_migrate.py --status
 ```
 
 **Note:** football-data.org free tier includes competition scorers but not per-match lineups/goals in match detail. Formation tools populate when that data becomes available (paid tier or live tournament detail).
+
+### Predicted lineups & availability
+
+`footballmind_lineup.py` builds a most-likely XI from squad depth and form scores:
+
+1. **Formation** — prefers the team's most recent synced formation; otherwise picks the best-fit template (4-3-3, 4-2-3-1, 3-4-3, etc.) from available players.
+2. **Starters** — highest-rated player per slot (Elo + club goals/assists + appearances).
+3. **Red-card suspensions** — computed at runtime from `match_events` (player sent off in last finished match is excluded for the next fixture).
+4. **Injuries / doubtful** — stored in `player_availability` (manual flags until an injury feed is added).
+
+Flag a player out manually:
+
+```sql
+INSERT INTO player_availability (player_id, team_id, comp_code, status, reason)
+VALUES (
+  (SELECT id FROM players WHERE name ILIKE 'Pedri%' LIMIT 1),
+  (SELECT id FROM teams WHERE name = 'Spain'),
+  'WC', 'injured', 'Hamstring'
+);
+```
+
+Status values: `injured`, `doubtful`, `suspended`.
 
 ---
 
@@ -235,6 +259,7 @@ FootballMind is an **MCP server** — agents can call football tools directly in
 | `get_top_scorers` | Competition scoring table |
 | `get_team_formations` | Recent formations for a team |
 | `get_match_lineup` | Lineups from latest H2H meeting |
+| `get_predicted_lineup` | Most likely starting XI (injuries + red-card suspensions) |
 
 ### Local (stdio)
 
