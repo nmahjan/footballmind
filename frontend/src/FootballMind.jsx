@@ -506,7 +506,80 @@ function FixtureRow({ f, onClick }) {
   );
 }
 
-function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, apiBase }) {
+function PredictionResultsView({ apiBase, onSummary }) {
+  const [rows, setRows] = useState(null);
+
+  function load() {
+    if (!apiBase) { setRows([]); return; }
+    setRows(null);
+    fetch(`${apiBase}/api/predictions?finished=1&limit=40`)
+      .then((r) => r.json())
+      .then((d) => {
+        setRows(d.results ?? []);
+        if (d.summary && onSummary) onSummary(d.summary);
+      })
+      .catch(() => setRows([]));
+  }
+
+  useEffect(() => { load(); }, [apiBase]);
+
+  if (rows === null) {
+    return <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>Loading results…</div>;
+  }
+  if (rows.length === 0) {
+    return (
+      <div className="px-4 py-5 text-center text-xs leading-relaxed" style={{ color: C.mute }}>
+        No finished matches yet. Once a game you predicted is played and synced, it’ll show here with the score and whether we got it right.
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y" style={{ borderColor: C.line }}>
+      {rows.map((r) => {
+        const predColor = outcomeColor(r.predicted, r.home, r.away);
+        const ok = r.was_correct;
+        return (
+          <div key={r.id} className="px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: C.mute }}>
+                {r.match_date ? fmtDate(r.match_date) : "Final"}
+              </span>
+              <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
+                style={{
+                  background: ok ? "rgba(52,211,153,0.15)" : "rgba(244,161,82,0.15)",
+                  color: ok ? C.home : C.away,
+                }}>
+                {ok ? "✓ Correct" : "✗ Miss"}
+              </span>
+            </div>
+            <div className="text-sm font-semibold" style={{ color: C.chalk }}>
+              {flag(r.home)}{r.home} {r.score} {flag(r.away)}{r.away}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+              <span style={{ color: C.mute }}>
+                Predicted:{" "}
+                <span className="font-semibold" style={{ color: predColor }}>
+                  {r.predicted === r.home ? `${flag(r.home)}${r.predicted}` : r.predicted === r.away ? `${flag(r.away)}${r.predicted}` : r.predicted}
+                  {" "}({pct(r.predicted_confidence)})
+                </span>
+              </span>
+              <span style={{ color: C.mute }}>
+                Actual:{" "}
+                <span className="font-semibold" style={{ color: C.chalk }}>
+                  {r.actual === r.home ? `${flag(r.home)}${r.actual}` : r.actual === r.away ? `${flag(r.away)}${r.actual}` : r.actual}
+                </span>
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, apiBase, onSummary }) {
+  const [view, setView] = useState("upcoming");
   const [tab, setTab] = useState("WC");
   // Lazy-loaded tabs only (WC/PL come from parent after async fetch)
   const [cache, setCache] = useState({});
@@ -536,21 +609,41 @@ function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, ap
   return (
     <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
       <div className="border-b px-4 pt-3 pb-0" style={{ borderColor: C.line }}>
-        <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
-          Upcoming Fixtures
-        </div>
-        <div className="flex gap-1 overflow-x-auto pb-2" style={{ scrollbarWidth: "none" }}>
-          {FIXTURE_TABS.map(({ code, label }) => (
-            <button key={code} onClick={() => switchTab(code)}
-              className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-              style={{ background: code === tab ? C.home : C.line, color: code === tab ? "#08120F" : C.mute }}>
-              {label}
+        <div className="mb-2 flex gap-1">
+          {[["upcoming", "📅 Upcoming"], ["results", "✅ Results"]].map(([k, lbl]) => (
+            <button key={k} onClick={() => setView(k)}
+              className="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+              style={{ background: view === k ? C.home : C.line, color: view === k ? "#08120F" : C.mute }}>
+              {lbl}
             </button>
           ))}
         </div>
+        {view === "upcoming" && (
+          <>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+              Upcoming Fixtures
+            </div>
+            <div className="flex gap-1 overflow-x-auto pb-2" style={{ scrollbarWidth: "none" }}>
+              {FIXTURE_TABS.map(({ code, label }) => (
+                <button key={code} onClick={() => switchTab(code)}
+                  className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                  style={{ background: code === tab ? C.home : C.line, color: code === tab ? "#08120F" : C.mute }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {view === "results" && (
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+            Our Predictions vs Results
+          </div>
+        )}
       </div>
       <div>
-        {loading || waitingParent ? (
+        {view === "results" ? (
+          <PredictionResultsView apiBase={apiBase} onSummary={onSummary} />
+        ) : loading || waitingParent ? (
           <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
         ) : rows.length === 0 ? (
           <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>No upcoming fixtures found.</div>
@@ -1551,7 +1644,7 @@ export default function FootballMind() {
           {sidebarMode === "matches" ? (
             <>
               <AccuracyPanel summary={summary} />
-              <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} />
+              <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} onSummary={setSummary} />
               {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
               <BracketPanel apiBase={API_BASE} offline={offline} />
               <RankingsPanel apiBase={API_BASE} offline={offline} />

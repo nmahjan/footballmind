@@ -33,6 +33,7 @@ from footballmind_services import (
     get_groups,
     get_match_lineup,
     get_player_profile,
+    get_prediction_results,
     get_rankings,
     get_standings,
     get_standouts,
@@ -330,15 +331,31 @@ def api_standings():
 def api_predictions():
     limit = min(int(request.args.get("limit", 25)), 100)
     conn = get_conn()
+    if request.args.get("finished") in ("1", "true", "yes"):
+        results = get_prediction_results(conn, limit)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FILTER (WHERE was_correct IS NOT NULL), "
+                        "       count(*) FILTER (WHERE was_correct) FROM predictions")
+            graded, correct = cur.fetchone()
+        return jsonify({
+            "results": results,
+            "summary": {"graded": graded or 0, "correct": correct or 0,
+                        "hit_rate": (correct / graded) if graded else None},
+        })
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT p.id, th.name AS home, ta.name AS away, p.home_win_prob, "
-            "       p.draw_prob, p.away_win_prob, p.home_advance_prob, p.confidence, "
+            "SELECT p.id, "
+            "       COALESCE(thp.name, thm.name) AS home, "
+            "       COALESCE(tap.name, tam.name) AS away, "
+            "       p.home_win_prob, p.draw_prob, p.away_win_prob, "
+            "       p.home_advance_prob, p.confidence, "
             "       p.actual_home_goals, p.actual_away_goals, p.was_correct, p.created_at "
             "FROM predictions p "
             "LEFT JOIN matches m ON m.id = p.match_id "
-            "LEFT JOIN teams th ON th.id = m.home_team_id "
-            "LEFT JOIN teams ta ON ta.id = m.away_team_id "
+            "LEFT JOIN teams thp ON thp.id = p.home_team_id "
+            "LEFT JOIN teams tap ON tap.id = p.away_team_id "
+            "LEFT JOIN teams thm ON thm.id = m.home_team_id "
+            "LEFT JOIN teams tam ON tam.id = m.away_team_id "
             "ORDER BY p.created_at DESC LIMIT %s", (limit,))
         cols = [d[0] for d in cur.description]
         preds = [dict(zip(cols, r)) for r in cur.fetchall()]

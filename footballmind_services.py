@@ -668,3 +668,79 @@ def get_bracket(conn, comp: str = "WC") -> list:
         if stage in rounds:
             rounds[stage].append(f)
     return [{"round": s, "matches": rounds[s]} for s in KNOCKOUT_ORDER if rounds[s]]
+
+
+def _outcome_label(home: str, away: str, hw, dw, aw) -> str:
+    probs = [hw or 0.0, dw or 0.0, aw or 0.0]
+    idx = probs.index(max(probs))
+    if idx == 0:
+        return home
+    if idx == 1:
+        return "Draw"
+    return away
+
+
+def get_prediction_results(conn, limit: int = 30) -> list[dict]:
+    """Finished matches we predicted: score, pick, and whether it was right.
+
+    One row per match (most recent prediction wins). Runs grading first so
+    newly synced results appear without waiting for the batch job.
+    """
+    from footballmind_grading import grade_predictions
+
+    grade_predictions(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT ON (COALESCE(p.match_id, p.id)) "
+            "       p.id, "
+            "       COALESCE(thp.name, thm.name) AS home, "
+            "       COALESCE(tap.name, tam.name) AS away, "
+            "       p.home_win_prob, p.draw_prob, p.away_win_prob, "
+            "       p.confidence, "
+            "       COALESCE(p.actual_home_goals, m.home_goals) AS hg, "
+            "       COALESCE(p.actual_away_goals, m.away_goals) AS ag, "
+            "       p.was_correct, m.match_date, p.match_id "
+            "FROM predictions p "
+            "LEFT JOIN matches m ON m.id = p.match_id "
+            "LEFT JOIN teams thp ON thp.id = p.home_team_id "
+            "LEFT JOIN teams tap ON tap.id = p.away_team_id "
+            "LEFT JOIN teams thm ON thm.id = m.home_team_id "
+            "LEFT JOIN teams tam ON tam.id = m.away_team_id "
+            "WHERE m.home_goals IS NOT NULL "
+            "  AND COALESCE(thp.name, thm.name) IS NOT NULL "
+            "ORDER BY COALESCE(p.match_id, p.id), p.created_at DESC")
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    out = []
+    for r in rows[:limit]:
+        home, away = r["home"], r["away"]
+        hg, ag = r["hg"], r["ag"]
+        predicted = _outcome_label(home, away, r["home_win_prob"],
+                                   r["draw_prob"], r["away_win_prob"])
+        if hg > ag:
+            actual = home
+        elif hg == ag:
+            actual = "Draw"
+        else:
+            actual = away
+        probs = [r["home_win_prob"] or 0, r["draw_prob"] or 0, r["away_win_prob"] or 0]
+        pred_idx = probs.index(max(probs))
+        act_idx = 0 if hg > ag else (1 if hg == ag else 2)
+        was = r["was_correct"] if r["was_correct"] is not None else (pred_idx == act_idx)
+        md = r["match_date"]
+        out.append({
+            "id": r["id"],
+            "home": home,
+            "away": away,
+            "score": f"{hg}–{ag}",
+            "home_goals": hg,
+            "away_goals": ag,
+            "predicted": predicted,
+            "predicted_confidence": round(max(probs), 3),
+            "actual": actual,
+            "was_correct": was,
+            "match_date": md.isoformat() if md else None,
+        })
+    out.sort(key=lambda x: x.get("match_date") or "", reverse=True)
+    return out
