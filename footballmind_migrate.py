@@ -42,6 +42,9 @@ def migrate(conn):
     for path in pending:
         try:
             with conn.cursor() as cur:
+                # Fail fast if a lock is held by another connection (e.g. the
+                # live web service) rather than blocking indefinitely.
+                cur.execute("SET lock_timeout = '10s'")
                 cur.execute(path.read_text())
                 cur.execute("INSERT INTO schema_migrations (filename) VALUES (%s)",
                             (path.name,))
