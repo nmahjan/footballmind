@@ -16,21 +16,24 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **Chat predictions** — type or tap a fixture: *"Predict Mexico vs USA"*
 - **Prediction cards** — W/D/L bar, form dots, H2H, xG, rule-based narrative
 - **Deep analysis** — optional Claude Haiku write-up per prediction (`/api/analyze`)
+- **Sidebar modes** — **Matches** (fixtures, tables, bracket, rankings) or **Players** (squads, scorers, search)
 - **Upcoming fixtures** — tabbed panel for WC, PL, La Liga, Bundesliga, Serie A, Ligue 1, CL, Eredivisie
 - **League tables** — live standings for all synced domestic leagues + CL
 - **WC group standings** — per-group tables during the tournament
 - **Tournament bracket** — knockout rounds (Final → Semi → QF → R16) for WC and CL
 - **Power rankings** — national team Elo rankings
-- **Standout players** — squad players from top teams, filterable by position
+- **Players panel** — standouts, top scorers (goals/assists), full team squads by position; tap a player to ask the chat
+- **Player chat** — LLM answers with squad/scorer tools; markdown replies render as formatted text
 - **Neutral venue toggle** — disable home-field advantage for WC / neutral-site games
 - **Share prediction** — copy a formatted summary to clipboard
 
 ### Backend
 
 - Hybrid **Elo + Dixon-Coles** model with weekly retrain (RPS backtest)
-- football-data.org sync every 6 hours (GitHub Actions)
+- football-data.org sync every 6 hours (GitHub Actions) — matches, squads, **top scorers** (100/comp)
+- Migrations run automatically before each Actions sync (`footballmind_migrate.py`)
 - Rate-limited LLM chat (20 req/hr per IP) to protect API cost
-- **MCP server** — 7 tools for Cursor / Claude Desktop (local stdio + remote HTTP)
+- **MCP server** — 12+ tools for Cursor / Claude Desktop (local stdio + remote HTTP)
 
 ---
 
@@ -84,7 +87,7 @@ football-data.org API
         │
         ▼
 footballmind_sync.py          ← rate-limited ingestion (10 req/min)
-        │  upserts teams, matches, players, squads
+        │  upserts teams, matches, players, squads, scorers
         ▼
 PostgreSQL (Neon)
         │
@@ -101,7 +104,7 @@ footballmind_mcp_predict.py     ← load_hybrid → predict_match
         ├──────────────────────────────────────┐
         ▼                                      ▼
 footballmind_asgi.py (Render)            server.py (local MCP, stdio)
-  ├── /api/*  Flask REST                   7 MCP tools
+  ├── /api/*  Flask REST                   MCP tools
   └── /mcp    streamable-http              (Cursor / Claude Desktop)
         │
         ▼
@@ -121,7 +124,13 @@ frontend/  (Vite + React → GitHub Pages)
 | GET | `/api/groups?comp=WC` | Tournament group standings |
 | GET | `/api/bracket?comp=CL` | Knockout bracket |
 | GET | `/api/rankings?comp=WC` | National Elo power rankings |
-| GET | `/api/standouts?comp=WC` | Notable squad players |
+| GET | `/api/standouts?comp=WC` | Notable players (by goals when synced, else team Elo) |
+| GET | `/api/players/scorers?comp=PL` | Top scorers with goals, assists, appearances |
+| GET | `/api/players/squad?team=…&comp=…` | Full squad by position |
+| GET | `/api/players/search?q=…` | Player name search |
+| GET | `/api/players/profile?name=…` | Player profile + competition stats |
+| GET | `/api/players/formations?team=…` | Recent formations (when lineup data exists) |
+| GET | `/api/players/lineup?home=…&away=…` | Last H2H lineups |
 | GET | `/api/predictions` | Graded prediction history + hit rate |
 
 Shared query logic lives in `footballmind_services.py` (used by both Flask and MCP).
@@ -168,7 +177,15 @@ footballmind/
 | DED  | Eredivisie | Club |
 | WC   | FIFA World Cup | National |
 
-Run a full backfill after adding a league: **GitHub Actions → footballmind-jobs → sync → check "Full season backfill".**
+Run a full backfill after adding a league: **GitHub Actions → footballmind-jobs → Run workflow → sync → check "Full season backfill".**
+
+Migrations (`006` player positions, `007` scorer stats / lineup schema) run automatically at the start of each Actions job. To check locally:
+
+```bash
+python footballmind_migrate.py --status
+```
+
+**Note:** football-data.org free tier includes competition scorers but not per-match lineups/goals in match detail. Formation tools populate when that data becomes available (paid tier or live tournament detail).
 
 ---
 
@@ -211,7 +228,13 @@ FootballMind is an **MCP server** — agents can call football tools directly in
 | `get_tournament_groups` | WC group standings |
 | `get_tournament_bracket` | Knockout bracket (Final first) |
 | `get_power_rankings` | National Elo rankings |
-| `list_standout_players` | Key squad players by position |
+| `list_standout_players` | Key players by position / goals |
+| `search_players` | Find players by name |
+| `get_team_squad` | Full roster with positions |
+| `get_player_profile` | Player bio + competition stats |
+| `get_top_scorers` | Competition scoring table |
+| `get_team_formations` | Recent formations for a team |
+| `get_match_lineup` | Lineups from latest H2H meeting |
 
 ### Local (stdio)
 

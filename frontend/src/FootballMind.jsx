@@ -1297,7 +1297,7 @@ export default function FootballMind() {
       <header className="flex items-center justify-between border-b px-5 py-3" style={{ borderColor: C.line }}>
         <div className="flex items-baseline gap-2">
           <span className="text-lg font-bold tracking-tight">Football Mind</span>
-          <span className="text-xs" style={{ color: C.mute }}>match intelligence</span>
+          <span className="text-xs" style={{ color: C.mute }}>Match Intelligence · By Neil M.</span>
         </div>
         {offline ? (
           <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: C.panel, color: C.away }}>
