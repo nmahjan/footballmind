@@ -13,7 +13,7 @@ to the canned help reply when no key is set.
 import os
 import json
 
-MODEL = os.environ.get("FOOTBALLMIND_LLM_MODEL", "anthropic/claude-3-5-sonnet-20241022")
+MODEL = os.environ.get("FOOTBALLMIND_LLM_MODEL", "anthropic/claude-sonnet-4-6")
 MAX_TOOL_ROUNDS = 4
 
 SYSTEM = (
@@ -67,7 +67,7 @@ TOOLS = [
 
 
 ANALYZE_MODEL = os.environ.get("FOOTBALLMIND_ANALYZE_MODEL",
-                               "anthropic/claude-3-5-haiku-20241022")  # cheaper for on-demand
+                               "anthropic/claude-haiku-4-5-20251001")  # cheaper for on-demand
 
 
 def is_configured() -> bool:
