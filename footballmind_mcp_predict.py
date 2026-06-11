@@ -15,16 +15,45 @@ from footballmind_predict import predict
 from footballmind_production import load_hybrid
 
 
+_TEAM_ALIASES = {
+    "usa":          "United States",
+    "u.s.a.":       "United States",
+    "u.s.":         "United States",
+    "united states of america": "United States",
+    "usmnt":        "United States",
+    "england":      "England",
+    "uk":           "England",
+    "south korea":  "Korea Republic",
+    "korea":        "Korea Republic",
+    "dpr korea":    "Korea DPR",
+    "north korea":  "Korea DPR",
+    "ivory coast":  "Côte d'Ivoire",
+    "cote d'ivoire":"Côte d'Ivoire",
+    "dr congo":     "Congo DR",
+    "democratic republic of congo": "Congo DR",
+    "holland":      "Netherlands",
+    "czechia":      "Czech Republic",
+    "czech republic": "Czechia",
+    "turkey":       "Türkiye",
+    "iran":         "IR Iran",
+    "china":        "China PR",
+    "trinidad":     "Trinidad and Tobago",
+}
+
+
 def _resolve_team(cur, name: str):
     """Look up a team by name; returns (id, type) or raises.
 
     Tries in order:
+      0. Alias map (common abbreviations / alternate names)
       1. Exact case-insensitive match   ("Arsenal FC")
       2. Starts-with match              ("Arsenal" -> "Arsenal FC")
       3. Contains match                 ("city"    -> "Manchester City FC")
     If multiple rows match steps 2/3 the shortest name wins (most specific).
     """
     term = name.strip()
+    # Step 0: alias map
+    term = _TEAM_ALIASES.get(term.lower(), term)
     cur.execute("SELECT id, type, name FROM teams WHERE lower(name) = lower(%s)", (term,))
     row = cur.fetchone()
     if row:
