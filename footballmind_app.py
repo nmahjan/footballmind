@@ -26,7 +26,7 @@ from flask_cors import CORS
 from flask_limiter import Limiter
 
 from footballmind_lineup import get_predicted_lineup
-from footballmind_mcp_predict import _predict_match
+from footballmind_mcp_predict import _predict_match, _TEAM_ALIASES
 from footballmind_services import (
     get_bracket,
     get_fixtures,
@@ -107,6 +107,102 @@ def log_query(conn, session_id, query, response, qtype, entities, ms):
 _VS = re.compile(
     r"^\s*(?:can you |please )?(?:predict|forecast)?\s*(.+?)\s+"
     r"(?:vs\.?|versus|v|against)\s+(.+?)\s*[\?\.!]*$", re.I)
+_VENUE_SUFFIX = re.compile(r"\s+(?:in|at)\s+(.+?)\s*[\?\.!]*$", re.I)
+# Common host cities -> national team name (football-data.org labels)
+_VENUE_CITIES = {
+    "seoul": "South Korea",
+    "busan": "South Korea",
+    "mexico city": "Mexico",
+    "cdmx": "Mexico",
+    "guadalajara": "Mexico",
+    "monterrey": "Mexico",
+    "azteca": "Mexico",
+    "estadio azteca": "Mexico",
+    "wembley": "England",
+    "london": "England",
+    "paris": "France",
+    "berlin": "Germany",
+    "munich": "Germany",
+    "madrid": "Spain",
+    "barcelona": "Spain",
+    "rome": "Italy",
+    "milan": "Italy",
+    "tokyo": "Japan",
+    "doha": "Qatar",
+    "sydney": "Australia",
+    "melbourne": "Australia",
+}
+
+
+def _extract_venue(message: str) -> tuple[str, str | None]:
+    """Pull trailing 'in Mexico' / 'at Wembley' off a predict query."""
+    m = _VENUE_SUFFIX.search(message)
+    if not m:
+        return message, None
+    venue = m.group(1).strip().rstrip("?!.")
+    base = (message[:m.start()] + message[m.end():]).strip().rstrip("?!.")
+    return base, venue
+
+
+def _norm_team_label(name: str) -> str:
+    return _TEAM_ALIASES.get(name.lower().strip(), name.strip()).lower()
+
+
+def _venue_matches_team(venue: str, team: str) -> bool:
+    """True when a location phrase refers to a team's home country/ground."""
+    v = _norm_team_label(venue)
+    t = _norm_team_label(team)
+    if v == t or v in t or t in v:
+        return True
+    # "mexico city" / city aliases
+    mapped = _VENUE_CITIES.get(v)
+    if mapped and _norm_team_label(mapped) == t:
+        return True
+    v0, t0 = v.split()[0], t.split()[0]
+    return v0 == t0 or v0 in t or t0 in v
+
+
+def _resolve_prediction_venue(home: str, away: str, venue: str | None,
+                              explicit_neutral: bool | None,
+                              message: str) -> tuple[str, str, bool | None, str | None]:
+    """Decide home/away orientation and neutral flag.
+
+    Returns (home, away, neutral, venue_label).
+    Priority: UI toggle > explicit neutral/home phrases > 'in Mexico' host detection > auto.
+    """
+    low = message.lower()
+    venue_label = None
+
+    if explicit_neutral is not None:
+        neutral = bool(explicit_neutral)
+        if venue and not neutral:
+            venue_label = venue
+        return home, away, neutral, venue_label
+
+    if any(w in low for w in ("neutral", "at a neutral", "at neutral", "neutral venue")):
+        return home, away, True, None
+    if any(w in low for w in ("at home", "home ground", "home stadium")):
+        return home, away, False, None
+
+    if venue:
+        if _venue_matches_team(venue, home):
+            return home, away, False, venue
+        if _venue_matches_team(venue, away):
+            # Host listed second — flip so the model's home side is the host.
+            return away, home, False, venue
+        venue_label = venue
+
+    return home, away, None, venue_label
+
+
+def _venue_note(neutral: bool | None, venue_label: str | None, home: str) -> str:
+    if neutral is True:
+        return " (neutral venue)"
+    if neutral is False:
+        if venue_label:
+            return f" ({home} at home — {venue_label})"
+        return f" ({home} at home)"
+    return ""
 
 
 def _clean_team(s):
@@ -114,7 +210,8 @@ def _clean_team(s):
     # strip leading question/filler words before the team name
     s = re.sub(r"^(who\s+will\s+win\s+|who\s+wins\s+|will\s+|can\s+|"
                r"what\s+about\s+|how\s+about\s+|the\s+|a\s+)", "", s, flags=re.I)
-    # strip trailing context filler
+    # strip trailing context filler and venue clauses stuck on a team name
+    s = re.sub(r"\s+(?:in|at)\s+.+$", "", s, flags=re.I)
     s = re.sub(r"\s+(match|game|fixture|this weekend|today|tomorrow|on \w+)\b.*$",
                "", s, flags=re.I)
     return s.strip()
@@ -124,10 +221,13 @@ def parse_intent(message):
     low = message.lower()
     if "standing" in low or "table" in low or "league position" in low:
         return {"type": "standings"}
-    m = _VS.match(message)
+    base, venue = _extract_venue(message)
+    m = _VS.match(base)
     if m and ("predict" in low or " vs" in low or "versus" in low or "against" in low):
         return {"type": "predict",
-                "home": _clean_team(m.group(1)), "away": _clean_team(m.group(2))}
+                "home": _clean_team(m.group(1)),
+                "away": _clean_team(m.group(2)),
+                "venue": venue}
     return {"type": "unknown"}
 
 
@@ -176,21 +276,23 @@ def api_chat():
     entities, prediction = {}, None
 
     if intent["type"] == "predict":
-        entities = {"home": intent["home"], "away": intent["away"]}
-        # detect venue override from natural language
-        neutral_override = None
-        low = message.lower()
-        if any(w in low for w in ("neutral", "at a neutral", "at neutral")):
-            neutral_override = True
-        elif any(w in low for w in ("at home", "home ground", "home stadium", "wembley")):
-            neutral_override = False
+        explicit_neutral = data.get("neutral")
+        if explicit_neutral is not None:
+            explicit_neutral = bool(explicit_neutral)
+        home, away, neutral, venue_label = _resolve_prediction_venue(
+            intent["home"], intent["away"], intent.get("venue"),
+            explicit_neutral, message)
+        entities = {"home": home, "away": away}
+        if venue_label:
+            entities["venue"] = venue_label
         try:
-            prediction = _predict_match(conn, intent["home"], intent["away"],
+            prediction = _predict_match(conn, home, away,
                                         None, "regular_season", session_id=session_id,
-                                        neutral=neutral_override)
-            venue_note = "" if neutral_override is None else (" (neutral venue)" if neutral_override else " (home advantage)")
+                                        neutral=neutral)
+            note = _venue_note(neutral if neutral is not None else prediction.get("neutral"),
+                               venue_label, home)
             reply = (f"{prediction['prediction']} "
-                     f"({round(prediction['confidence'] * 100)}% confidence){venue_note}. "
+                     f"({round(prediction['confidence'] * 100)}% confidence){note}. "
                      f"{prediction['reasoning']}")
         except ValueError as e:
             reply = f"I couldn't run that prediction: {e}"

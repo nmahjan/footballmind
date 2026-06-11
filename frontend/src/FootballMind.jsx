@@ -1535,7 +1535,7 @@ export default function FootballMind() {
                 onKeyDown={(e) => e.key === "Enter" && send()}
                 placeholder={sidebarMode === "players"
                   ? "Who are Brazil's key players?"
-                  : "Predict Mexico vs South Africa"}
+                  : "Predict Mexico vs South Korea in Mexico"}
                 className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
                 style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }} />
               <button onClick={() => send()} disabled={busy}

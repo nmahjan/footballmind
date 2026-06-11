@@ -26,6 +26,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **Predicted XI** — most likely lineup per team; adjusts for red-card suspensions and injury flags; prefers recent formations when synced
 - **Player chat** — LLM answers with squad/scorer tools; markdown replies render as formatted text
 - **Neutral venue toggle** — disable home-field advantage for WC / neutral-site games
+- **Host venue in chat** — e.g. *"Predict Mexico vs South Korea in Mexico"* applies home advantage to Mexico; the 🏠 Home / 🏟 Neutral buttons also work in chat
 - **Share prediction** — copy a formatted summary to clipboard
 
 ### Backend
