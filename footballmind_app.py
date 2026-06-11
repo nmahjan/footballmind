@@ -420,6 +420,59 @@ def api_rankings():
     return jsonify({"rankings": rankings, "comp": comp})
 
 
+@app.get("/api/standouts")
+@limiter.exempt
+def api_standouts():
+    """Key players from top-rated teams in a competition, grouped by position."""
+    comp = request.args.get("comp", "WC")
+    pos_filter = request.args.get("position", "").upper() or None
+    limit = min(int(request.args.get("limit", 20)), 60)
+    conn = get_conn()
+    with conn.cursor() as cur:
+        sql = (
+            "SELECT DISTINCT ON (p.id) "
+            "  p.name, t.name AS team, pa.position, "
+            "  tr.rating AS team_rating, p.date_of_birth "
+            "FROM player_affiliations pa "
+            "JOIN players p ON p.id = pa.player_id "
+            "JOIN teams t ON t.id = pa.team_id "
+            "JOIN team_ratings tr ON tr.team_id = t.id "
+            "WHERE pa.ended_on IS NULL "
+            "  AND EXISTS ("
+            "    SELECT 1 FROM matches m "
+            "    JOIN competition_editions e ON e.id = m.edition_id "
+            "    JOIN competitions c ON c.id = e.competition_id "
+            "    WHERE c.code = %s "
+            "      AND (m.home_team_id = t.id OR m.away_team_id = t.id)"
+            "  ) "
+        )
+        params = [comp]
+        if pos_filter:
+            sql += " AND pa.position = %s "
+            params.append(pos_filter)
+        sql += " ORDER BY p.id, tr.rating DESC LIMIT %s"
+        params.append(limit)
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+    standouts = []
+    for name, team, position, rating, dob in rows:
+        age = None
+        if dob:
+            from datetime import date
+            today = date.today()
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        standouts.append({
+            "name": name, "team": team,
+            "position": position or "?",
+            "team_rating": round(rating),
+            "age": age,
+        })
+    # sort strongest team first, then alpha within
+    standouts.sort(key=lambda x: (-x["team_rating"], x["name"]))
+    return jsonify({"standouts": standouts[:limit], "comp": comp})
+
+
 @app.get("/api/bracket")
 @limiter.exempt
 def api_bracket():

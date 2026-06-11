@@ -518,6 +518,133 @@ function BracketPanel({ apiBase, offline }) {
   );
 }
 
+const POS_META = {
+  GK:  { label: "GK",  bg: "#B8860B", fg: "#08120F" },
+  DEF: { label: "DEF", bg: "#1A6B47", fg: "#E8F5EE" },
+  MID: { label: "MID", bg: "#1A3D6B", fg: "#DCE8FF" },
+  FWD: { label: "FWD", bg: "#7B1F1F", fg: "#FFE0E0" },
+  "?": { label: "?",   bg: "#333",    fg: "#aaa"    },
+};
+const POS_TABS = [
+  { key: "ALL", label: "All" },
+  { key: "FWD", label: "⚡ Forwards" },
+  { key: "MID", label: "🎯 Midfielders" },
+  { key: "DEF", label: "🛡 Defenders" },
+  { key: "GK",  label: "🧤 Keepers" },
+];
+
+function StandoutsPanel({ apiBase, offline }) {
+  const [players, setPlayers] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [comp, setComp] = useState("WC");
+  const [posTab, setPosTab] = useState("ALL");
+
+  function load(c) {
+    if (!apiBase || offline) { setPlayers([]); return; }
+    setPlayers(null);
+    fetch(`${apiBase}/api/standouts?comp=${c}&limit=32`)
+      .then((r) => r.json())
+      .then((d) => setPlayers(d.standouts ?? []))
+      .catch(() => setPlayers([]));
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && players === null) load(comp);
+  }
+
+  const visible = players
+    ? posTab === "ALL" ? players : players.filter((p) => p.position === posTab)
+    : [];
+
+  return (
+    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+      <button onClick={toggle}
+        className="flex w-full items-center justify-between px-4 py-2.5 text-left transition-opacity hover:opacity-70"
+        style={{ borderBottom: open ? `1px solid ${C.line}` : "none" }}>
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+          ⚡ Standout Players
+        </span>
+        <span className="text-xs" style={{ color: C.mute }}>{open ? "hide ▴" : "show ▾"}</span>
+      </button>
+
+      {open && (
+        <div>
+          {/* Comp + pos selectors */}
+          <div className="border-b px-3 pt-2 pb-2 space-y-1.5" style={{ borderColor: C.line }}>
+            <div className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+              {[["WC","🌍 World Cup"],["PL","🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL"],["PD","🇪🇸 La Liga"],["BL1","🇩🇪 Bundesliga"],
+                ["SA","🇮🇹 Serie A"],["FL1","🇫🇷 Ligue 1"],["CL","⭐ CL"]].map(([c,lbl]) => (
+                <button key={c} onClick={() => { setComp(c); load(c); }}
+                  className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                  style={{ background: c === comp ? C.home : C.line, color: c === comp ? "#08120F" : C.mute }}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+              {POS_TABS.map(({ key, label }) => (
+                <button key={key} onClick={() => setPosTab(key)}
+                  className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                  style={{ background: key === posTab ? C.home : C.line, color: key === posTab ? "#08120F" : C.mute }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {players === null ? (
+            <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
+          ) : visible.length === 0 ? (
+            <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>
+              {offline || !apiBase
+                ? "Available when backend is connected."
+                : "No squad data yet — run sync to populate."}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 p-3">
+              {visible.map((p, i) => {
+                const pm = POS_META[p.position] ?? POS_META["?"];
+                return (
+                  <div key={i} className="rounded-lg border p-2.5 flex flex-col gap-1"
+                    style={{ borderColor: C.line, background: C.panel2 }}>
+                    <div className="flex items-start justify-between gap-1">
+                      <span className="text-xs font-semibold leading-tight" style={{ color: C.chalk }}>
+                        {p.name}
+                      </span>
+                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase"
+                        style={{ background: pm.bg, color: pm.fg }}>
+                        {pm.label}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] truncate" style={{ color: C.mute }}>
+                        {flag(p.team)}{p.team}
+                      </span>
+                      {p.age && (
+                        <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>
+                          {p.age}y
+                        </span>
+                      )}
+                    </div>
+                    {/* Strength bar using team_rating (1000–2100 range) */}
+                    <div className="h-0.5 w-full overflow-hidden rounded-full" style={{ background: C.line }}>
+                      <div className="h-full rounded-full"
+                        style={{ width: `${Math.min(100, Math.round((p.team_rating - 1200) / 8))}%`,
+                                 background: pm.bg === "#7B1F1F" ? C.away : pm.bg === "#1A6B47" ? C.home : C.draw }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GroupsPanel({ groups }) {
   const letters = Object.keys(groups).sort();
   const [open, setOpen] = useState(letters[0] ?? null);
@@ -829,6 +956,7 @@ export default function FootballMind() {
           <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} onClickFixture={handleFixtureClick} apiBase={API_BASE} />
           {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
           <BracketPanel apiBase={API_BASE} offline={offline} />
+          <StandoutsPanel apiBase={API_BASE} offline={offline} />
           <RankingsPanel apiBase={API_BASE} offline={offline} />
           <StandingsPanel apiBase={API_BASE} offline={offline} />
         </aside>
