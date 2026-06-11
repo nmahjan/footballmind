@@ -141,12 +141,57 @@ python footballmind_jobs.py seed-elo
 # Train models
 python footballmind_jobs.py retrain
 
-# Start the API
+# Start the API (REST only)
 flask --app footballmind_app run
 
-# In a separate terminal, start the frontend
-cd frontend && npm install && npm run dev
+# Or: REST + remote MCP on http://127.0.0.1:8000/mcp
+uvicorn footballmind_asgi:app --reload --port 8000
+
+# MCP server only (stdio — used by Cursor locally)
+python server.py
 ```
+
+---
+
+## MCP server (Cursor / Claude Desktop)
+
+FootballMind exposes **7 MCP tools** via `server.py`:
+
+| Tool | What it does |
+|------|----------------|
+| `predict_match` | W/D/L probabilities + expected goals |
+| `get_league_standings` | League table (PL, PD, BL1, SA, FL1, CL, DED) |
+| `list_fixtures` | Upcoming matches |
+| `get_tournament_groups` | WC group standings |
+| `get_tournament_bracket` | Knockout bracket (Final first) |
+| `get_power_rankings` | National Elo rankings |
+| `list_standout_players` | Key squad players by position |
+
+### Local (stdio)
+
+1. Copy `mcp.json.example` → edit paths, or run:
+   ```bash
+   python scripts/setup_cursor_mcp.py
+   ```
+2. Restart Cursor. You should see **footballmind** under MCP servers.
+
+### Remote (HTTP on Render)
+
+The combined ASGI app (`footballmind_asgi.py`) serves:
+- Flask REST API at `/`
+- MCP streamable-http at `/mcp`
+
+1. Generate a key: `openssl rand -hex 24`
+2. Add `MCP_API_KEY=<that key>` to Render env vars (same service as the API)
+3. Add to `~/.cursor/mcp.json`:
+   ```json
+   "footballmind-remote": {
+     "type": "http",
+     "url": "https://football-mind.onrender.com/mcp",
+     "headers": { "Authorization": "Bearer YOUR_MCP_API_KEY" }
+   }
+   ```
+4. Redeploy Render (start command: `uvicorn footballmind_asgi:app --host 0.0.0.0 --port $PORT`)
 
 ---
 
@@ -155,7 +200,7 @@ cd frontend && npm install && npm run dev
 | Layer | Service | Notes |
 |-------|---------|-------|
 | Database | Neon (free tier) | Persistent, scale-to-zero, pooled connection |
-| Backend API | Render (free web service) | `gunicorn footballmind_app:app`, spins down after 15 min idle |
+| Backend API + MCP | Render (free web service) | `uvicorn footballmind_asgi:app` — REST at `/`, MCP at `/mcp` |
 | Frontend | GitHub Pages | Static Vite build, auto-deployed on push to main |
 | Scheduled jobs | GitHub Actions | Sync every 6h, retrain Monday 05:30 UTC |
 
@@ -164,6 +209,7 @@ cd frontend && npm install && npm run dev
 | Variable | Where | Purpose |
 |----------|-------|---------|
 | `DATABASE_URL` | Render + Actions secret | Neon pooled connection string |
+| `MCP_API_KEY` | Render + local `.env` | Bearer token for remote MCP at `/mcp` |
 | `FOOTBALL_DATA_API_KEY` | Actions secret | football-data.org API key |
 | `ANTHROPIC_API_KEY` | Render env var | Claude API key (optional — enables LLM chat + deep analysis) |
 | `FRONTEND_ORIGIN` | Render env var | GitHub Pages URL for CORS (or `*` for open access) |

@@ -125,13 +125,13 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
 
 def _run_tool(conn, name, args, session_id):
     from footballmind_mcp_predict import _predict_match
-    from footballmind_app import _standings
+    from footballmind_services import get_standings
     if name == "predict_match":
         return _predict_match(conn, args["home_team"], args["away_team"], None,
                               args.get("stage", "regular_season"),
                               session_id=session_id)
     if name == "get_standings":
-        return _standings(conn, args.get("comp", "PL"), args.get("season"))
+        return get_standings(conn, args.get("comp", "PL"), args.get("season"))
     return {"error": f"unknown tool {name}"}
 
 

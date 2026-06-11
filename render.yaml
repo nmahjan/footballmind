@@ -3,9 +3,11 @@ services:
     name: footballmind
     runtime: python
     buildCommand: pip install --timeout 120 --retries 5 -r requirements.txt
-    startCommand: gunicorn footballmind_app:app
+    startCommand: uvicorn footballmind_asgi:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
+        sync: false
+      - key: MCP_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false

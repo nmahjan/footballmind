@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "footballmind": {
+      "command": "/ABS/PATH/TO/footballmind/.venv/bin/python",
+      "args": ["/ABS/PATH/TO/footballmind/server.py"],
+      "env": {
+        "DATABASE_URL": "postgresql://..."
+      }
+    },
+    "footballmind-remote": {
+      "type": "http",
+      "url": "https://football-mind.onrender.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_API_KEY"
+      }
+    }
+  }
+}
