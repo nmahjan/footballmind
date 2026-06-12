@@ -477,6 +477,150 @@ def get_player_profile(conn, name: str, comp: str | None = None) -> dict | None:
     return profile
 
 
+def _find_player_record(conn, name: str) -> dict | None:
+    """Best-match player row for comparisons (exact name preferred)."""
+    term = (name or "").strip()
+    if len(term) < 2:
+        return None
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT p.id, p.name, p.position, p.birth_date, co.name "
+            "FROM players p "
+            "LEFT JOIN countries co ON co.id = p.nationality "
+            "WHERE p.name ILIKE %s "
+            "ORDER BY "
+            "  CASE WHEN LOWER(p.name) = LOWER(%s) THEN 0 "
+            "       WHEN p.name ILIKE %s THEN 1 ELSE 2 END, "
+            "  p.name "
+            "LIMIT 1",
+            (f"%{term}%", term, f"{term}%"))
+        row = cur.fetchone()
+    if not row:
+        return None
+    pid, pname, pos, dob, nat = row
+    return {
+        "id": pid,
+        "name": pname,
+        "position": pos or "?",
+        "age": _player_age(dob),
+        "nationality": nat,
+    }
+
+
+def _player_affiliation(conn, player_id: int, kind: str) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT t.name, t.type, tr.rating "
+            "FROM player_affiliations pa "
+            "JOIN teams t ON t.id = pa.team_id "
+            "LEFT JOIN team_ratings tr ON tr.team_id = t.id "
+            "WHERE pa.player_id = %s AND pa.kind = %s AND pa.end_date IS NULL "
+            "LIMIT 1",
+            (player_id, kind))
+        row = cur.fetchone()
+    if not row:
+        return None
+    team, team_type, rating = row
+    return {
+        "team": team,
+        "team_type": team_type,
+        "rating": round(rating) if rating is not None else None,
+    }
+
+
+def _best_club_season(conn, player_id: int) -> dict | None:
+    """Strongest club-competition season on goals + assists."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pes.goals, pes.assists, pes.appearances, pes.penalties, "
+            "       t.name, c.code, e.season "
+            "FROM player_edition_stats pes "
+            "JOIN teams t ON t.id = pes.team_id "
+            "JOIN competition_editions e ON e.id = pes.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "WHERE pes.player_id = %s AND t.type = 'club' "
+            "ORDER BY (pes.goals + pes.assists * 0.6) DESC, pes.appearances DESC "
+            "LIMIT 1",
+            (player_id,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    goals, assists, apps, pens, club, comp_code, season = row
+    return {
+        "club": club,
+        "comp_code": comp_code,
+        "season": season,
+        "goals": goals,
+        "assists": assists,
+        "appearances": apps,
+        "penalties": pens,
+    }
+
+
+def _build_compare_profile(conn, name: str, comp: str | None) -> dict | None:
+    base = _find_player_record(conn, name)
+    if not base:
+        return None
+    pid = base["id"]
+    profile = dict(base)
+
+    nat = _player_affiliation(conn, pid, "national")
+    club = _player_affiliation(conn, pid, "club")
+    club_season = _best_club_season(conn, pid)
+
+    if nat:
+        profile["national_team"] = nat["team"]
+        profile["national_rating"] = nat["rating"]
+    if club:
+        profile["club"] = club["team"]
+        profile["club_rating"] = club["rating"]
+    if club_season:
+        profile["club_season"] = club_season
+
+    if comp:
+        stats = get_player_comp_stats(conn, profile["name"], comp)
+        if stats:
+            profile.update(stats)
+
+    # Legacy fields used by MCP / older formatters
+    kind = _affil_kind_for_comp(conn, comp) if comp else None
+    if kind == "club" and club:
+        profile["team"] = club["team"]
+        profile["team_rating"] = club["rating"]
+    elif nat:
+        profile["team"] = nat["team"]
+        profile["team_rating"] = nat["rating"]
+    elif club:
+        profile["team"] = club["team"]
+        profile["team_rating"] = club["rating"]
+
+    return profile
+
+
+def _comparison_context(comp: str | None, conn) -> tuple[str, str]:
+    """Return (mode, human-readable note) for compare_players output."""
+    if not comp:
+        return "general", (
+            "Side-by-side profile with national team and club season context."
+        )
+    kind = _affil_kind_for_comp(conn, comp)
+    if kind == "national":
+        return "national_squads", (
+            f"Comparing as national squad members ({comp} context). "
+            "Club season form is included where synced."
+        )
+    return "club_competition", f"Comparing players in {comp} competition stats."
+
+
+def _form_score(p: dict) -> float:
+    cs = p.get("club_season") or {}
+    if cs.get("goals") is not None or cs.get("assists"):
+        return (cs.get("goals") or 0) + (cs.get("assists") or 0) * 0.6
+    if p.get("goals") is not None:
+        return (p.get("goals") or 0) + (p.get("assists") or 0) * 0.6
+    return 0.0
+
+
 def get_player_comp_stats(conn, name: str, comp: str) -> dict | None:
     edition_id = _edition_id_for_comp(conn, comp)
     if not edition_id:
@@ -767,11 +911,18 @@ def get_prediction_summary(conn) -> dict:
 
 def compare_players(conn, player_a: str, player_b: str,
                     comp: str | None = None) -> dict:
-    """Side-by-side profile for two players (stats, team, position, age)."""
-    a = get_player_profile(conn, player_a, comp)
-    b = get_player_profile(conn, player_b, comp)
+    """Side-by-side profile: national team, club, and season/comp stats."""
+    a = _build_compare_profile(conn, player_a, comp)
+    b = _build_compare_profile(conn, player_b, comp)
     if not a:
         return {"error": f"No player found matching {player_a!r}"}
     if not b:
         return {"error": f"No player found matching {player_b!r}"}
-    return {"comp": comp, "player_a": a, "player_b": b}
+    mode, note = _comparison_context(comp, conn)
+    return {
+        "comp": comp,
+        "comparison_mode": mode,
+        "comparison_note": note,
+        "player_a": a,
+        "player_b": b,
+    }

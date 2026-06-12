@@ -44,6 +44,7 @@ from footballmind_services import (
     get_teams_in_comp,
     get_top_scorers,
     search_players,
+    _form_score,
 )
 
 app = Flask(__name__)
@@ -304,25 +305,55 @@ def _format_player_compare(result: dict) -> str:
     """Readable comparison from compare_players() output."""
     a, b = result["player_a"], result["player_b"]
     comp = result.get("comp") or "WC"
+    note = result.get("comparison_note")
 
-    def line(p):
-        bits = [f"**{p['name']}** ({p.get('team', '?')}, {p.get('position', '?')})"]
+    def block(p):
+        header_bits = [f"**{p['name']}**"]
+        if p.get("position"):
+            header_bits.append(p["position"])
         if p.get("age"):
-            bits.append(f"{p['age']}y")
-        if p.get("goals") is not None:
-            bits.append(f"{p['goals']}G · {p.get('assists', 0)}A")
-        elif p.get("team_rating"):
-            bits.append(f"team Elo {round(p['team_rating'])}")
-        return " · ".join(bits)
+            header_bits.append(f"{p['age']}y")
+        if p.get("nationality"):
+            header_bits.append(p["nationality"])
+        lines = [" · ".join(header_bits)]
+        if p.get("national_team"):
+            nr = p.get("national_rating")
+            elo = f" (Elo {nr})" if nr else ""
+            lines.append(f"National: **{p['national_team']}**{elo}")
+        if p.get("club"):
+            cr = p.get("club_rating")
+            elo = f" (Elo {cr})" if cr else ""
+            lines.append(f"Club: **{p['club']}**{elo}")
+        cs = p.get("club_season") or {}
+        if cs.get("goals") is not None or cs.get("assists"):
+            cc = cs.get("comp_code", "?")
+            lines.append(
+                f"Club form ({cc}): {cs.get('goals', 0)}G · "
+                f"{cs.get('assists', 0)}A · {cs.get('appearances', 0)} apps"
+            )
+        if p.get("goals") is not None and comp:
+            lines.append(
+                f"{comp} stats: {p['goals']}G · {p.get('assists', 0)}A · "
+                f"{p.get('appearances', 0)} apps"
+            )
+        elif not cs and p.get("team_rating"):
+            lines.append(f"Squad Elo: {round(p['team_rating'])}")
+        return "\n".join(lines)
 
-    parts = [line(a), line(b)]
-    ra = a.get("team_rating") or 0
-    rb = b.get("team_rating") or 0
-    ga = (a.get("goals") or 0) + (a.get("assists") or 0) * 0.5
-    gb = (b.get("goals") or 0) + (b.get("assists") or 0) * 0.5
-    if ga or gb:
-        edge = a["name"] if ga >= gb else b["name"]
-        parts.append(f"On {comp} form stats, **{edge}** has the stronger output so far.")
+    parts = []
+    if note:
+        parts.append(f"*{note}*")
+    parts.extend([block(a), block(b)])
+
+    fa, fb = _form_score(a), _form_score(b)
+    ra = a.get("national_rating") or a.get("team_rating") or 0
+    rb = b.get("national_rating") or b.get("team_rating") or 0
+    if fa or fb:
+        edge = a["name"] if fa >= fb else b["name"]
+        parts.append(f"On club season output, **{edge}** has the stronger numbers.")
+    elif a.get("goals") is not None or b.get("goals") is not None:
+        edge = a["name"] if fa >= fb else b["name"]
+        parts.append(f"On {comp} stats, **{edge}** has the stronger output so far.")
     elif ra or rb:
         edge = a["name"] if ra >= rb else b["name"]
         parts.append(f"By national team strength (Elo), **{edge}**'s side rates higher.")
