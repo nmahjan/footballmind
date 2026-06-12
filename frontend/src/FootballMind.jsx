@@ -1044,31 +1044,38 @@ function PlayerCard({ p, onSelect, compact }) {
   );
 }
 
-function PredictedPitch({ rows, formation, compact = false }) {
+function PredictedPitch({ rows, formation, compact = false, label = "Predicted XI" }) {
+  const displayRows = [...(rows ?? [])].reverse();
   return (
     <div className="rounded-xl border overflow-hidden" style={{ borderColor: "#2a5c3e", background: "linear-gradient(180deg, #1a4d35 0%, #143d2a 100%)" }}>
       <div className="px-3 py-2 flex items-center justify-between border-b" style={{ borderColor: "#2a5c3e55" }}>
         <span className="text-[11px] font-bold tracking-wider" style={{ color: "#b8e6c8" }}>{formation}</span>
-        <span className="text-[9px] uppercase tracking-wider" style={{ color: "#7ab896" }}>Predicted XI</span>
+        <span className="text-[9px] uppercase tracking-wider" style={{ color: "#7ab896" }}>{label}</span>
       </div>
       <div className={`px-2 py-3 space-y-2 flex flex-col justify-around ${compact ? "min-h-[120px]" : "min-h-[220px]"}`}>
-        {(rows ?? []).map((row, ri) => (
+        {displayRows.map((row, ri) => (
           <div key={ri} className="flex justify-center gap-1.5 flex-wrap">
-            {row.players.map((p, pi) => (
+            {row.players.map((p, pi) => {
+              const posKey = p.position ?? row.line;
+              const pm = POS_META[posKey] ?? POS_META["?"];
+              return (
               <div key={pi} className={`flex flex-col items-center ${compact ? "w-[52px]" : "w-[72px]"}`}>
-                <div className={`rounded-full flex items-center justify-center font-bold border-2 ${compact ? "w-7 h-7 text-[8px]" : "w-9 h-9 text-[9px]"}`}
+                <div className={`rounded-full flex items-center justify-center font-bold border-2 ${compact ? "w-7 h-7 text-[7px]" : "w-9 h-9 text-[8px]"}`}
                   style={{ background: "#0d2818", borderColor: "#4ade80", color: "#ecfdf5" }}>
-                  {POS_META[p.position ?? row.line]?.label?.slice(0, 1) ?? "?"}
+                  {pm.label}
                 </div>
                 <span className={`mt-1 font-semibold text-center leading-tight line-clamp-2 w-full ${compact ? "text-[8px]" : "text-[9px]"}`}
                   style={{ color: "#f0fdf4" }}>
-                  {p.name.split(" ").pop()}
+                  {p.shirt_number ? `${p.shirt_number} ` : ""}{p.name.split(" ").pop()}
                 </span>
                 {!compact && (
-                  <span className="text-[8px] tabular-nums" style={{ color: "#86efac88" }}>{Math.round(p.score)}</span>
+                  <span className="text-[8px] tabular-nums" style={{ color: "#86efac88" }}>
+                    {p.rating != null ? p.rating.toFixed(1) : p.score != null ? Math.round(p.score) : ""}
+                  </span>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         ))}
       </div>
@@ -1296,6 +1303,7 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, adminKey }) {
   const [searchHits, setSearchHits] = useState(null);
   const [scorers, setScorers] = useState(null);
   const [lineup, setLineup] = useState(null);
+  const [lineupView, setLineupView] = useState("predicted");
 
   function loadPredictedLineup(t, c) {
     if (!apiBase || offline || !t) { setLineup(null); return; }
@@ -1518,29 +1526,69 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, adminKey }) {
               <div className="text-center text-xs py-4" style={{ color: C.mute }}>{lineup.error}</div>
             ) : (
               <>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]" style={{ color: C.mute }}>
-                  <span>{flag(lineup.team)}{lineup.team}</span>
-                  <span>·</span>
-                  <span>{
-                    lineup.source === "recent_lineup"
-                      ? "Based on last match XI"
-                      : lineup.source === "recent_formation"
-                        ? "Based on recent formation"
-                        : "Depth + form model"
-                  }</span>
-                  {lineup.next_opponent && (
-                    <>
-                      <span>·</span>
-                      <span>Next: vs {flag(lineup.next_opponent)}{lineup.next_opponent}</span>
-                    </>
-                  )}
-                </div>
-                {lineup.recent_formations?.length > 0 && (
-                  <div className="text-[10px]" style={{ color: C.mute }}>
-                    Recent: {lineup.recent_formations.join(", ")}
+                {lineup.confirmed?.rows?.length > 0 && (
+                  <div className="flex rounded-lg border p-0.5" style={{ borderColor: C.line, background: C.panel2 }}>
+                    {[["predicted", "Predicted"], ["confirmed", "Last match"]].map(([k, lbl]) => (
+                      <button key={k} type="button" onClick={() => setLineupView(k)}
+                        className="flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold transition-colors"
+                        style={{
+                          background: lineupView === k ? C.home : "transparent",
+                          color: lineupView === k ? "#08120F" : C.mute,
+                        }}>
+                        {lbl}
+                      </button>
+                    ))}
                   </div>
                 )}
-                <PredictedPitch rows={lineup.rows} formation={lineup.formation} />
+                {(() => {
+                  const showConfirmed = lineupView === "confirmed" && lineup.confirmed?.rows?.length > 0;
+                  const view = showConfirmed ? lineup.confirmed : lineup;
+                  const matchMeta = showConfirmed ? lineup.confirmed?.match : null;
+                  return (
+                    <>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]" style={{ color: C.mute }}>
+                        <span>{flag(lineup.team)}{lineup.team}</span>
+                        <span>·</span>
+                        <span>{
+                          showConfirmed
+                            ? `Confirmed vs ${matchMeta?.opponent ?? "opponent"}`
+                            : lineup.source === "recent_lineup"
+                              ? "Based on last match XI"
+                              : lineup.source === "recent_formation"
+                                ? "Based on recent formation"
+                                : "Depth + form model"
+                        }</span>
+                        {matchMeta?.match_date && showConfirmed && (
+                          <>
+                            <span>·</span>
+                            <span>{matchMeta.match_date.slice(0, 10)}</span>
+                          </>
+                        )}
+                        {!showConfirmed && lineup.next_opponent && (
+                          <>
+                            <span>·</span>
+                            <span>Next: vs {flag(lineup.next_opponent)}{lineup.next_opponent}</span>
+                          </>
+                        )}
+                      </div>
+                      {!showConfirmed && !lineup.confirmed?.rows?.length && (
+                        <p className="text-[9px] leading-snug" style={{ color: C.mute }}>
+                          Model prediction — not official lineups. Confirmed XIs appear when match detail sync includes lineups (paid API tier).
+                        </p>
+                      )}
+                      {lineup.recent_formations?.length > 0 && !showConfirmed && (
+                        <div className="text-[10px]" style={{ color: C.mute }}>
+                          Recent: {lineup.recent_formations.join(", ")}
+                        </div>
+                      )}
+                      <PredictedPitch
+                        rows={view.rows}
+                        formation={view.formation}
+                        label={showConfirmed ? "Confirmed XI" : "Predicted XI"}
+                      />
+                    </>
+                  );
+                })()}
                 {lineup.unavailable?.length > 0 && (
                   <div>
                     <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: C.away }}>
@@ -1554,6 +1602,7 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, adminKey }) {
                           <span className="shrink-0 ml-2 text-[10px] font-semibold capitalize"
                             style={{ color: u.status === "suspended" ? C.away : u.status === "injured" ? "#e67e22" : C.mute }}>
                             {u.status}{u.reason ? ` · ${u.reason}` : ""}
+                            {u.source && u.source !== "manual" ? ` · ${u.source}` : ""}
                           </span>
                         </div>
                       ))}

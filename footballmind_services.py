@@ -1210,7 +1210,7 @@ def list_availability_flags(conn, team_name: str, comp: str = "WC") -> list[dict
     with conn.cursor() as cur:
         team_id, _ = _resolve_team(cur, team_name)
         cur.execute(
-            "SELECT p.name, pa.status, pa.reason, pa.updated_at "
+            "SELECT p.name, pa.status, pa.reason, pa.updated_at, pa.source "
             "FROM player_availability pa "
             "JOIN players p ON p.id = pa.player_id "
             "WHERE pa.team_id = %s AND pa.comp_code = %s "
@@ -1223,9 +1223,10 @@ def list_availability_flags(conn, team_name: str, comp: str = "WC") -> list[dict
             "status": status,
             "reason": reason,
             "updated_at": updated.isoformat() if updated else None,
-            "manual": True,
+            "source": source or "manual",
+            "manual": (source or "manual") == "manual",
         }
-        for name, status, reason, updated in rows
+        for name, status, reason, updated, source in rows
     ]
 
 
@@ -1244,10 +1245,11 @@ def set_availability_flag(conn, player_name: str, team_name: str, comp: str,
         player_id, resolved_name = found
         cur.execute(
             "INSERT INTO player_availability "
-            "(player_id, team_id, comp_code, status, reason, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s, now()) "
+            "(player_id, team_id, comp_code, status, reason, source, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, 'manual', now()) "
             "ON CONFLICT (player_id, team_id, comp_code) DO UPDATE SET "
-            "  status = EXCLUDED.status, reason = EXCLUDED.reason, updated_at = now()",
+            "  status = EXCLUDED.status, reason = EXCLUDED.reason, "
+            "  source = 'manual', updated_at = now()",
             (player_id, team_id, comp, status, (reason or "").strip() or None))
     conn.commit()
     return {

@@ -11,7 +11,7 @@ on:
       job:
         description: "Which job to run"
         type: choice
-        options: [sync, retrain]
+        options: [sync, sync-enrich, retrain]
         default: sync
       full:
         description: "Full season backfill? (tick for first run / new leagues)"
@@ -34,11 +34,19 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python footballmind_migrate.py
 
+      - name: Run sync-enrich
+        if: github.event.inputs.job == 'sync-enrich'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python footballmind_jobs.py sync-enrich
+
       - name: Run sync
         if: github.event.schedule == '17 */6 * * *' || github.event.inputs.job == 'sync'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: python footballmind_jobs.py sync ${{ github.event.inputs.full == 'true' && '--full' || '' }}
 
       - name: Run retrain

@@ -27,8 +27,13 @@ FORMATION_SLOTS: dict[str, list[str]] = {
 
 # When no synced formation, try these first for club sides (modern default shapes).
 _CLUB_FORMATION_PREF = (
-    "4-3-2-1", "4-2-3-1", "4-3-3", "3-4-3", "4-4-2", "3-5-2", "5-3-2",
+    "4-2-3-1", "4-3-3", "4-3-2-1", "3-4-3", "4-4-2", "3-5-2", "5-3-2",
 )
+
+# Known shapes when API lineups are unavailable (comp, team) -> formation.
+_TEAM_FORMATION_HINT: dict[tuple[str, str], str] = {
+    ("PL", "Arsenal FC"): "4-2-3-1",
+}
 
 _FORMATION_ALIASES = {
     "4321": "4-3-2-1",
@@ -80,12 +85,27 @@ def _recent_starter_counts(cur, team_id: int, comp: str, matches: int = 5) -> di
     return {row[0]: row[1] for row in cur.fetchall()}
 
 
-def _last_match_starters(cur, team_id: int, comp: str) -> tuple[str | None, list[dict]]:
+def _eligible_starter(player: dict) -> bool:
+    """Block academy call-ups from model-picked slots unless they have real minutes."""
+    age = _player_age(player.get("birth_date"))
+    apps = int(player.get("appearances") or 0)
+    if age is not None and age < 18:
+        return False
+    if age is not None and age < 20 and apps < 8:
+        return False
+    return True
+
+
+def _last_match_starters(cur, team_id: int, comp: str) -> tuple[str | None, list[dict], dict | None]:
     """Most recent confirmed XI + formation for this team in comp."""
     cur.execute(
-        "SELECT m.id, mtl.formation "
+        "SELECT m.id, mtl.formation, m.match_date, "
+        "       CASE WHEN m.home_team_id = %s THEN ta.name ELSE th.name END AS opponent, "
+        "       m.home_goals, m.away_goals "
         "FROM matches m "
         "JOIN match_team_lineups mtl ON mtl.match_id = m.id AND mtl.team_id = %s "
+        "JOIN teams th ON th.id = m.home_team_id "
+        "JOIN teams ta ON ta.id = m.away_team_id "
         "JOIN competition_editions e ON e.id = m.edition_id "
         "JOIN competitions c ON c.id = e.competition_id "
         "WHERE c.code = %s AND m.home_goals IS NOT NULL "
@@ -94,11 +114,11 @@ def _last_match_starters(cur, team_id: int, comp: str) -> tuple[str | None, list
         "    WHERE mlp.match_id = m.id AND mlp.team_id = %s AND mlp.role = 'starter'"
         "  ) "
         "ORDER BY m.match_date DESC NULLS LAST LIMIT 1",
-        (team_id, comp, team_id))
+        (team_id, team_id, comp, team_id))
     row = cur.fetchone()
     if not row:
-        return None, []
-    match_id, formation = row
+        return None, [], None
+    match_id, formation, match_date, opponent, hg, ag = row
     cur.execute(
         "SELECT p.id, p.name, COALESCE(mlp.position, p.position, '?'), mlp.shirt_number "
         "FROM match_lineup_players mlp "
@@ -110,7 +130,13 @@ def _last_match_starters(cur, team_id: int, comp: str) -> tuple[str | None, list
         {"player_id": pid, "name": name, "position": pos or "?", "shirt_number": num}
         for pid, name, pos, num in cur.fetchall()
     ]
-    return normalize_formation(formation), starters
+    meta = {
+        "match_id": match_id,
+        "match_date": match_date.isoformat() if match_date else None,
+        "opponent": opponent,
+        "score": f"{hg}-{ag}" if hg is not None and ag is not None else None,
+    }
+    return normalize_formation(formation), starters, meta
 
 
 def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
@@ -269,6 +295,10 @@ def _gk_rank_key(player: dict) -> tuple:
 def _candidates_for_slot(slot: str, squad: list[dict], taken: set[int]) -> list[dict]:
     """Best-fit players for a lineup slot (role-aware)."""
     avail = [p for p in squad if p["player_id"] not in taken]
+    if slot != "GK":
+        eligible = [p for p in avail if _eligible_starter(p)]
+        if eligible:
+            avail = eligible
     score_key = lambda p: (-p["score"], p["name"])
     if slot == "ST":
         primary = [p for p in avail if p.get("line_role") == "ST"]
@@ -297,20 +327,38 @@ def _candidates_for_slot(slot: str, squad: list[dict], taken: set[int]) -> list[
         cms.sort(key=lambda p: (-(p.get("assists") or 0), -p["score"], p["name"]))
         return _prefer_senior(cms)
     if slot == "CDM":
-        primary = [p for p in avail if p.get("line_role") == "CDM"]
-        primary.sort(key=lambda p: (-p["score"], p["name"]))
+        primary = [p for p in avail if p.get("line_role") in ("CDM", "CM")]
+        # No.10 types belong in the CAM row, not the pivot.
+        primary = [
+            p for p in primary
+            if p.get("line_role") != "CAM"
+            and not (p.get("line_role") == "CM" and p["score"] >= 72
+                     and (p.get("assists") or 0) >= 2)
+        ]
+        primary.sort(key=lambda p: (
+            0 if p.get("line_role") == "CDM" else 1,
+            -(p["score"]),
+            (p.get("assists") or 0),
+            p["name"],
+        ))
+        eligible = _prefer_senior([p for p in primary if _eligible_starter(p)])
+        if eligible:
+            return eligible
         if primary:
-            return primary
-        cms = [p for p in avail if p.get("line_role") == "CM"]
-        cms.sort(key=lambda p: (-p["score"], p["name"]))
-        return cms
+            return _prefer_senior(primary)
+        mids = [p for p in avail if p.get("line_role") == "CAM"]
+        return _sorted_candidates(mids, score_key)
     if slot == "CM":
         primary = [p for p in avail if p.get("line_role") == "CM"]
         primary.sort(key=score_key)
+        eligible = _prefer_senior([p for p in primary if _eligible_starter(p)])
+        if eligible:
+            return eligible
         if primary:
             return primary
         mids = [p for p in avail if p.get("line_role") in ("CDM", "CAM")]
-        return _sorted_candidates(mids, score_key)
+        eligible = _prefer_senior([p for p in mids if _eligible_starter(p)])
+        return _sorted_candidates(eligible or mids, score_key)
     if slot == "LB":
         primary = [p for p in avail if p.get("line_role") == "LB"]
         if primary:
@@ -394,6 +442,15 @@ def _pick_formation(squad: list[dict], preferred: str | None, kind: str) -> str:
     return best_f
 
 
+def _slot_fill_order(slots: list[str]) -> list[int]:
+    """Fill attacking slots before pivots so creative mids land in CAM/WING, not CDM."""
+    priority = {
+        "ST": 0, "WING": 1, "CAM": 2, "CM": 3, "CDM": 4,
+        "RB": 5, "LB": 5, "CB": 6, "DEF": 6, "GK": 7,
+    }
+    return sorted(range(len(slots)), key=lambda i: (priority.get(slots[i], 9), i))
+
+
 def _pick_xi(slots: list[str], squad: list[dict], unavailable: set[int],
              last_starters: list[dict] | None = None) -> list[dict]:
     """Fill XI; prefer last-match starters when still available."""
@@ -424,13 +481,20 @@ def _pick_xi(slots: list[str], squad: list[dict], unavailable: set[int],
                 taken.add(pid)
                 break
 
-    # Pass 2: fill remaining slots by role fit.
-    for i, slot in enumerate(slots):
+    # Pass 2: fill remaining slots by role fit (attack-first so CAM isn't lost to CDM).
+    for i in _slot_fill_order(slots):
+        slot = slots[i]
         if xi[i] is not None:
             continue
         cands = _candidates_for_slot(slot, avail, taken)
         if cands:
             picked = cands[0]
+        else:
+            # Last resort — still respect senior/eligibility for model fill-ins.
+            fallback = [p for p in avail if p["player_id"] not in taken and _eligible_starter(p)]
+            fallback.sort(key=lambda p: (-p["score"], p["name"]))
+            picked = fallback[0] if fallback else None
+        if picked:
             xi[i] = {**picked, "slot": i + 1, "line_pos": slot}
             taken.add(picked["player_id"])
 
@@ -478,14 +542,15 @@ def _card_suspensions(cur, team_id: int, comp: str) -> list[dict]:
 
 def _manual_unavailable(cur, team_id: int, comp: str) -> list[dict]:
     cur.execute(
-        "SELECT p.id, p.name, pa.status, pa.reason "
+        "SELECT p.id, p.name, pa.status, pa.reason, pa.source "
         "FROM player_availability pa "
         "JOIN players p ON p.id = pa.player_id "
         "WHERE pa.team_id = %s AND pa.comp_code = %s",
         (team_id, comp))
     return [
-        {"player_id": pid, "name": name, "status": status, "reason": reason or status}
-        for pid, name, status, reason in cur.fetchall()
+        {"player_id": pid, "name": name, "status": status,
+         "reason": reason or status, "source": source or "manual"}
+        for pid, name, status, reason, source in cur.fetchall()
     ]
 
 
@@ -540,19 +605,26 @@ _FORMATION_ROW_SLOTS: dict[str, list[tuple[str, list[int]]]] = {
 }
 
 
-def _formation_rows(xi: list[dict], formation: str) -> list[dict]:
+def _formation_rows(xi: list[dict], formation: str,
+                    ratings: dict[int, float] | None = None) -> list[dict]:
+    ratings = ratings or {}
     by_slot = {p["slot"]: p for p in xi}
     specs = _FORMATION_ROW_SLOTS.get(formation, _FORMATION_ROW_SLOTS["4-3-3"])
     rows = []
     for line, slots in specs:
-        players = [
-            {
-                "name": by_slot[s]["name"],
-                "score": by_slot[s]["score"],
-                "position": by_slot[s].get("line_pos") or line,
-            }
-            for s in slots if s in by_slot
-        ]
+        players = []
+        for s in slots:
+            if s not in by_slot:
+                continue
+            p = by_slot[s]
+            pid = p.get("player_id")
+            rating = ratings.get(pid) if pid else None
+            players.append({
+                "name": p["name"],
+                "score": p["score"],
+                "position": p.get("line_pos") or line,
+                "rating": rating,
+            })
         if players:
             rows.append({"line": line, "players": players})
     return list(reversed(rows))
@@ -570,7 +642,7 @@ def get_predicted_lineup(conn, team_name: str, comp: str | None = "WC") -> dict:
         resolved = cur.fetchone()[0]
 
         recent_starts = _recent_starter_counts(cur, team_id, comp)
-        last_formation, last_starters = _last_match_starters(cur, team_id, comp)
+        last_formation, last_starters, last_match = _last_match_starters(cur, team_id, comp)
         squad = _ranked_squad(cur, team_id, kind, comp, recent_starts)
         if not squad:
             return {"team": resolved, "comp": comp, "error": "No squad on file for this team."}
@@ -581,12 +653,36 @@ def get_predicted_lineup(conn, team_name: str, comp: str | None = "WC") -> dict:
         opponent = _next_opponent(cur, team_id, comp)
 
     recent = get_team_formations(conn, resolved, comp, limit=3)
-    preferred = last_formation or (recent[0]["formation"] if recent else None)
+    hint = _TEAM_FORMATION_HINT.get((comp, resolved))
+    preferred = last_formation or (recent[0]["formation"] if recent else None) or hint
     preferred = normalize_formation(preferred)
     formation = _pick_formation(avail_squad, preferred, kind)
     xi = _pick_xi(FORMATION_SLOTS[formation], avail_squad, unavailable_ids, last_starters)
 
     used_recent = len(last_starters) >= 9 and formation == preferred
+    confirmed = None
+    last_ratings: dict[int, float] = {}
+    if last_match and last_match.get("match_id"):
+        from footballmind_enrich import get_match_ratings
+        last_ratings = get_match_ratings(conn, last_match["match_id"])
+    if len(last_starters) >= 9 and last_formation:
+        cf = normalize_formation(last_formation) or formation
+        if cf in FORMATION_SLOTS:
+            cxi = _pick_xi(FORMATION_SLOTS[cf], avail_squad, unavailable_ids, last_starters)
+            confirmed = {
+                "formation": cf,
+                "match": last_match,
+                "starters": [
+                    {"name": p["name"], "position": p["line_pos"],
+                     "shirt_number": next(
+                         (s.get("shirt_number") for s in last_starters
+                          if s["player_id"] == p["player_id"]), None),
+                     "score": p["score"],
+                     "rating": last_ratings.get(p["player_id"])}
+                    for p in cxi
+                ],
+                "rows": _formation_rows(cxi, cf, last_ratings),
+            }
     xi_ids = {p["player_id"] for p in xi}
     pool = [p for p in squad if p["player_id"] not in xi_ids
             and p["player_id"] not in unavailable_ids]
@@ -621,7 +717,8 @@ def get_predicted_lineup(conn, team_name: str, comp: str | None = "WC") -> dict:
              "club_team": p.get("club_team")}
             for p in xi
         ],
-        "rows": _formation_rows(xi, formation),
+        "rows": _formation_rows(xi, formation, last_ratings if used_recent else None),
+        "confirmed": confirmed,
         "bench": [{"name": p["name"], "position": p["position"], "score": p["score"]} for p in bench],
         "unavailable": unavailable_list,
     }

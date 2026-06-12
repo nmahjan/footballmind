@@ -28,6 +28,7 @@ from footballmind_sync import (TokenBucket, FootballDataClient,
 from footballmind_production import select_and_deploy
 from footballmind_seed_elo import seed_national_elo
 from footballmind_grading import grade_predictions, link_orphan_predictions
+from footballmind_enrich import sync_enrichment
 
 # (code, name, comp_type, team_type, season)
 # football-data.org free-tier competitions available without a paid plan:
@@ -128,9 +129,21 @@ def cmd_sync(full=False):
         print(f"[sync] match details: {detail_n} checked", flush=True)
         nc = apply_team_captains(conn, TEAM_CAPTAINS)
         print(f"[sync] captains: {nc} flags set", flush=True)
+        try:
+            cmd_sync_enrich()
+        except Exception as e:
+            print(f"[sync] enrich FAILED: {e}", file=sys.stderr, flush=True)
         linked = link_orphan_predictions(conn)
         graded = grade_predictions(conn)
         print(f"[sync] predictions: {linked} linked, {graded} graded")
+
+
+def cmd_sync_enrich():
+    """Free enrichment feeds: FPL injuries, API-Football ratings/injuries, Understat xG."""
+    with _connect() as conn:
+        stats = sync_enrichment(conn)
+        parts = ", ".join(f"{k}={v}" for k, v in sorted(stats.items()))
+        print(f"[sync-enrich] {parts}", flush=True)
 
 
 def _season_labels_before(current: str, count: int) -> list[str]:
@@ -220,10 +233,12 @@ if __name__ == "__main__":
         cmd_retrain()
     elif cmd == "seed-elo":
         cmd_seed_elo()
+    elif cmd == "sync-enrich":
+        cmd_sync_enrich()
     elif cmd == "backfill-scorers":
         extra = [a for a in sys.argv[2:] if not a.startswith("-")]
         cmd_backfill_scorers(extra or None)
     else:
         print("usage: footballmind_jobs.py "
-              "[sync|sync-matchday|backfill-scorers|retrain|seed-elo]")
+              "[sync|sync-matchday|sync-enrich|backfill-scorers|retrain|seed-elo]")
         sys.exit(1)
