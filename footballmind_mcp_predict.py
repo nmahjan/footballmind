@@ -212,6 +212,48 @@ def _head_to_head(cur, home_id: int, away_id: int, n: int = 5) -> dict:
             "played": h_wins + d + a_wins}
 
 
+def _save_prediction(cur, session_id, match_id, home_id, away_id,
+                     lam_h, lam_a, out, knockout, confidence, reasoning):
+    """Insert or refresh an open prediction for this session + fixture."""
+    sid = session_id or "anon"
+    hw, dw, aw = out["home_win_prob"], out["draw_prob"], out["away_win_prob"]
+    ha = out["progression"]["home_advance"] if knockout else None
+    cols = (
+        "expected_home_goals = %s, expected_away_goals = %s, "
+        "home_win_prob = %s, draw_prob = %s, away_win_prob = %s, "
+        "home_advance_prob = %s, confidence = %s, reasoning = %s, "
+        "created_at = now()"
+    )
+    vals = (lam_h, lam_a, hw, dw, aw, ha, confidence, reasoning)
+
+    if match_id:
+        cur.execute(
+            "SELECT id FROM predictions "
+            "WHERE session_id = %s AND match_id = %s AND was_correct IS NULL "
+            "LIMIT 1",
+            (sid, match_id))
+    else:
+        cur.execute(
+            "SELECT id FROM predictions "
+            "WHERE session_id = %s AND home_team_id = %s AND away_team_id = %s "
+            "  AND was_correct IS NULL "
+            "LIMIT 1",
+            (sid, home_id, away_id))
+    row = cur.fetchone()
+
+    if row:
+        cur.execute(f"UPDATE predictions SET {cols} WHERE id = %s", (*vals, row[0]))
+        return
+
+    cur.execute(
+        "INSERT INTO predictions (session_id, match_id, home_team_id, away_team_id, "
+        " expected_home_goals, expected_away_goals, home_win_prob, draw_prob, "
+        " away_win_prob, home_advance_prob, confidence, reasoning) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (sid, match_id, home_id, away_id, lam_h, lam_a, hw, dw, aw, ha,
+         confidence, reasoning))
+
+
 def _predict_match(conn, home_team, away_team, match_date,
                    stage="regular_season", session_id=None, neutral=None):
     """Predict a match.
@@ -278,15 +320,8 @@ def _predict_match(conn, home_team, away_team, match_date,
         from footballmind_grading import find_fixture
         match_id = find_fixture(cur, home_id, away_id)
 
-        cur.execute(
-            "INSERT INTO predictions (session_id, match_id, home_team_id, away_team_id, "
-            " expected_home_goals, expected_away_goals, home_win_prob, draw_prob, "
-            " away_win_prob, home_advance_prob, confidence, reasoning) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (session_id, match_id, home_id, away_id, lam_h, lam_a,
-             out["home_win_prob"], out["draw_prob"], out["away_win_prob"],
-             out["progression"]["home_advance"] if knockout else None,
-             confidence, reasoning))
+        _save_prediction(cur, session_id, match_id, home_id, away_id,
+                         lam_h, lam_a, out, knockout, confidence, reasoning)
     conn.commit()
 
     return {

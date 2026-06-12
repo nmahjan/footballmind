@@ -199,7 +199,7 @@ POST /api/chat
 
 Run a full backfill after adding a league: **GitHub Actions → footballmind-jobs → Run workflow → sync → check "Full season backfill".**
 
-Migrations (`006` player positions, `007` scorer stats / lineup schema, `008` prediction team links, `009` player availability) run automatically at the start of each Actions job. To check locally:
+Migrations (`006` player positions, `007` scorer stats / lineup schema, `008` prediction team links, `009` player availability, `010` prediction dedupe per session) run automatically at the start of each Actions job. To check locally:
 
 ```bash
 python footballmind_migrate.py --status
