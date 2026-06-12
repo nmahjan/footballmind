@@ -375,7 +375,7 @@ function FormDots({ results, label }) {
   );
 }
 
-function PredictionCard({ p, home, away }) {
+function PredictionCard({ p, home, away, comp = "WC" }) {
   const color = outcomeColor(p.prediction, home, away);
   const [copied, setCopied] = useState(false);
   const [analysis, setAnalysis] = useState(null);
@@ -458,6 +458,8 @@ function PredictionCard({ p, home, away }) {
           <span style={{ color: C.mute }}>for {home.split(" ")[0]}</span>
         </div>
       )}
+
+      <CardPredictedLineups home={home} away={away} comp={comp} />
 
       {p.key_factors?.length > 0 && (
         <ul className="mt-2.5 space-y-1">
@@ -962,32 +964,126 @@ function PlayerCard({ p, onSelect, compact }) {
   );
 }
 
-function PredictedPitch({ rows, formation }) {
+function PredictedPitch({ rows, formation, compact = false }) {
   return (
     <div className="rounded-xl border overflow-hidden" style={{ borderColor: "#2a5c3e", background: "linear-gradient(180deg, #1a4d35 0%, #143d2a 100%)" }}>
       <div className="px-3 py-2 flex items-center justify-between border-b" style={{ borderColor: "#2a5c3e55" }}>
         <span className="text-[11px] font-bold tracking-wider" style={{ color: "#b8e6c8" }}>{formation}</span>
         <span className="text-[9px] uppercase tracking-wider" style={{ color: "#7ab896" }}>Predicted XI</span>
       </div>
-      <div className="px-2 py-3 space-y-2 min-h-[220px] flex flex-col justify-around">
+      <div className={`px-2 py-3 space-y-2 flex flex-col justify-around ${compact ? "min-h-[120px]" : "min-h-[220px]"}`}>
         {(rows ?? []).map((row, ri) => (
           <div key={ri} className="flex justify-center gap-1.5 flex-wrap">
             {row.players.map((p, pi) => (
-              <div key={pi} className="flex flex-col items-center w-[72px]">
-                <div className="w-9 h-9 rounded-full flex items-center justify-center text-[9px] font-bold border-2"
+              <div key={pi} className={`flex flex-col items-center ${compact ? "w-[52px]" : "w-[72px]"}`}>
+                <div className={`rounded-full flex items-center justify-center font-bold border-2 ${compact ? "w-7 h-7 text-[8px]" : "w-9 h-9 text-[9px]"}`}
                   style={{ background: "#0d2818", borderColor: "#4ade80", color: "#ecfdf5" }}>
                   {POS_META[row.line]?.label?.slice(0, 1) ?? "?"}
                 </div>
-                <span className="mt-1 text-[9px] font-semibold text-center leading-tight line-clamp-2 w-full"
+                <span className={`mt-1 font-semibold text-center leading-tight line-clamp-2 w-full ${compact ? "text-[8px]" : "text-[9px]"}`}
                   style={{ color: "#f0fdf4" }}>
                   {p.name.split(" ").pop()}
                 </span>
-                <span className="text-[8px] tabular-nums" style={{ color: "#86efac88" }}>{Math.round(p.score)}</span>
+                {!compact && (
+                  <span className="text-[8px] tabular-nums" style={{ color: "#86efac88" }}>{Math.round(p.score)}</span>
+                )}
               </div>
             ))}
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function MiniLineupColumn({ teamName, data, loading }) {
+  if (loading) {
+    return (
+      <div className="flex-1 min-w-0 text-[10px]" style={{ color: C.mute }}>
+        {flag(teamName)}{teamName.split(" ")[0]}…
+      </div>
+    );
+  }
+  if (!data?.rows?.length) return null;
+  const starters = data.rows.flatMap((r) => r.players.map((p) => p.name.split(" ").pop()));
+  return (
+    <div className="flex-1 min-w-0">
+      <div className="text-[10px] font-semibold truncate" style={{ color: C.chalk }}>
+        {flag(teamName)}{teamName.split(" ")[0]} · {data.formation}
+      </div>
+      <div className="mt-1 text-[9px] leading-snug" style={{ color: C.mute }}>
+        {starters.join(", ")}
+      </div>
+      {data.unavailable?.length > 0 && (
+        <div className="mt-1 text-[9px] leading-snug" style={{ color: C.away }}>
+          Out: {data.unavailable.map((u) => u.name.split(" ").pop()).join(", ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CardPredictedLineups({ home, away, comp }) {
+  const [homeLineup, setHomeLineup] = useState(null);
+  const [awayLineup, setAwayLineup] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!API_BASE || !home || !away) return;
+    let cancelled = false;
+    setLoading(true);
+    setHomeLineup(null);
+    setAwayLineup(null);
+    const c = comp || "WC";
+    Promise.all([
+      fetch(`${API_BASE}/api/players/predicted-lineup?team=${encodeURIComponent(home)}&comp=${c}`)
+        .then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_BASE}/api/players/predicted-lineup?team=${encodeURIComponent(away)}&comp=${c}`)
+        .then((r) => (r.ok ? r.json() : null)),
+    ])
+      .then(([h, a]) => {
+        if (cancelled) return;
+        setHomeLineup(h?.error ? null : h);
+        setAwayLineup(a?.error ? null : a);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [home, away, comp]);
+
+  const hasLineup = homeLineup?.rows?.length || awayLineup?.rows?.length;
+  if (!loading && !hasLineup) return null;
+
+  return (
+    <div className="mt-3 pt-2.5 border-t" style={{ borderColor: C.line }}>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+          ⚽ Predicted XI
+        </span>
+        {hasLineup && (
+          <button type="button" onClick={() => setExpanded((v) => !v)}
+            className="text-[10px] font-medium transition-opacity hover:opacity-70"
+            style={{ color: C.home }}>
+            {expanded ? "Compact" : "Pitch view"}
+          </button>
+        )}
+      </div>
+      {expanded && hasLineup ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {homeLineup?.rows?.length > 0 && (
+            <PredictedPitch rows={homeLineup.rows} formation={homeLineup.formation} compact />
+          )}
+          {awayLineup?.rows?.length > 0 && (
+            <PredictedPitch rows={awayLineup.rows} formation={awayLineup.formation} compact />
+          )}
+        </div>
+      ) : (
+        <div className="flex gap-3">
+          <MiniLineupColumn teamName={home} data={homeLineup} loading={loading} />
+          <MiniLineupColumn teamName={away} data={awayLineup} loading={loading} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1657,14 +1753,15 @@ export default function FootballMind() {
         body: JSON.stringify(body),
       });
       if (res.status === 429) {
-        setMessages((m) => [...m, { role: "bot", text: await readApiError(res), rateLimited: true }]);
+        const msg = await readApiError(res);
+        setMessages((m) => [...m, { role: "bot", text: msg, rateLimited: true }]);
         return;
       }
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
       setBackendStatus("live");
       setOffline(false);
-      setMessages((m) => [...m, { role: "bot", text: data.reply, prediction: data.prediction, teams }]);
+      setMessages((m) => [...m, { role: "bot", text: data.reply, prediction: data.prediction, teams, comp: chatComp }]);
     } catch {
       if (!API_BASE) {
         if (teams) {
@@ -1740,7 +1837,7 @@ export default function FootballMind() {
                     {m.role === "user" ? m.text : <MarkdownBody text={m.text} />}
                   </div>
                   {m.prediction && m.teams && (
-                    <PredictionCard p={m.prediction} home={m.teams.home} away={m.teams.away} />
+                    <PredictionCard p={m.prediction} home={m.teams.home} away={m.teams.away} comp={m.comp ?? chatComp} />
                   )}
                 </div>
               </div>

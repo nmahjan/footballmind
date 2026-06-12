@@ -14,7 +14,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 ### Web app (GitHub Pages)
 
 - **Chat predictions** — type or tap a fixture: *"Predict Mexico vs USA"*
-- **Prediction cards** — W/D/L bar, form dots, H2H, xG, rule-based narrative
+- **Prediction cards** — W/D/L bar, form dots, H2H, xG, predicted XI for both teams (compact list + optional pitch view), rule-based narrative
 - **Deep analysis** — optional Claude Haiku write-up per prediction (`/api/analyze`)
 - **Sidebar modes** — **Matches** (fixtures, tables, bracket, rankings) or **Players** (squads, scorers, search)
 - **Upcoming fixtures** — tabbed panel for WC, PL, La Liga, Bundesliga, Serie A, Ligue 1, CL, Eredivisie
