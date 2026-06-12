@@ -281,6 +281,10 @@ cd frontend && cp .env.example .env   # VITE_API_BASE=http://127.0.0.1:8000
 npm install && npm run dev
 ```
 
+```bash
+python -m pytest tests/ -q   # intent parser unit tests (no DB)
+```
+
 ---
 
 ## MCP server (Cursor / Claude Desktop)
