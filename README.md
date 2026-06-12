@@ -32,7 +32,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **Chat loading states** — animated typing indicator with context-aware messages (model run, player compare, backend wake-up on Render cold start)
 - **Neutral venue toggle** — disable home-field advantage for WC / neutral-site games
 - **Host venue in chat** — e.g. *"Predict Mexico vs South Korea in Mexico"* applies home advantage to Mexico; the 🏠 Home / 🏟 Neutral buttons also work in chat
-- **Share prediction** — copy a formatted summary to clipboard
+- **Share prediction** — copy a formatted summary to clipboard, or copy a **share link** (`?predict=Mexico+vs+USA&comp=WC&neutral=1`) that re-runs the prediction on open
 
 ### Backend
 

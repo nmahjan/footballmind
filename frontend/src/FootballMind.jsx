@@ -165,6 +165,51 @@ function parseVs(msg) {
   return { home: clean(m[1]), away: clean(m[2]) };
 }
 
+const VALID_COMPS = new Set(["WC", "PL", "PD", "BL1", "SA", "FL1", "CL", "DED"]);
+
+function buildPredictUrl(home, away, { comp, neutral } = {}) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.searchParams.set("predict", `${home} vs ${away}`);
+  if (comp && comp !== "WC") url.searchParams.set("comp", comp);
+  if (neutral === true) url.searchParams.set("neutral", "1");
+  else if (neutral === false) url.searchParams.set("neutral", "0");
+  return url.toString();
+}
+
+function syncPredictUrl(home, away, comp, neutral) {
+  if (!home || !away || typeof window === "undefined") return;
+  const next = buildPredictUrl(home, away, { comp, neutral });
+  if (window.location.href !== next) {
+    window.history.replaceState(null, "", next);
+  }
+}
+
+function parseDeepLinkSearch() {
+  const params = new URLSearchParams(window.location.search);
+  const predict = params.get("predict")?.trim();
+  const home = params.get("home")?.trim();
+  const away = params.get("away")?.trim();
+  let query = null;
+  if (predict) {
+    query = /^predict\b/i.test(predict) ? predict : `Predict ${predict}`;
+  } else if (home && away) {
+    query = `Predict ${home} vs ${away}`;
+  }
+  if (!query) return null;
+  const comp = params.get("comp")?.trim().toUpperCase();
+  const neutralRaw = params.get("neutral");
+  let neutral = null;
+  if (neutralRaw === "1" || neutralRaw === "true") neutral = true;
+  else if (neutralRaw === "0" || neutralRaw === "false") neutral = false;
+  return { query, comp: comp && VALID_COMPS.has(comp) ? comp : null, neutral };
+}
+
+function hasDeepLinkPredict() {
+  const params = new URLSearchParams(window.location.search);
+  return Boolean(params.get("predict")?.trim() || (params.get("home")?.trim() && params.get("away")?.trim()));
+}
+
 // ─── Stage badge labels ───────────────────────────────────────────────────
 const STAGE_BADGE = {
   group: "GS", GROUP_STAGE: "GS", group_stage: "GS",
@@ -375,18 +420,28 @@ function FormDots({ results, label }) {
   );
 }
 
-function PredictionCard({ p, home, away, comp = "WC" }) {
+function PredictionCard({ p, home, away, comp = "WC", neutral = null }) {
   const color = outcomeColor(p.prediction, home, away);
   const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
 
   function share() {
-    const txt = `${flag(home)}${home} ${pct(p.home_win_prob)} · Draw ${pct(p.draw_prob)} · ${flag(away)}${away} ${pct(p.away_win_prob)}\nPrediction: ${p.prediction} (${pct(p.confidence)} confidence)\nvia FootballMind`;
+    const url = buildPredictUrl(home, away, { comp, neutral });
+    const txt = `${flag(home)}${home} ${pct(p.home_win_prob)} · Draw ${pct(p.draw_prob)} · ${flag(away)}${away} ${pct(p.away_win_prob)}\nPrediction: ${p.prediction} (${pct(p.confidence)} confidence)\n${url}\nvia FootballMind`;
     navigator.clipboard?.writeText(txt).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  function copyLink() {
+    const url = buildPredictUrl(home, away, { comp, neutral });
+    navigator.clipboard?.writeText(url).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
     });
   }
 
@@ -426,10 +481,15 @@ function PredictionCard({ p, home, away, comp = "WC" }) {
           <div className="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ background: color, color: "#08120F" }}>
             {p.prediction} · {pct(p.confidence)}
           </div>
-          <button onClick={share} title="Copy prediction"
+          <button onClick={share} title="Copy prediction summary + link"
             className="rounded px-1.5 py-0.5 text-[11px] transition-opacity hover:opacity-70"
             style={{ background: C.line, color: copied ? C.home : C.mute }}>
             {copied ? "✓" : "⎘"}
+          </button>
+          <button onClick={copyLink} title="Copy share link"
+            className="rounded px-1.5 py-0.5 text-[11px] transition-opacity hover:opacity-70"
+            style={{ background: C.line, color: linkCopied ? C.home : C.mute }}>
+            {linkCopied ? "✓" : "🔗"}
           </button>
         </div>
       </div>
@@ -1631,6 +1691,8 @@ export default function FootballMind() {
   const [sidebarLoaded, setSidebarLoaded] = useState(false);
   const [chatComp, setChatComp] = useState("WC");
   const scroller = useRef(null);
+  const sendRef = useRef(null);
+  const deepLinkHandled = useRef(false);
 
   function handleCompChange(code) {
     if (code && COMP_LABELS[code]) setChatComp(code);
@@ -1677,7 +1739,7 @@ export default function FootballMind() {
   }, []);
 
   useEffect(() => {
-    if (!API_BASE) return;
+    if (!API_BASE || hasDeepLinkPredict()) return;
     fetch(`${API_BASE}/api/history?session_id=${encodeURIComponent(sessionId)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -1720,11 +1782,13 @@ export default function FootballMind() {
     scroller.current?.scrollIntoView({ behavior: "smooth" });
   }
 
-  async function send(text) {
+  async function send(text, options = {}) {
     text = (text ?? input).trim();
     if (!text || busy) return;
     setInput("");
     const teams = parseVs(text);
+    const effectiveComp = options.comp ?? chatComp;
+    const effectiveNeutral = options.neutral !== undefined ? options.neutral : venueMode;
     const history = messages.slice(-10).flatMap((m) =>
       m.role === "user"
         ? [{ role: "user", content: m.text }]
@@ -1746,8 +1810,8 @@ export default function FootballMind() {
         isLive = await ensureBackendAwake();
         setLoadPhase(guessLoadPhase(text, isLive ? "live" : "unreachable"));
       }
-      const body = { message: text, session_id: sessionId, history, comp: chatComp };
-      if (venueMode !== null) body.neutral = venueMode;
+      const body = { message: text, session_id: sessionId, history, comp: effectiveComp };
+      if (effectiveNeutral !== null) body.neutral = effectiveNeutral;
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -1761,7 +1825,11 @@ export default function FootballMind() {
       const data = await res.json();
       setBackendStatus("live");
       setOffline(false);
-      setMessages((m) => [...m, { role: "bot", text: data.reply, prediction: data.prediction, teams, comp: chatComp }]);
+      setMessages((m) => [...m, {
+        role: "bot", text: data.reply, prediction: data.prediction, teams,
+        comp: effectiveComp, neutral: effectiveNeutral,
+      }]);
+      if (teams) syncPredictUrl(teams.home, teams.away, effectiveComp, effectiveNeutral);
     } catch {
       if (!API_BASE) {
         if (teams) {
@@ -1781,6 +1849,22 @@ export default function FootballMind() {
       setLoadPhase(null);
     }
   }
+
+  sendRef.current = send;
+
+  useEffect(() => {
+    if (deepLinkHandled.current) return;
+    const link = parseDeepLinkSearch();
+    if (!link) return;
+    deepLinkHandled.current = true;
+    if (link.comp) setChatComp(link.comp);
+    if (link.neutral !== null) setVenueMode(link.neutral);
+    const t = setTimeout(() => sendRef.current?.(link.query, {
+      comp: link.comp ?? undefined,
+      neutral: link.neutral,
+    }), 150);
+    return () => clearTimeout(t);
+  }, []);
 
   const showChips = messages.length === 0;
 
@@ -1837,7 +1921,13 @@ export default function FootballMind() {
                     {m.role === "user" ? m.text : <MarkdownBody text={m.text} />}
                   </div>
                   {m.prediction && m.teams && (
-                    <PredictionCard p={m.prediction} home={m.teams.home} away={m.teams.away} comp={m.comp ?? chatComp} />
+                    <PredictionCard
+                      p={m.prediction}
+                      home={m.teams.home}
+                      away={m.teams.away}
+                      comp={m.comp ?? chatComp}
+                      neutral={m.neutral ?? null}
+                    />
                   )}
                 </div>
               </div>
