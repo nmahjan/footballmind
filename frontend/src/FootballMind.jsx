@@ -947,7 +947,13 @@ function BracketPanel({ apiBase, offline }) {
 const POS_META = {
   GK:  { label: "GK",  bg: "#B8860B", fg: "#08120F" },
   DEF: { label: "DEF", bg: "#1A6B47", fg: "#E8F5EE" },
+  CB:  { label: "CB",  bg: "#1A6B47", fg: "#E8F5EE" },
+  LB:  { label: "LB",  bg: "#1E7A52", fg: "#E8F5EE" },
+  RB:  { label: "RB",  bg: "#1E7A52", fg: "#E8F5EE" },
   MID: { label: "MID", bg: "#1A3D6B", fg: "#DCE8FF" },
+  CM:  { label: "CM",  bg: "#1A3D6B", fg: "#DCE8FF" },
+  CDM: { label: "CDM", bg: "#153256", fg: "#DCE8FF" },
+  CAM: { label: "CAM", bg: "#24508F", fg: "#DCE8FF" },
   FWD: { label: "FWD", bg: "#7B1F1F", fg: "#FFE0E0" },
   ST:  { label: "ST",  bg: "#7B1F1F", fg: "#FFE0E0" },
   WING:{ label: "WNG", bg: "#9B3030", fg: "#FFE0E0" },
@@ -1052,7 +1058,7 @@ function PredictedPitch({ rows, formation, compact = false }) {
               <div key={pi} className={`flex flex-col items-center ${compact ? "w-[52px]" : "w-[72px]"}`}>
                 <div className={`rounded-full flex items-center justify-center font-bold border-2 ${compact ? "w-7 h-7 text-[8px]" : "w-9 h-9 text-[9px]"}`}
                   style={{ background: "#0d2818", borderColor: "#4ade80", color: "#ecfdf5" }}>
-                  {POS_META[row.line]?.label?.slice(0, 1) ?? "?"}
+                  {POS_META[p.position ?? row.line]?.label?.slice(0, 1) ?? "?"}
                 </div>
                 <span className={`mt-1 font-semibold text-center leading-tight line-clamp-2 w-full ${compact ? "text-[8px]" : "text-[9px]"}`}
                   style={{ color: "#f0fdf4" }}>

@@ -15,13 +15,13 @@ from footballmind_services import (
 )
 
 FORMATION_SLOTS: dict[str, list[str]] = {
-    "4-3-3": ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "WING", "ST", "WING"],
-    "4-4-2": ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "ST", "ST"],
-    "4-2-3-1": ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "WING", "MID", "WING", "ST"],
-    "4-3-2-1": ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "WING", "WING", "ST"],
-    "3-5-2": ["GK", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID", "ST", "ST"],
-    "5-3-2": ["GK", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "ST", "ST"],
-    "3-4-3": ["GK", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "WING", "ST", "WING"],
+    "4-3-3": ["GK", "LB", "CB", "CB", "RB", "CDM", "CM", "CM", "WING", "ST", "WING"],
+    "4-4-2": ["GK", "LB", "CB", "CB", "RB", "CM", "CM", "WING", "WING", "ST", "ST"],
+    "4-2-3-1": ["GK", "LB", "CB", "CB", "RB", "CDM", "CDM", "WING", "CAM", "WING", "ST"],
+    "4-3-2-1": ["GK", "LB", "CB", "CB", "RB", "CDM", "CM", "CAM", "WING", "WING", "ST"],
+    "3-5-2": ["GK", "CB", "CB", "CB", "LB", "CDM", "CM", "CM", "RB", "ST", "ST"],
+    "5-3-2": ["GK", "LB", "CB", "CB", "CB", "RB", "CM", "CM", "CM", "ST", "ST"],
+    "3-4-3": ["GK", "CB", "CB", "CB", "WING", "CM", "CM", "WING", "WING", "ST", "WING"],
 }
 
 # When no synced formation, try these first for club sides (modern default shapes).
@@ -181,16 +181,35 @@ def _slot_matches_player(slot: str, player: dict) -> bool:
         return True
     if slot == "ST" and lr == "ST":
         return True
-    if slot == "MID" and lr in ("MID", "?"):
+    if slot == "CM" and lr in ("CM", "CDM", "CAM"):
+        return True
+    if slot == "CDM" and lr in ("CDM", "CM"):
+        return True
+    if slot == "CAM" and lr in ("CAM", "CM"):
+        return True
+    if slot == "CB" and lr == "CB":
+        return True
+    if slot in ("LB", "RB") and lr == slot:
+        return True
+    # Legacy coarse slots (older formations / synced data)
+    if slot == "MID" and lr in ("MID", "CM", "CDM", "CAM", "?"):
+        return True
+    if slot == "DEF" and lr in ("DEF", "CB", "LB", "RB"):
         return True
     if slot == "FWD" and lr in ("ST", "WING"):
         return True
     return False
 
 
+def _sorted_candidates(candidates: list[dict], key_fn) -> list[dict]:
+    candidates.sort(key=key_fn)
+    return candidates
+
+
 def _candidates_for_slot(slot: str, squad: list[dict], taken: set[int]) -> list[dict]:
-    """Best-fit players for a lineup slot (striker vs winger vs mid)."""
+    """Best-fit players for a lineup slot (role-aware)."""
     avail = [p for p in squad if p["player_id"] not in taken]
+    score_key = lambda p: (-p["score"], p["name"])
     if slot == "ST":
         primary = [p for p in avail if p.get("line_role") == "ST"]
         primary.sort(key=lambda p: (-(p.get("goals") or 0), -p["score"], p["name"]))
@@ -209,21 +228,60 @@ def _candidates_for_slot(slot: str, squad: list[dict], taken: set[int]) -> list[
         mids = [p for p in avail if p.get("position") == "MID"]
         mids.sort(key=lambda p: (-(p.get("assists") or 0), -p["score"], p["name"]))
         return wide + mids
-    if slot == "MID":
-        primary = [p for p in avail if p.get("line_role") == "MID"]
+    if slot == "CAM":
+        primary = [p for p in avail if p.get("line_role") == "CAM"]
+        primary.sort(key=lambda p: (-(p.get("assists") or 0), -p["score"], p["name"]))
+        if primary:
+            return primary
+        cms = [p for p in avail if p.get("line_role") == "CM"]
+        cms.sort(key=lambda p: (-(p.get("assists") or 0), -p["score"], p["name"]))
+        return cms
+    if slot == "CDM":
+        primary = [p for p in avail if p.get("line_role") == "CDM"]
         primary.sort(key=lambda p: (-p["score"], p["name"]))
         if primary:
             return primary
-        return sorted(avail, key=lambda p: (-p["score"], p["name"]))
+        cms = [p for p in avail if p.get("line_role") == "CM"]
+        cms.sort(key=lambda p: (-p["score"], p["name"]))
+        return cms
+    if slot == "CM":
+        primary = [p for p in avail if p.get("line_role") == "CM"]
+        primary.sort(key=score_key)
+        if primary:
+            return primary
+        mids = [p for p in avail if p.get("line_role") in ("CDM", "CAM")]
+        return _sorted_candidates(mids, score_key)
+    if slot == "LB":
+        primary = [p for p in avail if p.get("line_role") == "LB"]
+        if primary:
+            return _sorted_candidates(primary, score_key)
+        fallback = [p for p in avail if p.get("line_role") == "RB"]
+        return _sorted_candidates(fallback, score_key)
+    if slot == "RB":
+        primary = [p for p in avail if p.get("line_role") == "RB"]
+        if primary:
+            return _sorted_candidates(primary, score_key)
+        fallback = [p for p in avail if p.get("line_role") == "LB"]
+        return _sorted_candidates(fallback, score_key)
+    if slot == "CB":
+        primary = [p for p in avail if p.get("line_role") == "CB"]
+        if primary:
+            return _sorted_candidates(primary, score_key)
+        defs = [p for p in avail if p.get("position") == "DEF" and p.get("line_role") not in ("LB", "RB")]
+        return _sorted_candidates(defs, score_key)
+    if slot == "MID":
+        primary = [p for p in avail if p.get("line_role") in ("CM", "CDM", "CAM", "MID")]
+        if primary:
+            return _sorted_candidates(primary, score_key)
+        return _sorted_candidates(avail, score_key)
     if slot == "DEF":
-        defs = [p for p in avail if p.get("line_role") == "DEF" or p.get("position") == "DEF"]
-        defs.sort(key=lambda p: (-p["score"], p["name"]))
-        return defs
+        defs = [p for p in avail if p.get("line_role") in ("CB", "LB", "RB", "DEF")
+                or p.get("position") == "DEF"]
+        return _sorted_candidates(defs, score_key)
     if slot == "GK":
         gks = [p for p in avail if p.get("line_role") == "GK" or p.get("position") == "GK"]
-        gks.sort(key=lambda p: (-p["score"], p["name"]))
-        return gks
-    return sorted(avail, key=lambda p: (-p["score"], p["name"]))
+        return _sorted_candidates(gks, score_key)
+    return _sorted_candidates(avail, score_key)
 
 
 def _can_fill(slots: list[str], squad: list[dict]) -> bool:
@@ -378,28 +436,31 @@ def _next_opponent(cur, team_id: int, comp: str) -> str | None:
 
 _FORMATION_ROW_SLOTS: dict[str, list[tuple[str, list[int]]]] = {
     "4-3-2-1": [
-        ("ST", [11]), ("WING", [9, 10]), ("MID", [6, 7, 8]),
+        ("ST", [11]), ("WING", [9, 10]), ("CAM", [8]), ("CM", [7]), ("CDM", [6]),
         ("DEF", [2, 3, 4, 5]), ("GK", [1]),
     ],
     "4-3-3": [
-        ("ST", [10]), ("WING", [9, 11]), ("MID", [6, 7, 8]),
+        ("ST", [10]), ("WING", [9, 11]), ("CM", [7, 8]), ("CDM", [6]),
         ("DEF", [2, 3, 4, 5]), ("GK", [1]),
     ],
     "4-2-3-1": [
-        ("ST", [11]), ("WING", [8, 10]), ("MID", [9]), ("MID", [6, 7]),
+        ("ST", [11]), ("WING", [8, 10]), ("CAM", [9]), ("CDM", [6, 7]),
         ("DEF", [2, 3, 4, 5]), ("GK", [1]),
     ],
     "4-4-2": [
-        ("ST", [10, 11]), ("MID", [6, 7, 8, 9]), ("DEF", [2, 3, 4, 5]), ("GK", [1]),
+        ("ST", [10, 11]), ("WING", [8, 9]), ("CM", [6, 7]),
+        ("DEF", [2, 3, 4, 5]), ("GK", [1]),
     ],
     "3-5-2": [
-        ("ST", [10, 11]), ("MID", [5, 6, 7, 8, 9]), ("DEF", [2, 3, 4]), ("GK", [1]),
+        ("ST", [10, 11]), ("CM", [7, 8]), ("CDM", [6]), ("WING", [5, 9]),
+        ("DEF", [2, 3, 4]), ("GK", [1]),
     ],
     "5-3-2": [
-        ("ST", [10, 11]), ("MID", [7, 8, 9]), ("DEF", [2, 3, 4, 5, 6]), ("GK", [1]),
+        ("ST", [10, 11]), ("CM", [7, 8, 9]),
+        ("DEF", [2, 3, 4, 5, 6]), ("GK", [1]),
     ],
     "3-4-3": [
-        ("ST", [10]), ("WING", [9, 11]), ("MID", [5, 6, 7, 8]),
+        ("ST", [10]), ("WING", [8, 9, 11]), ("CM", [6, 7]),
         ("DEF", [2, 3, 4]), ("GK", [1]),
     ],
 }
@@ -411,7 +472,11 @@ def _formation_rows(xi: list[dict], formation: str) -> list[dict]:
     rows = []
     for line, slots in specs:
         players = [
-            {"name": by_slot[s]["name"], "score": by_slot[s]["score"]}
+            {
+                "name": by_slot[s]["name"],
+                "score": by_slot[s]["score"],
+                "position": by_slot[s].get("line_pos") or line,
+            }
             for s in slots if s in by_slot
         ]
         if players:

@@ -32,27 +32,46 @@ def normalize_position(raw: str | None) -> str | None:
     s = raw.lower()
     if "goal" in s:
         return "GK"
-    if "def" in s or "back" in s:
-        return "DEF"
     if "mid" in s:
         return "MID"
+    if "def" in s or "back" in s:
+        return "DEF"
     if "off" in s or "forward" in s or "attack" in s or "wing" in s:
         return "FWD"
     return None
 
 
 def classify_line_role(raw: str | None, goals: int = 0, assists: int = 0) -> str:
-    """Finer role for lineup slots: ST (striker) vs WING (wide forward) vs MID/DEF/GK."""
+    """Finer role for lineup slots: ST/WING, CAM/CDM/CM, CB/LB/RB, GK."""
     coarse = normalize_position(raw) or "?"
     s = (raw or "").lower().replace("-", " ")
     if coarse == "GK":
         return "GK"
     if coarse == "DEF":
-        return "DEF"
+        if ("left" in s and "back" in s) or "lwb" in s or "left wing back" in s:
+            return "LB"
+        if ("right" in s and "back" in s) or "rwb" in s or "right wing back" in s:
+            return "RB"
+        if "wing back" in s:
+            return "LB" if "left" in s else "RB" if "right" in s else "LB"
+        if any(w in s for w in ("centre back", "center back", "centre-back", "center-back")):
+            return "CB"
+        return "CB"
     if coarse == "MID":
         if "wing" in s or "wide" in s:
             return "WING"
-        return "MID"
+        if "defensive" in s or "holding" in s or "anchor" in s:
+            return "CDM"
+        if "attacking" in s or "offensive" in s:
+            return "CAM"
+        if "central" in s:
+            return "CM"
+        # Generic midfield — creative vs holding heuristic
+        if assists >= max(4, int(goals * 1.2) + 2):
+            return "CAM"
+        if goals <= 3 and assists <= 3:
+            return "CDM"
+        return "CM"
     if coarse == "FWD":
         if "wing" in s or "wide" in s or s.startswith("left ") or s.startswith("right "):
             return "WING"
@@ -65,7 +84,7 @@ def classify_line_role(raw: str | None, goals: int = 0, assists: int = 0) -> str
         if assists >= max(3, int(goals * 0.7)):
             return "WING"
         return "ST" if goals > assists else "WING"
-    return coarse if coarse in ("MID", "DEF", "GK") else "?"
+    return coarse if coarse in ("MID", "DEF", "GK", "CM", "CDM", "CAM", "CB", "LB", "RB") else "?"
 
 
 def _player_age(dob) -> int | None:
