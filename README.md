@@ -28,6 +28,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **Player compare** — *"Compare Messi vs Ronaldo"* returns national team Elo, club affiliation, and best club-season G/A (with context label for WC vs club comps)
 - **Conversational follow-ups** — short replies like *"explain"*, *"why?"*, or *"tell me more"* use prior chat turns (frontend history + session log) so you don't have to repeat yourself
 - **Chat persists on refresh** — your session id is stored locally and prior messages reload from `/api/history`
+- **Competition-aware chat** — the active sidebar tab (WC, PL, La Liga, etc.) is sent as `comp` so *"show the table"* or *"top scorers"* default to what you're viewing
 - **Neutral venue toggle** — disable home-field advantage for WC / neutral-site games
 - **Host venue in chat** — e.g. *"Predict Mexico vs South Korea in Mexico"* applies home advantage to Mexico; the 🏠 Home / 🏟 Neutral buttons also work in chat
 - **Share prediction** — copy a formatted summary to clipboard
@@ -122,7 +123,7 @@ frontend/  (Vite + React → GitHub Pages)
 |--------|------|-------------|
 | GET | `/api/health` | Liveness probe |
 | POST | `/api/predict` | Direct match prediction |
-| POST | `/api/chat` | Intent router + LLM fallback; accepts optional `history` for multi-turn follow-ups (rate-limited) |
+| POST | `/api/chat` | Intent router + LLM fallback; accepts optional `history` and `comp` (sidebar context) for multi-turn follow-ups (rate-limited) |
 | POST | `/api/analyze` | Claude match analysis (rate-limited) |
 | GET | `/api/standings?comp=PL` | League table |
 | GET | `/api/fixtures?comp=WC` | Upcoming fixtures |
@@ -148,6 +149,7 @@ POST /api/chat
 {
   "message": "explain",
   "session_id": "abc-123",
+  "comp": "PL",
   "history": [
     {"role": "user", "content": "Compare Messi vs Ronaldo"},
     {"role": "assistant", "content": "Messi edges Ronaldo on rating..."}

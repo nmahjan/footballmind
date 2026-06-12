@@ -334,14 +334,35 @@ def _run_tool(conn, name, args, session_id):
     return {"error": f"unknown tool {name}"}
 
 
-def answer(conn, message, session_id=None, history=None):
+_COMP_LABELS = {
+    "PL": "Premier League", "PD": "La Liga", "BL1": "Bundesliga",
+    "SA": "Serie A", "FL1": "Ligue 1", "CL": "Champions League",
+    "DED": "Eredivisie", "WC": "World Cup",
+}
+
+
+def _comp_system_hint(comp: str | None) -> str:
+    if not comp:
+        return ""
+    label = _COMP_LABELS.get(comp, comp)
+    return (
+        f"The user is browsing {label} ({comp}) in the sidebar. "
+        f"When they do not name a competition, default tool calls and answers to {comp}."
+    )
+
+
+def answer(conn, message, session_id=None, history=None, comp=None):
     """Free-form question -> (reply_text, last_prediction_or_None).
 
     history: optional list of {role: user|assistant, content: str} from prior turns.
     """
     import litellm
 
-    messages = [{"role": "system", "content": SYSTEM}]
+    system = SYSTEM
+    hint = _comp_system_hint(comp)
+    if hint:
+        system = f"{SYSTEM}\n\n{hint}"
+    messages = [{"role": "system", "content": system}]
     if history:
         for turn in history[-12:]:
             role = turn.get("role")
@@ -374,11 +395,15 @@ def answer(conn, message, session_id=None, history=None):
             "specific match prediction or the standings."), prediction
 
 
-def answer_followup(message, history=None):
+def answer_followup(message, history=None, comp=None):
     """Short follow-up (e.g. 'explain') — answer from conversation history only."""
     import litellm
 
-    messages = [{"role": "system", "content": SYSTEM}]
+    system = SYSTEM
+    hint = _comp_system_hint(comp)
+    if hint:
+        system = f"{SYSTEM}\n\n{hint}"
+    messages = [{"role": "system", "content": system}]
     if history:
         for turn in history[-12:]:
             role = turn.get("role")

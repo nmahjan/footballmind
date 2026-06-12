@@ -136,6 +136,19 @@ def _normalize_history(raw) -> list[dict]:
     return out
 
 
+_VALID_COMPS = frozenset({"PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC"})
+_COMP_LABELS = {
+    "PL": "Premier League", "PD": "La Liga", "BL1": "Bundesliga",
+    "SA": "Serie A", "FL1": "Ligue 1", "CL": "Champions League",
+    "DED": "Eredivisie", "WC": "World Cup",
+}
+
+
+def _resolve_chat_comp(data, default: str = "WC") -> str:
+    raw = str(data.get("comp") or default).strip().upper()
+    return raw if raw in _VALID_COMPS else default
+
+
 _FOLLOWUP = re.compile(
     r"^\s*(?:"
     r"explain(?:\s+(?:that|this|more|why|how))?|"
@@ -422,16 +435,18 @@ def api_chat():
 
     conn = get_conn()
     touch_session(conn, session_id, client_ip())
+    chat_comp = _resolve_chat_comp(data)
     history = _normalize_history(data.get("history"))
     if not history:
         history = _load_chat_history(conn, session_id)
     intent = parse_intent(message)
-    entities, prediction = {}, None
+    entities, prediction = {"comp": chat_comp}, None
 
     if _is_followup(message, history):
         import footballmind_llm
         if footballmind_llm.is_configured():
-            reply, prediction = footballmind_llm.answer_followup(message, history)
+            reply, prediction = footballmind_llm.answer_followup(
+                message, history, comp=chat_comp)
             intent = {"type": "followup"}
         else:
             reply = ("Follow-up questions need the AI chat enabled. "
@@ -460,23 +475,25 @@ def api_chat():
         except ValueError as e:
             reply = f"I couldn't run that prediction: {e}"
     elif intent["type"] == "compare":
-        entities = {"player_a": intent["player_a"], "player_b": intent["player_b"]}
-        result = compare_players(conn, intent["player_a"], intent["player_b"], "WC")
+        entities = {"player_a": intent["player_a"], "player_b": intent["player_b"],
+                    "comp": chat_comp}
+        result = compare_players(conn, intent["player_a"], intent["player_b"], chat_comp)
         if result.get("error"):
             reply = result["error"]
         else:
             reply = _format_player_compare(result)
     elif intent["type"] == "standings":
-        table = _standings(conn, "PL")
-        entities = {"competition": "PL"}
-        reply = ("Top of the table: "
+        table = _standings(conn, chat_comp)
+        entities = {"competition": chat_comp, "comp": chat_comp}
+        comp_label = _COMP_LABELS.get(chat_comp, chat_comp)
+        reply = (f"Top of the {comp_label} table: "
                  + ", ".join(f"{t['rank']}. {t['team']} ({t['Pts']})" for t in table[:5])
-                 if table else "No results recorded yet.")
+                 if table else f"No {comp_label} results recorded yet.")
     else:
         import footballmind_llm                 # lazy: litellm is heavy and optional
         if footballmind_llm.is_configured():
             reply, prediction = footballmind_llm.answer(
-                conn, message, session_id=session_id, history=history)
+                conn, message, session_id=session_id, history=history, comp=chat_comp)
             intent = {"type": "llm"}
         else:
             reply = ("I can predict matches (e.g. \"Predict Arsenal vs Chelsea\") "

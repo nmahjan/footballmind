@@ -499,6 +499,11 @@ const FIXTURE_TABS = [
   { code: "DED", label: "🇳🇱 Eredivisie" },
 ];
 
+const COMP_LABELS = {
+  WC: "World Cup", PL: "Premier League", PD: "La Liga", BL1: "Bundesliga",
+  SA: "Serie A", FL1: "Ligue 1", CL: "Champions League", DED: "Eredivisie",
+};
+
 function FixtureRow({ f, onClick }) {
   return (
     <button onClick={() => onClick(f)}
@@ -593,7 +598,7 @@ function PredictionResultsView({ apiBase, onSummary }) {
   );
 }
 
-function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, apiBase, onSummary }) {
+function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, apiBase, onSummary, onCompChange }) {
   const [view, setView] = useState("upcoming");
   const [tab, setTab] = useState("WC");
   // Lazy-loaded tabs only (WC/PL come from parent after async fetch)
@@ -609,6 +614,7 @@ function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, ap
 
   function switchTab(code) {
     setTab(code);
+    onCompChange?.(code);
     if (code === "WC" || code === "PL" || loaded.has(code) || !apiBase) return;
     setLoading(true);
     fetch(`${apiBase}/api/fixtures?comp=${code}&limit=16`)
@@ -917,7 +923,7 @@ function PredictedPitch({ rows, formation }) {
   );
 }
 
-function PlayersSidebar({ apiBase, offline, onAsk }) {
+function PlayersSidebar({ apiBase, offline, onAsk, onCompChange }) {
   const [comp, setComp] = useState("WC");
   const [posTab, setPosTab] = useState("ALL");
   const [tab, setTab] = useState("standouts");
@@ -994,6 +1000,7 @@ function PlayersSidebar({ apiBase, offline, onAsk }) {
   function pickComp(c) {
     setComp(c);
     setPosTab("ALL");
+    onCompChange?.(c);
   }
 
   function askPlayer(p) {
@@ -1346,7 +1353,7 @@ function GroupsPanel({ groups }) {
   );
 }
 
-function StandingsPanel({ apiBase, offline }) {
+function StandingsPanel({ apiBase, offline, onCompChange }) {
   const [activeComp, setActiveComp] = useState("PL");
   const [rows, setRows] = useState(DEMO_STANDINGS);
   const [loading, setLoading] = useState(false);
@@ -1373,7 +1380,7 @@ function StandingsPanel({ apiBase, offline }) {
         {/* Scrollable tab row */}
         <div className="flex gap-1 overflow-x-auto pb-2 scrollbar-none" style={{ scrollbarWidth: "none" }}>
           {LEAGUES.map((l) => (
-            <button key={l.code} onClick={() => setActiveComp(l.code)}
+            <button key={l.code} onClick={() => { setActiveComp(l.code); onCompChange?.(l.code); }}
               className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
               style={{
                 background: l.code === activeComp ? C.home : C.line,
@@ -1456,7 +1463,12 @@ export default function FootballMind() {
   const [backendStatus, setBackendStatus] = useState(API_BASE ? "connecting" : "demo");
   const [sidebarMode, setSidebarMode] = useState("matches");
   const [sidebarLoaded, setSidebarLoaded] = useState(false);
+  const [chatComp, setChatComp] = useState("WC");
   const scroller = useRef(null);
+
+  function handleCompChange(code) {
+    if (code && COMP_LABELS[code]) setChatComp(code);
+  }
 
   async function loadSidebarData() {
     if (!API_BASE) return;
@@ -1542,7 +1554,7 @@ export default function FootballMind() {
     setBusy(true);
     try {
       if (!API_BASE) throw new Error("offline");
-      const body = { message: text, session_id: sessionId, history };
+      const body = { message: text, session_id: sessionId, history, comp: chatComp };
       if (venueMode !== null) body.neutral = venueMode;
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1644,7 +1656,10 @@ export default function FootballMind() {
 
           {/* Venue toggle + input row */}
           <div className="border-t px-3 pt-2 pb-0" style={{ borderColor: C.line }}>
-            <div className="mb-2 flex items-center gap-1.5">
+            <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-[10px] font-medium" style={{ color: C.mute }}>
+                Context: <span style={{ color: C.chalk }}>{COMP_LABELS[chatComp] ?? chatComp}</span>
+              </span>
               <span className="text-[10px] font-medium" style={{ color: C.mute }}>Venue:</span>
               {[
                 [null,  "⚡ Auto",    "auto-detect based on teams"],
@@ -1684,14 +1699,14 @@ export default function FootballMind() {
           {sidebarMode === "matches" ? (
             <>
               <AccuracyPanel summary={summary} />
-              <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} onSummary={setSummary} />
+              <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} onSummary={setSummary} onCompChange={handleCompChange} />
               {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
               <BracketPanel apiBase={API_BASE} offline={offline} />
               <RankingsPanel apiBase={API_BASE} offline={offline} />
-              <StandingsPanel apiBase={API_BASE} offline={offline} />
+              <StandingsPanel apiBase={API_BASE} offline={offline} onCompChange={handleCompChange} />
             </>
           ) : (
-            <PlayersSidebar apiBase={API_BASE} offline={offline} onAsk={handlePlayerAsk} />
+            <PlayersSidebar apiBase={API_BASE} offline={offline} onAsk={handlePlayerAsk} onCompChange={handleCompChange} />
           )}
         </aside>
       </div>
