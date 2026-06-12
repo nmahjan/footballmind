@@ -59,7 +59,7 @@ def normalize_formation(raw: str | None) -> str | None:
 def _recent_starter_counts(cur, team_id: int, comp: str, matches: int = 5) -> dict[int, int]:
     """How often each player started in the last N comp matches with lineup data."""
     cur.execute(
-        "SELECT p.id, COUNT(*)::int "
+        "SELECT mlp.player_id, COUNT(*)::int "
         "FROM match_lineup_players mlp "
         "JOIN matches m ON m.id = mlp.match_id "
         "JOIN competition_editions e ON e.id = m.edition_id "
@@ -74,7 +74,7 @@ def _recent_starter_counts(cur, team_id: int, comp: str, matches: int = 5) -> di
         "      AND m2.home_goals IS NOT NULL "
         "    ORDER BY m2.match_date DESC NULLS LAST LIMIT %s"
         "  ) "
-        "GROUP BY p.id",
+        "GROUP BY mlp.player_id",
         (team_id, comp, comp, team_id, team_id, matches))
     return {row[0]: row[1] for row in cur.fetchall()}
 

@@ -86,10 +86,16 @@ class FootballDataClient:
             self._throttle_from_headers(r.headers)
             return r.json()
 
-    def matches(self, comp, status="FINISHED", date_from=None, date_to=None):
-        params = {"status": status}
-        if date_from: params["dateFrom"] = date_from
-        if date_to:   params["dateTo"] = date_to
+    def matches(self, comp, status=None, date_from=None, date_to=None):
+        params = {}
+        if status:
+            params["status"] = status
+        if date_from:
+            params["dateFrom"] = date_from
+        if date_to:
+            params["dateTo"] = date_to
+        elif date_from:
+            params["dateTo"] = date.today().isoformat()
         return self._get(f"/competitions/{comp}/matches", params).get("matches", [])
 
     def teams(self, comp):
