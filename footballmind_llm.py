@@ -28,7 +28,10 @@ SYSTEM = (
     "Be concise: 1-3 sentences unless the user asks for detail (player/team "
     "questions may use a few short paragraphs). If using structure, put each "
     "heading on its own line; avoid long horizontal rules. If a question "
-    "is outside football, say so briefly."
+    "is outside football, say so briefly. "
+    "IMPORTANT: Short follow-ups like 'explain', 'why?', or 'tell me more' refer "
+    "to the previous turn — read the conversation history and elaborate on that "
+    "topic. Never ask the user to rephrase when history makes their intent clear."
 )
 
 TOOLS = [
@@ -331,17 +334,26 @@ def _run_tool(conn, name, args, session_id):
     return {"error": f"unknown tool {name}"}
 
 
-def answer(conn, message, session_id=None):
-    """Free-form question -> (reply_text, last_prediction_or_None)."""
+def answer(conn, message, session_id=None, history=None):
+    """Free-form question -> (reply_text, last_prediction_or_None).
+
+    history: optional list of {role: user|assistant, content: str} from prior turns.
+    """
     import litellm
 
-    messages = [{"role": "system", "content": SYSTEM},
-                {"role": "user", "content": message}]
+    messages = [{"role": "system", "content": SYSTEM}]
+    if history:
+        for turn in history[-12:]:
+            role = turn.get("role")
+            content = (turn.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
     prediction = None
 
     for _ in range(MAX_TOOL_ROUNDS):
         resp = litellm.completion(model=MODEL, messages=messages, tools=TOOLS,
-                                  max_tokens=700)
+                                  max_tokens=900)
         msg = resp.choices[0].message
         if not msg.tool_calls:
             return (msg.content or "").strip(), prediction
@@ -360,3 +372,19 @@ def answer(conn, message, session_id=None):
 
     return ("I couldn't finish answering that -- try rephrasing, or ask for a "
             "specific match prediction or the standings."), prediction
+
+
+def answer_followup(message, history=None):
+    """Short follow-up (e.g. 'explain') — answer from conversation history only."""
+    import litellm
+
+    messages = [{"role": "system", "content": SYSTEM}]
+    if history:
+        for turn in history[-12:]:
+            role = turn.get("role")
+            content = (turn.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
+    resp = litellm.completion(model=MODEL, messages=messages, max_tokens=900)
+    return (resp.choices[0].message.content or "").strip(), None

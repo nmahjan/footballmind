@@ -104,6 +104,61 @@ def log_query(conn, session_id, query, response, qtype, entities, ms):
     conn.commit()
 
 
+def _load_chat_history(conn, session_id: str, limit: int = 6) -> list[dict]:
+    """Recent turns from the queries log (oldest first)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT query, response FROM queries "
+            "WHERE session_id = %s ORDER BY timestamp DESC LIMIT %s",
+            (session_id, limit))
+        rows = cur.fetchall()
+    turns = []
+    for query, response in reversed(rows):
+        if query:
+            turns.append({"role": "user", "content": query})
+        if response:
+            turns.append({"role": "assistant", "content": response})
+    return turns
+
+
+def _normalize_history(raw) -> list[dict]:
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for turn in raw[-12:]:
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        content = (turn.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            out.append({"role": role, "content": content})
+    return out
+
+
+_FOLLOWUP = re.compile(
+    r"^\s*(?:"
+    r"explain(?:\s+(?:that|this|more|why|how))?|"
+    r"why(?:\s+(?:is\s+that|though|not|him|her|them))?|"
+    r"how\s+so|tell\s+me\s+more|go\s+on|elaborate|"
+    r"what\s+do\s+you\s+mean|can\s+you\s+explain|more\s+detail|"
+    r"break\s+(?:that|it)\s+down|expand(?:\s+on\s+that)?|"
+    r"what\s+about|and\s+\w+|continue"
+    r")\s*[\?\.!]*$",
+    re.I)
+
+
+def _is_followup(message: str, history: list[dict]) -> bool:
+    if not history:
+        return False
+    text = message.strip()
+    if _FOLLOWUP.match(text):
+        return True
+    words = text.lower().split()
+    return len(words) <= 3 and text.lower().rstrip("?.!") in {
+        "explain", "why", "how", "more", "continue", "elaborate",
+    }
+
+
 # ----------------------------------------------------------------------
 # Pure logic (unit-testable, no DB) -- rule-based intent fast path
 # ----------------------------------------------------------------------
@@ -336,10 +391,23 @@ def api_chat():
 
     conn = get_conn()
     touch_session(conn, session_id, client_ip())
+    history = _normalize_history(data.get("history"))
+    if not history:
+        history = _load_chat_history(conn, session_id)
     intent = parse_intent(message)
     entities, prediction = {}, None
 
-    if intent["type"] == "predict":
+    if _is_followup(message, history):
+        import footballmind_llm
+        if footballmind_llm.is_configured():
+            reply, prediction = footballmind_llm.answer_followup(message, history)
+            intent = {"type": "followup"}
+        else:
+            reply = ("Follow-up questions need the AI chat enabled. "
+                     "Ask your full question in one message, e.g. "
+                     "\"Explain why Messi rates higher than Ronaldo for Argentina.\"")
+            intent = {"type": "followup"}
+    elif intent["type"] == "predict":
         explicit_neutral = data.get("neutral")
         if explicit_neutral is not None:
             explicit_neutral = bool(explicit_neutral)
@@ -376,8 +444,8 @@ def api_chat():
     else:
         import footballmind_llm                 # lazy: litellm is heavy and optional
         if footballmind_llm.is_configured():
-            reply, prediction = footballmind_llm.answer(conn, message,
-                                                        session_id=session_id)
+            reply, prediction = footballmind_llm.answer(
+                conn, message, session_id=session_id, history=history)
             intent = {"type": "llm"}
         else:
             reply = ("I can predict matches (e.g. \"Predict Arsenal vs Chelsea\") "

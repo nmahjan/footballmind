@@ -1500,11 +1500,16 @@ export default function FootballMind() {
     if (!text || busy) return;
     setInput("");
     const teams = parseVs(text);
+    const history = messages.slice(-10).flatMap((m) =>
+      m.role === "user"
+        ? [{ role: "user", content: m.text }]
+        : [{ role: "assistant", content: m.text }]
+    );
     setMessages((m) => [...m, { role: "user", text }]);
     setBusy(true);
     try {
       if (!API_BASE) throw new Error("offline");
-      const body = { message: text, session_id: sessionId };
+      const body = { message: text, session_id: sessionId, history };
       if (venueMode !== null) body.neutral = venueMode;
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },

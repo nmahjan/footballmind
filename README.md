@@ -25,6 +25,8 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **Players panel** — standouts, top scorers, **predicted starting XI** (pitch view), full team squads; tap a player to ask the chat
 - **Predicted XI** — most likely lineup per team; adjusts for red-card suspensions and injury flags; prefers recent formations when synced
 - **Player chat** — LLM answers with squad/scorer tools; markdown replies render as formatted text
+- **Player compare** — *"Compare Messi vs Ronaldo"* returns ratings, form, and team context
+- **Conversational follow-ups** — short replies like *"explain"*, *"why?"*, or *"tell me more"* use prior chat turns (frontend history + session log) so you don't have to repeat yourself
 - **Neutral venue toggle** — disable home-field advantage for WC / neutral-site games
 - **Host venue in chat** — e.g. *"Predict Mexico vs South Korea in Mexico"* applies home advantage to Mexico; the 🏠 Home / 🏟 Neutral buttons also work in chat
 - **Share prediction** — copy a formatted summary to clipboard
@@ -119,7 +121,7 @@ frontend/  (Vite + React → GitHub Pages)
 |--------|------|-------------|
 | GET | `/api/health` | Liveness probe |
 | POST | `/api/predict` | Direct match prediction |
-| POST | `/api/chat` | Intent router + LLM fallback (rate-limited) |
+| POST | `/api/chat` | Intent router + LLM fallback; accepts optional `history` for multi-turn follow-ups (rate-limited) |
 | POST | `/api/analyze` | Claude match analysis (rate-limited) |
 | GET | `/api/standings?comp=PL` | League table |
 | GET | `/api/fixtures?comp=WC` | Upcoming fixtures |
@@ -137,6 +139,20 @@ frontend/  (Vite + React → GitHub Pages)
 | GET | `/api/predictions` | Graded prediction history + hit rate |
 
 Shared query logic lives in `footballmind_services.py` (used by both Flask and MCP).
+
+**Chat follow-ups:** The web UI sends the last few turns as `history` on each `/api/chat` request. The backend also loads recent turns from the `queries` table when `history` is omitted. Short follow-ups (`explain`, `why?`, `tell me more`, etc.) skip the rule-based intent parser and go straight to the LLM with that context — useful after player comparisons or predictions.
+
+```json
+POST /api/chat
+{
+  "message": "explain",
+  "session_id": "abc-123",
+  "history": [
+    {"role": "user", "content": "Compare Messi vs Ronaldo"},
+    {"role": "assistant", "content": "Messi edges Ronaldo on rating..."}
+  ]
+}
+```
 
 ---
 
@@ -261,6 +277,7 @@ FootballMind is an **MCP server** — agents can call football tools directly in
 | `get_team_formations` | Recent formations for a team |
 | `get_match_lineup` | Lineups from latest H2H meeting |
 | `get_predicted_lineup` | Most likely starting XI (injuries + red-card suspensions) |
+| `compare_players` | Side-by-side player stats and ratings |
 
 ### Local (stdio)
 
