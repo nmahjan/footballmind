@@ -1,0 +1,36 @@
+# Lightweight match-day sync — fixtures, results, grading (no squads/scorers).
+# Runs every 30 min; exits immediately when no fixtures are in the live window.
+# Secrets: DATABASE_URL, FOOTBALL_DATA_API_KEY (same as footballmind-jobs.yml).
+name: footballmind-matchday-sync
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"   # every 30 min (offset from 6h sync at :17)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Sync all competitions even if no fixtures in the next 24h"
+        type: boolean
+        default: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python footballmind_migrate.py
+
+      - name: Run match-day sync
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: python footballmind_jobs.py sync-matchday ${{ github.event.inputs.force == 'true' && '--force' || '' }}

@@ -4,8 +4,9 @@ FootballMind -- scheduled jobs entrypoint.
 Two commands, triggered by GitHub Actions cron (see
 .github/workflows/footballmind-jobs.yml):
 
-    python footballmind_jobs.py sync      # every ~6h: pull results, update Elo
-    python footballmind_jobs.py retrain   # weekly: sweep + redeploy best models
+    python footballmind_jobs.py sync           # every ~6h: pull results, update Elo
+    python footballmind_jobs.py sync-matchday  # every ~30m on match days: fixtures only
+    python footballmind_jobs.py retrain        # weekly: sweep + redeploy best models
 
 Running these from GitHub Actions (not in-process) means they fire on schedule
 even while a free-tier web service is asleep.
@@ -44,6 +45,57 @@ COMPETITIONS = [
 
 def _connect():
     return get_connection()
+
+
+def _comps_with_activity(conn, hours_before=3, hours_ahead=24):
+    """Competition codes with a fixture in the live window (recent kickoffs + today)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT c.code "
+            "FROM matches m "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "WHERE m.match_date >= now() - make_interval(hours => %s) "
+            "  AND m.match_date <  now() + make_interval(hours => %s)",
+            (hours_before, hours_ahead))
+        return {row[0] for row in cur.fetchall()}
+
+
+def cmd_sync_matchday(force=False):
+    """Light sync for match days: fixtures + details + grading only (no squads/scorers).
+
+    Skips when nothing is scheduled in the next 24h unless --force (manual run).
+    """
+    bucket = TokenBucket(10)
+    client = FootballDataClient(os.environ["FOOTBALL_DATA_API_KEY"], bucket)
+    since = (date.today() - timedelta(days=1)).isoformat()
+    with _connect() as conn:
+        active = _comps_with_activity(conn)
+        if not active and not force:
+            print("[sync-matchday] no fixtures in window — skipping", flush=True)
+            return
+        if not active and force:
+            active = {c[0] for c in COMPETITIONS}
+            print("[sync-matchday] --force: syncing all competitions", flush=True)
+        else:
+            print(f"[sync-matchday] active comps: {', '.join(sorted(active))}",
+                  flush=True)
+        for code, name, ctype, team_type, season in COMPETITIONS:
+            if code not in active:
+                continue
+            try:
+                print(f"[sync-matchday] {code} matches...", flush=True)
+                sync_competition(conn, client, code, name, ctype, season,
+                                 team_type=team_type, since=since)
+            except Exception as e:
+                print(f"[sync-matchday] {code} FAILED: {e}", file=sys.stderr,
+                      flush=True)
+        print("[sync-matchday] match details...", flush=True)
+        detail_n = sync_match_details(conn, client, limit=40)
+        print(f"[sync-matchday] match details: {detail_n} checked", flush=True)
+        linked = link_orphan_predictions(conn)
+        graded = grade_predictions(conn)
+        print(f"[sync-matchday] predictions: {linked} linked, {graded} graded")
 
 
 def cmd_sync(full=False):
@@ -122,10 +174,12 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "sync":
         cmd_sync(full="--full" in sys.argv)
+    elif cmd == "sync-matchday":
+        cmd_sync_matchday(force="--force" in sys.argv)
     elif cmd == "retrain":
         cmd_retrain()
     elif cmd == "seed-elo":
         cmd_seed_elo()
     else:
-        print("usage: footballmind_jobs.py [sync|retrain|seed-elo]")
+        print("usage: footballmind_jobs.py [sync|sync-matchday|retrain|seed-elo]")
         sys.exit(1)

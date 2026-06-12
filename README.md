@@ -38,6 +38,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 
 - Hybrid **Elo + Dixon-Coles** model with weekly retrain (RPS backtest)
 - football-data.org sync every 6 hours (GitHub Actions) — matches, squads, **top scorers** (100/comp)
+- Match-day sync every 30 min when fixtures are in the live window — results + grading only
 - Migrations run automatically before each Actions sync (`footballmind_migrate.py`)
 - Rate-limited LLM chat (20 req/hr per IP) with friendly retry messaging; deep analysis limited to 10/hr
 - **MCP server** — 13+ tools for Cursor / Claude Desktop (local stdio + remote HTTP)
@@ -342,7 +343,7 @@ The combined ASGI app serves MCP at `/mcp` alongside the existing REST API. **Th
 | Database | [Neon](https://neon.tech) (free tier) | Pooled connection string for `DATABASE_URL` |
 | Backend + MCP | [Render](https://render.com) (free web service) | `uvicorn footballmind_asgi:app` |
 | Frontend | GitHub Pages | Auto-deployed on push to `main` via `.github/workflows/pages.yml` |
-| Scheduled jobs | GitHub Actions | Sync every 6h, retrain Monday 05:30 UTC |
+| Scheduled jobs | GitHub Actions | Sync every 6h, match-day sync every 30m, retrain Monday 05:30 UTC |
 
 ### Environment variables
 
