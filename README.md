@@ -25,8 +25,9 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **Players panel** — standouts, top scorers, **predicted starting XI** (pitch view), full team squads; tap a player to ask the chat
 - **Predicted XI** — most likely lineup per team; adjusts for red-card suspensions and injury flags; prefers recent formations when synced
 - **Player chat** — LLM answers with squad/scorer tools; markdown replies render as formatted text
-- **Player compare** — *"Compare Messi vs Ronaldo"* returns national team Elo, club affiliation, and best club-season G/A (with context label for WC vs club comps)
+- **Player compare** — *"Compare Messi vs Ronaldo"* returns national team Elo, club affiliation, and comp stats; follow up with *"what about in La Liga"* to re-compare in another competition (PD, PL, CL, etc.)
 - **Conversational follow-ups** — short replies like *"explain"*, *"why?"*, or *"tell me more"* use prior chat turns (frontend history + session log) so you don't have to repeat yourself
+- **Results & calibration** — sidebar shows graded predictions plus a **calibration** view: when the model says ~70%, do those picks win ~70% of the time?
 - **Chat persists on refresh** — your session id is stored locally and prior messages reload from `/api/history`
 - **Competition-aware chat** — the active sidebar tab (WC, PL, La Liga, etc.) is sent as `comp` so *"show the table"* or *"top scorers"* default to what you're viewing
 - **Chat loading states** — animated typing indicator with context-aware messages (model run, player compare, backend wake-up on Render cold start)
@@ -39,6 +40,8 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - Hybrid **Elo + Dixon-Coles** model with weekly retrain (RPS backtest)
 - football-data.org sync every 6 hours (GitHub Actions) — matches, squads, **top scorers** (100/comp)
 - Match-day sync every 30 min when fixtures are in the live window — results + grading only
+- **Historical scorer backfill** — `backfill-scorers` pulls past seasons into `player_edition_stats` (additive; never wipes current season)
+- LLM chat covers **all synced competitions** (PL, PD, BL1, SA, FL1, CL, DED, WC) via tool calls — not just PL/CL/WC
 - Migrations run automatically before each Actions sync (`footballmind_migrate.py`)
 - Rate-limited LLM chat (20 req/hr per IP) with friendly retry messaging; deep analysis limited to 10/hr
 - **MCP server** — 13+ tools for Cursor / Claude Desktop (local stdio + remote HTTP)
@@ -148,7 +151,15 @@ frontend/  (Vite + React → GitHub Pages)
 
 Shared query logic lives in `footballmind_services.py` (used by both Flask and MCP).
 
-**Chat follow-ups:** The web UI sends the last few turns as `history` on each `/api/chat` request. The backend also loads recent turns from the `queries` table when `history` is omitted. Short follow-ups (`explain`, `why?`, `tell me more`, etc.) skip the rule-based intent parser and go straight to the LLM with that context — useful after player comparisons or predictions.
+**Chat follow-ups:** The web UI sends the last few turns as `history` on each `/api/chat` request. The backend also loads recent turns from the `queries` table when `history` is omitted.
+
+| Follow-up type | Example | What happens |
+|----------------|---------|--------------|
+| Explain / elaborate | *"explain"*, *"why?"*, *"tell me more"* | LLM reads history (no new tool calls) |
+| Comp switch after compare | *"what about in La Liga"* | Re-runs `compare_players` with `comp=PD` and the same two names from history |
+| New question | *"Predict Arsenal vs Chelsea"* | Rule-based intent or LLM with tools |
+
+Short explain-style follow-ups skip the intent parser and go straight to the LLM with conversation context.
 
 ```json
 POST /api/chat
@@ -179,7 +190,7 @@ POST /api/chat
 ├── footballmind_lineup.py     # Predicted XI + availability logic
 ├── footballmind_mcp_predict.py
 ├── footballmind_sync.py       # football-data.org ingestion
-├── footballmind_jobs.py       # CLI: sync, retrain, seed-elo
+├── footballmind_jobs.py       # CLI: sync, sync-matchday, backfill-scorers, retrain, seed-elo
 ├── footballmind_elo.py
 ├── footballmind_dixoncoles.py
 ├── footballmind_predict.py
@@ -214,6 +225,18 @@ python footballmind_migrate.py --status
 ```
 
 **Note:** football-data.org free tier includes competition scorers but not per-match lineups/goals in match detail. Formation tools populate when that data becomes available (paid tier or live tournament detail).
+
+### Player stats & seasons
+
+Scorer stats are stored **per competition edition** (season) in `player_edition_stats`. Each `(player_id, edition_id)` row is independent.
+
+| Question | Answer |
+|----------|--------|
+| Does a new season wipe last season? | **No.** Sync creates a new `competition_editions` row; old stats remain. |
+| What does compare use by default? | Current synced season for that comp; if a player has no row, the **best past synced season** in that comp. |
+| How do I get Messi/Ronaldo La Liga numbers? | Run `backfill-scorers` (top ~100 scorers per season from the API — not full career totals for every player). |
+
+When you roll into a new campaign, bump the season string in `COMPETITIONS` inside `footballmind_jobs.py` (e.g. `2025/26` → `2026/27`) and sync as usual.
 
 ### Predicted lineups & availability
 
@@ -312,7 +335,7 @@ FootballMind is an **MCP server** — agents can call football tools directly in
 | `get_team_formations` | Recent formations for a team |
 | `get_match_lineup` | Lineups from latest H2H meeting |
 | `get_predicted_lineup` | Most likely starting XI (injuries + red-card suspensions) |
-| `compare_players` | Side-by-side player stats and ratings |
+| `compare_players` | Side-by-side stats; optional `comp` (current or best past synced season) |
 
 ### Local (stdio)
 
@@ -352,7 +375,7 @@ The combined ASGI app serves MCP at `/mcp` alongside the existing REST API. **Th
 | Database | [Neon](https://neon.tech) (free tier) | Pooled connection string for `DATABASE_URL` |
 | Backend + MCP | [Render](https://render.com) (free web service) | `uvicorn footballmind_asgi:app` |
 | Frontend | GitHub Pages | Auto-deployed on push to `main` via `.github/workflows/pages.yml` |
-| Scheduled jobs | GitHub Actions | Sync every 6h, match-day sync every 30m, retrain Monday 05:30 UTC |
+| Scheduled jobs | GitHub Actions | `footballmind-jobs` (sync 6h, retrain Mon), `footballmind-matchday-sync` (30m), `footballmind-tests` (pytest on push) |
 
 ### Environment variables
 
