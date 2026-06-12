@@ -46,6 +46,9 @@ from footballmind_services import (
     get_top_scorers,
     search_players,
     _form_score,
+    list_availability_flags,
+    set_availability_flag,
+    clear_availability_flag,
 )
 
 app = Flask(__name__)
@@ -189,6 +192,22 @@ _COMP_LABELS = {
 def _resolve_chat_comp(data, default: str = "WC") -> str:
     raw = str(data.get("comp") or default).strip().upper()
     return raw if raw in _VALID_COMPS else default
+
+
+def _admin_key() -> str | None:
+    return os.environ.get("FOOTBALLMIND_ADMIN_KEY") or os.environ.get("MCP_API_KEY") or None
+
+
+def _require_admin():
+    key = _admin_key()
+    if not key:
+        return jsonify({"error": "Admin API not configured on server"}), 503
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else auth
+    header_key = request.headers.get("X-Admin-Key", "")
+    if token != key and header_key != key:
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
 
 
 _FOLLOWUP = re.compile(
@@ -715,6 +734,65 @@ def api_players_predicted_lineup():
     comp = request.args.get("comp", "WC")
     try:
         result = get_predicted_lineup(get_conn(), team, comp)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if result.get("error"):
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+@app.get("/api/players/availability")
+@limiter.exempt
+def api_players_availability():
+    """Manual injury/doubt flags for a team (suspensions are computed at runtime)."""
+    team = request.args.get("team", "").strip()
+    if not team:
+        return jsonify({"error": "team is required"}), 400
+    comp = _resolve_chat_comp({"comp": request.args.get("comp", "WC")})
+    try:
+        flags = list_availability_flags(get_conn(), team, comp)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"team": team, "comp": comp, "flags": flags})
+
+
+@app.post("/api/admin/availability")
+@limiter.limit("60 per hour")
+def api_admin_availability_set():
+    denied = _require_admin()
+    if denied:
+        return denied
+    data = request.get_json(force=True) or {}
+    player = (data.get("player") or data.get("name") or "").strip()
+    team = (data.get("team") or "").strip()
+    comp = _resolve_chat_comp(data)
+    status = (data.get("status") or "").strip()
+    reason = (data.get("reason") or "").strip() or None
+    if not player or not team or not status:
+        return jsonify({"error": "player, team, and status are required"}), 400
+    try:
+        result = set_availability_flag(get_conn(), player, team, comp, status, reason)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if result.get("error"):
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+@app.delete("/api/admin/availability")
+@limiter.limit("60 per hour")
+def api_admin_availability_clear():
+    denied = _require_admin()
+    if denied:
+        return denied
+    data = request.get_json(force=True) or {}
+    player = (data.get("player") or data.get("name") or "").strip()
+    team = (data.get("team") or "").strip()
+    comp = _resolve_chat_comp(data)
+    if not player or not team:
+        return jsonify({"error": "player and team are required"}), 400
+    try:
+        result = clear_availability_flag(get_conn(), player, team, comp)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     if result.get("error"):

@@ -138,6 +138,9 @@ frontend/  (Vite + React → GitHub Pages)
 | GET | `/api/players/profile?name=…` | Player profile + competition stats |
 | GET | `/api/players/formations?team=…` | Recent formations (when lineup data exists) |
 | GET | `/api/players/predicted-lineup?team=…&comp=WC` | Most likely starting XI (injuries + suspensions) |
+| GET | `/api/players/availability?team=…&comp=WC` | Manual injury/doubt flags for a team |
+| POST | `/api/admin/availability` | Set player availability (admin key) |
+| DELETE | `/api/admin/availability` | Clear manual availability flag (admin key) |
 | GET | `/api/players/lineup?home=…&away=…` | Last H2H lineups |
 | GET | `/api/predictions` | Graded prediction history + hit rate |
 
@@ -219,7 +222,24 @@ python footballmind_migrate.py --status
 3. **Red-card suspensions** — computed at runtime from `match_events` (player sent off in last finished match is excluded for the next fixture).
 4. **Injuries / doubtful** — stored in `player_availability` (manual flags until an injury feed is added).
 
-Flag a player out manually:
+Flag a player out via the **Predicted XI** admin panel (append `?admin_key=YOUR_KEY` once to enable), the REST admin API, or SQL:
+
+```bash
+curl -X POST https://football-mind.onrender.com/api/admin/availability \
+  -H "Authorization: Bearer $FOOTBALLMIND_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"player":"Pedri","team":"Spain","comp":"WC","status":"injured","reason":"Hamstring"}'
+```
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/players/availability?team=…&comp=WC` | — | List manual flags for a team |
+| POST | `/api/admin/availability` | Bearer admin key | Set injured / doubtful / suspended |
+| DELETE | `/api/admin/availability` | Bearer admin key | Remove a manual flag |
+
+Status values: `injured`, `doubtful`, `suspended` (manual only — red-card suspensions are computed from match events).
+
+Legacy SQL:
 
 ```sql
 INSERT INTO player_availability (player_id, team_id, comp_code, status, reason)
@@ -328,6 +348,7 @@ The combined ASGI app serves MCP at `/mcp` alongside the existing REST API. **Th
 | Variable | Where | Purpose |
 |----------|-------|---------|
 | `DATABASE_URL` | Render + Actions secret | Neon pooled connection string |
+| `FOOTBALLMIND_ADMIN_KEY` | Render env var | Bearer token for `/api/admin/*` (optional; falls back to `MCP_API_KEY`) |
 | `MCP_API_KEY` | Render + local `.env` | Bearer token for remote MCP at `/mcp` (optional for website) |
 | `FOOTBALL_DATA_API_KEY` | Actions secret | football-data.org API key |
 | `ANTHROPIC_API_KEY` | Render env var | Claude API (LLM chat + deep analysis) |

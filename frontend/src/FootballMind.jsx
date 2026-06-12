@@ -70,6 +70,18 @@ const PLAYER_CHIPS = [
 ];
 
 const SESSION_KEY = "footballmind_session_id";
+const ADMIN_KEY_STORAGE = "footballmind_admin_key";
+
+function getAdminKey() {
+  try { return localStorage.getItem(ADMIN_KEY_STORAGE) || ""; } catch { return ""; }
+}
+
+function saveAdminKeyFromUrl() {
+  try {
+    const k = new URLSearchParams(window.location.search).get("admin_key");
+    if (k) localStorage.setItem(ADMIN_KEY_STORAGE, k);
+  } catch { /* ignore */ }
+}
 
 function getOrCreateSessionId() {
   try {
@@ -1148,7 +1160,123 @@ function CardPredictedLineups({ home, away, comp }) {
   );
 }
 
-function PlayersSidebar({ apiBase, offline, onAsk, onCompChange }) {
+function AvailabilityAdminPanel({ team, comp, apiBase, adminKey, onUpdated }) {
+  const [player, setPlayer] = useState("");
+  const [status, setStatus] = useState("injured");
+  const [reason, setReason] = useState("");
+  const [flags, setFlags] = useState([]);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!adminKey || !apiBase || !team) return;
+    fetch(`${apiBase}/api/players/availability?team=${encodeURIComponent(team)}&comp=${comp}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setFlags(d?.flags ?? []))
+      .catch(() => setFlags([]));
+  }, [team, comp, apiBase, adminKey, msg]);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!player.trim() || busy) return;
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch(`${apiBase}/api/admin/availability`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminKey}` },
+        body: JSON.stringify({ player: player.trim(), team, comp, status, reason: reason.trim() || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.message || "Failed");
+      setPlayer("");
+      setReason("");
+      setMsg(`Flagged ${data.player} as ${data.status}`);
+      onUpdated?.();
+    } catch (err) {
+      setMsg(err.message || "Could not save flag");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeFlag(name) {
+    if (busy) return;
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch(`${apiBase}/api/admin/availability`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminKey}` },
+        body: JSON.stringify({ player: name, team, comp }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setMsg(`Cleared flag for ${data.player}`);
+      onUpdated?.();
+    } catch (err) {
+      setMsg(err.message || "Could not clear flag");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border p-2.5 space-y-2" style={{ borderColor: C.line, background: C.panel2 }}>
+      <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: C.mute }}>
+        Admin · flag player out
+      </div>
+      <form onSubmit={submit} className="space-y-2">
+        <input
+          value={player}
+          onChange={(e) => setPlayer(e.target.value)}
+          placeholder="Player name"
+          className="w-full rounded-md px-2 py-1.5 text-xs outline-none"
+          style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }}
+        />
+        <div className="flex gap-2">
+          <select value={status} onChange={(e) => setStatus(e.target.value)}
+            className="flex-1 rounded-md px-2 py-1.5 text-xs outline-none"
+            style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }}>
+            <option value="injured">Injured</option>
+            <option value="doubtful">Doubtful</option>
+            <option value="suspended">Suspended (manual)</option>
+          </select>
+          <button type="submit" disabled={busy}
+            className="shrink-0 rounded-md px-3 py-1.5 text-[10px] font-semibold disabled:opacity-50"
+            style={{ background: C.home, color: "#08120F" }}>
+            Save
+          </button>
+        </div>
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Reason (optional) e.g. Hamstring"
+          className="w-full rounded-md px-2 py-1.5 text-xs outline-none"
+          style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }}
+        />
+      </form>
+      {msg && <div className="text-[10px]" style={{ color: C.mute }}>{msg}</div>}
+      {flags.length > 0 && (
+        <div className="space-y-1 pt-1 border-t" style={{ borderColor: C.line }}>
+          <div className="text-[9px] uppercase tracking-wider" style={{ color: C.mute }}>Manual flags</div>
+          {flags.map((f) => (
+            <div key={f.player} className="flex items-center justify-between gap-2 text-[10px]">
+              <span style={{ color: C.chalk }}>{f.player} · {f.status}{f.reason ? ` (${f.reason})` : ""}</span>
+              <button type="button" onClick={() => removeFlag(f.player)} disabled={busy}
+                className="shrink-0 text-[9px] font-semibold hover:opacity-70"
+                style={{ color: C.away }}>
+                Clear
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, adminKey }) {
   const [comp, setComp] = useState("WC");
   const [posTab, setPosTab] = useState("ALL");
   const [tab, setTab] = useState("standouts");
@@ -1168,6 +1296,10 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange }) {
       .then((r) => r.json())
       .then((d) => (d.error ? setLineup({ error: d.error }) : setLineup(d)))
       .catch(() => setLineup({ error: "Failed to load predicted lineup" }));
+  }
+
+  function reloadLineup() {
+    if (team) loadPredictedLineup(team, comp);
   }
 
   function loadScorers(c) {
@@ -1430,6 +1562,15 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange }) {
                     </div>
                   </div>
                 )}
+                {adminKey && team && (
+                  <AvailabilityAdminPanel
+                    team={team}
+                    comp={comp}
+                    apiBase={apiBase}
+                    adminKey={adminKey}
+                    onUpdated={reloadLineup}
+                  />
+                )}
               </>
             )}
           </div>
@@ -1690,6 +1831,7 @@ export default function FootballMind() {
   const [sidebarMode, setSidebarMode] = useState("matches");
   const [sidebarLoaded, setSidebarLoaded] = useState(false);
   const [chatComp, setChatComp] = useState("WC");
+  const [adminKey, setAdminKey] = useState(() => getAdminKey());
   const scroller = useRef(null);
   const sendRef = useRef(null);
   const deepLinkHandled = useRef(false);
@@ -1724,6 +1866,12 @@ export default function FootballMind() {
   }
 
   useEffect(() => {
+    saveAdminKeyFromUrl();
+    const k = getAdminKey();
+    if (k) setAdminKey(k);
+  }, []);
+
+  useEffect(() => {
     if (!API_BASE) {
       setOffline(true);
       setSummary({ graded: 0, correct: 0, hit_rate: null });
@@ -1732,7 +1880,6 @@ export default function FootballMind() {
     fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
       .then((d) => setSummary(d.summary)).catch(() => {});
     loadSidebarData();
-    // Render free tier sleeps — retry while it cold-starts
     const t1 = setTimeout(loadSidebarData, 4000);
     const t2 = setTimeout(loadSidebarData, 12000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
@@ -2000,7 +2147,7 @@ export default function FootballMind() {
               <StandingsPanel apiBase={API_BASE} offline={offline} onCompChange={handleCompChange} />
             </>
           ) : (
-            <PlayersSidebar apiBase={API_BASE} offline={offline} onAsk={handlePlayerAsk} onCompChange={handleCompChange} />
+            <PlayersSidebar apiBase={API_BASE} offline={offline} onAsk={handlePlayerAsk} onCompChange={handleCompChange} adminKey={adminKey} />
           )}
         </aside>
       </div>

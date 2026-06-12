@@ -926,3 +926,96 @@ def compare_players(conn, player_a: str, player_b: str,
         "player_a": a,
         "player_b": b,
     }
+
+
+AVAIL_STATUSES = frozenset({"injured", "doubtful", "suspended"})
+
+
+def _resolve_player_on_team(cur, player_name: str, team_id: int) -> tuple[int, str] | None:
+    cur.execute(
+        "SELECT p.id, p.name FROM players p "
+        "JOIN player_affiliations pa ON pa.player_id = p.id "
+        "WHERE pa.team_id = %s AND pa.end_date IS NULL "
+        "  AND p.name ILIKE %s "
+        "ORDER BY CASE WHEN LOWER(p.name) = LOWER(%s) THEN 0 ELSE 1 END, p.name "
+        "LIMIT 1",
+        (team_id, f"%{player_name.strip()}%", player_name.strip()))
+    row = cur.fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def list_availability_flags(conn, team_name: str, comp: str = "WC") -> list[dict]:
+    from footballmind_mcp_predict import _resolve_team
+
+    with conn.cursor() as cur:
+        team_id, _ = _resolve_team(cur, team_name)
+        cur.execute(
+            "SELECT p.name, pa.status, pa.reason, pa.updated_at "
+            "FROM player_availability pa "
+            "JOIN players p ON p.id = pa.player_id "
+            "WHERE pa.team_id = %s AND pa.comp_code = %s "
+            "ORDER BY pa.status, p.name",
+            (team_id, comp))
+        rows = cur.fetchall()
+    return [
+        {
+            "player": name,
+            "status": status,
+            "reason": reason,
+            "updated_at": updated.isoformat() if updated else None,
+            "manual": True,
+        }
+        for name, status, reason, updated in rows
+    ]
+
+
+def set_availability_flag(conn, player_name: str, team_name: str, comp: str,
+                          status: str, reason: str | None = None) -> dict:
+    from footballmind_mcp_predict import _resolve_team
+
+    status = (status or "").strip().lower()
+    if status not in AVAIL_STATUSES:
+        return {"error": f"status must be one of: {', '.join(sorted(AVAIL_STATUSES))}"}
+    with conn.cursor() as cur:
+        team_id, _ = _resolve_team(cur, team_name)
+        found = _resolve_player_on_team(cur, player_name, team_id)
+        if not found:
+            return {"error": f"No player on {team_name!r} matching {player_name!r}"}
+        player_id, resolved_name = found
+        cur.execute(
+            "INSERT INTO player_availability "
+            "(player_id, team_id, comp_code, status, reason, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, now()) "
+            "ON CONFLICT (player_id, team_id, comp_code) DO UPDATE SET "
+            "  status = EXCLUDED.status, reason = EXCLUDED.reason, updated_at = now()",
+            (player_id, team_id, comp, status, (reason or "").strip() or None))
+    conn.commit()
+    return {
+        "ok": True,
+        "player": resolved_name,
+        "team": team_name,
+        "comp": comp,
+        "status": status,
+        "reason": reason,
+    }
+
+
+def clear_availability_flag(conn, player_name: str, team_name: str,
+                            comp: str) -> dict:
+    from footballmind_mcp_predict import _resolve_team
+
+    with conn.cursor() as cur:
+        team_id, _ = _resolve_team(cur, team_name)
+        found = _resolve_player_on_team(cur, player_name, team_id)
+        if not found:
+            return {"error": f"No player on {team_name!r} matching {player_name!r}"}
+        player_id, resolved_name = found
+        cur.execute(
+            "DELETE FROM player_availability "
+            "WHERE player_id = %s AND team_id = %s AND comp_code = %s",
+            (player_id, team_id, comp))
+        deleted = cur.rowcount
+    conn.commit()
+    if not deleted:
+        return {"error": f"No manual flag found for {resolved_name} ({comp})"}
+    return {"ok": True, "player": resolved_name, "team": team_name, "comp": comp}
