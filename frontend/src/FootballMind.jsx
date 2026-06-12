@@ -1513,7 +1513,13 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, adminKey }) {
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]" style={{ color: C.mute }}>
                   <span>{flag(lineup.team)}{lineup.team}</span>
                   <span>·</span>
-                  <span>{lineup.source === "recent_lineup" ? "Based on recent formation" : "Depth + form model"}</span>
+                  <span>{
+                    lineup.source === "recent_lineup"
+                      ? "Based on last match XI"
+                      : lineup.source === "recent_formation"
+                        ? "Based on recent formation"
+                        : "Depth + form model"
+                  }</span>
                   {lineup.next_opponent && (
                     <>
                       <span>·</span>

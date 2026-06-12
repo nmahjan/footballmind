@@ -242,8 +242,8 @@ When you roll into a new campaign, bump the season string in `COMPETITIONS` insi
 
 `footballmind_lineup.py` builds a most-likely XI from squad depth and form scores:
 
-1. **Formation** — prefers the team's most recent synced formation; otherwise picks the best-fit template (4-3-3, 4-2-3-1, 3-4-3, etc.) from available players.
-2. **Starters** — highest-rated player per slot (Elo + club goals/assists + appearances).
+1. **Formation** — prefers the team's most recent synced formation (including **4-3-2-1**); when lineups are synced, keeps last-match starters where possible; otherwise picks from modern club shapes before defaulting to 4-3-3.
+2. **Starters** — ranked by comp appearances + recent starts, not goals alone (so mids/GKs aren't benched for fringe forwards).
 3. **Red-card suspensions** — computed at runtime from `match_events` (player sent off in last finished match is excluded for the next fixture).
 4. **Injuries / doubtful** — stored in `player_availability` (manual flags until an injury feed is added).
 
