@@ -1947,6 +1947,7 @@ function StandingsPanel({ apiBase, offline, onCompChange }) {
           No data yet for {label}.<br />Run a sync to populate.
         </div>
       ) : (
+        <>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase" style={{ color: C.mute }}>
@@ -1986,6 +1987,7 @@ function StandingsPanel({ apiBase, offline, onCompChange }) {
           </tbody>
         </table>
         <StandingsLegend compCode={activeComp} />
+        </>
       )}
     </div>
   );
