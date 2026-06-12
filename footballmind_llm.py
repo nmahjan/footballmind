@@ -278,6 +278,13 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
         stakes_lines.append(f"- {lbl}")
     if stakes.get("summary"):
         stakes_lines.append(f"- Stakes note: {stakes['summary']}")
+    adj = prediction.get("stakes_adjustment") or {}
+    if adj.get("applied"):
+        stakes_lines.append(
+            f"- Model pressure adjustment: intensity {adj.get('intensity', '?')}, "
+            f"xG scaled ×{adj.get('total_xg_multiplier', 1)}"
+            + (f", draw tilt {adj.get('draw_tilt')}" if adj.get("draw_tilt") else "")
+        )
     ctx = stakes.get("context") or {}
     for side, name in (("home", home), ("away", away)):
         row = ctx.get(side) or {}

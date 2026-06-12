@@ -608,6 +608,14 @@ function PredictionCard({ p, home, away, comp = "WC", neutral = null }) {
       {p.stakes?.summary && (
         <p className="mt-1.5 text-[11px] leading-snug" style={{ color: C.mute }}>{p.stakes.summary}</p>
       )}
+      {p.stakes_adjustment?.applied && (
+        <p className="mt-1 text-[10px] italic" style={{ color: C.mute }}>
+          High-pressure adjustment: xG ×{(p.stakes_adjustment.total_xg_multiplier ?? 1).toFixed(3)}
+          {p.stakes_adjustment.draw_tilt != null
+            ? ` · draw tilt +${Math.round(p.stakes_adjustment.draw_tilt * 100)}%`
+            : ""}
+        </p>
+      )}
 
       <div className="mt-3">
         <ProbBar home={p.home_win_prob} draw={p.draw_prob} away={p.away_win_prob} homeName={home} awayName={away} />

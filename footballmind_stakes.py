@@ -187,6 +187,76 @@ def compute_match_stakes(
     }
 
 
+MAX_TOTAL_XG_SHRINK = 0.06   # up to 6% lower combined expected goals
+MAX_DRAW_TILT = 0.05         # pull lambdas toward parity → more draws
+MIN_LAMBDA = 0.05
+
+_CAGEY_LABELS = frozenset({
+    "Relegation six-pointer",
+    "Relegation survival clash",
+    "Relegation play-off pressure",
+    "Top-four clash",
+    "Champions League spot on the line",
+    "Champions League qualification at stake",
+    "Europa League race",
+    "European qualification battle",
+    "Knockout qualification on the line",
+    "Must-win for knockout hope",
+    "Group top-two clash",
+})
+
+
+def pressure_intensity(stakes: dict) -> float:
+    """0–1 score from stakes labels and stage."""
+    if not stakes.get("high_pressure"):
+        return 0.0
+    labels = stakes.get("labels") or []
+    stage = (stakes.get("context") or {}).get("stage", "regular_season")
+    intensity = min(1.0, 0.25 + 0.12 * len(labels))
+    if stage in KNOCKOUT_STAGES:
+        intensity = min(1.0, intensity + 0.12)
+    if labels and any(lbl in _CAGEY_LABELS for lbl in labels):
+        intensity = min(1.0, intensity + 0.08)
+    return round(intensity, 3)
+
+
+def apply_stakes_to_lambdas(
+    lam_home: float,
+    lam_away: float,
+    stakes: dict,
+) -> tuple[float, float, dict]:
+    """Nudge expected goals for high-pressure fixtures (Phase B).
+
+    - Cagey stakes → slightly lower total xG (both sides)
+    - League/group pressure → small draw tilt (favorites less dominant)
+    Capped so adjustments stay within ~±6% on goal expectation.
+    """
+    intensity = pressure_intensity(stakes)
+    if intensity <= 0:
+        return lam_home, lam_away, {"applied": False}
+
+    labels = set(stakes.get("labels") or [])
+    stage = (stakes.get("context") or {}).get("stage", "regular_season")
+    lh, la = float(lam_home), float(lam_away)
+    meta: dict = {"applied": True, "intensity": intensity}
+
+    cagey = bool(labels & _CAGEY_LABELS) or stage in KNOCKOUT_STAGES
+    if cagey:
+        shrink = 1.0 - MAX_TOTAL_XG_SHRINK * intensity
+        lh *= shrink
+        la *= shrink
+        meta["total_xg_multiplier"] = round(shrink, 4)
+
+    if stage in ("regular_season", "group") and labels:
+        tilt = MAX_DRAW_TILT * intensity
+        mid = (lh + la) / 2.0
+        lh = lh + (mid - lh) * tilt
+        la = la + (mid - la) * tilt
+        meta["draw_tilt"] = round(tilt, 4)
+
+    return max(lh, MIN_LAMBDA), max(la, MIN_LAMBDA), meta
+
+
 def infer_comp_for_fixture(cur, home_id: int, away_id: int) -> tuple[str | None, str | None]:
     """Best-effort comp + stage from the next fixture between these teams."""
     cur.execute(

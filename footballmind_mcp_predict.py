@@ -291,7 +291,25 @@ def _predict_match(conn, home_team, away_team, match_date,
             lam_h, lam_a = model.expected_goals(home_id, away_id, neutral)
         et_edge = max(-0.15, min(0.15, (home_elo - away_elo) / 2000.0))
 
-        out = predict(lam_h, lam_a, stage=stage, et_edge=et_edge)
+        from footballmind_stakes import (
+            apply_stakes_to_lambdas,
+            compute_match_stakes,
+            infer_comp_for_fixture,
+        )
+        eff_comp = comp
+        eff_stage = stage
+        if not eff_comp:
+            inf_comp, inf_stage = infer_comp_for_fixture(cur, home_id, away_id)
+            eff_comp = inf_comp or comp
+            if inf_stage and stage == "regular_season":
+                eff_stage = inf_stage
+        stakes = compute_match_stakes(
+            conn, eff_comp, home_id, away_id, home_team, away_team, eff_stage)
+
+        lam_h_base, lam_a_base = lam_h, lam_a
+        lam_h, lam_a, stakes_adj = apply_stakes_to_lambdas(lam_h, lam_a, stakes)
+
+        out = predict(lam_h, lam_a, stage=eff_stage, et_edge=et_edge)
 
         knockout = "progression" in out
         if knockout:
@@ -309,27 +327,23 @@ def _predict_match(conn, home_team, away_team, match_date,
         away_form = _team_form(cur, away_id)
         h2h = _head_to_head(cur, home_id, away_id)
 
-        from footballmind_stakes import compute_match_stakes, infer_comp_for_fixture
-        eff_comp = comp
-        eff_stage = stage
-        if not eff_comp:
-            inf_comp, inf_stage = infer_comp_for_fixture(cur, home_id, away_id)
-            eff_comp = inf_comp or comp
-            if inf_stage and stage == "regular_season":
-                eff_stage = inf_stage
-        stakes = compute_match_stakes(
-            conn, eff_comp, home_id, away_id, home_team, away_team, eff_stage)
-
         # Replace terse numeric string with full narrative
         reasoning = _build_narrative(home_team, away_team, home_elo, away_elo,
                                      lam_h, lam_a, home_form, away_form, h2h, neutral)
         if stakes.get("summary"):
             reasoning = reasoning.rstrip(".") + f". {stakes['summary']}"
+        if stakes_adj.get("applied"):
+            reasoning = (
+                reasoning.rstrip(".")
+                + ". Model nudged for high stakes — slightly tighter and more draw-prone."
+            )
         key_factors = [
             f"Rating gap: {home_elo - away_elo:+.0f}",
             "Neutral venue" if neutral else "Home advantage applied",
             f"xG: {lam_h:.2f} – {lam_a:.2f}",
         ]
+        if stakes_adj.get("applied"):
+            key_factors.append("High-pressure λ adjustment applied")
         key_factors.extend(stakes.get("labels") or [])
 
         from footballmind_grading import find_fixture
@@ -356,10 +370,13 @@ def _predict_match(conn, home_team, away_team, match_date,
         "away_elo":      round(away_elo),
         "home_xg":       round(lam_h, 2),
         "away_xg":       round(lam_a, 2),
+        "home_xg_base":  round(lam_h_base, 2),
+        "away_xg_base":  round(lam_a_base, 2),
         "neutral":       neutral,
         "comp":          eff_comp,
         "stage":         eff_stage,
         "stakes":        stakes,
+        "stakes_adjustment": stakes_adj,
     }
 
 
