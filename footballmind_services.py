@@ -80,12 +80,42 @@ def _affil_kind_for_comp(conn, comp: str) -> str:
 
 
 def _compute_standout_rating(team_rating, goals, assists, apps, position) -> float:
-    """0–100 blend: national/club team strength + best club season form."""
+    """0–100 blend: team strength + position-appropriate form (not goals-only)."""
+    pos = (position or "?").upper()
     elo_n = min(1.0, max(0.0, ((team_rating or 1500) - 1400) / 450))
-    form_n = min(1.0, ((goals or 0) + (assists or 0) * 0.6) / 22)
-    apps_n = min(1.0, (apps or 0) / 35)
-    pos_n = _POS_WEIGHT.get((position or "?").upper(), 0.8)
-    return round(100 * (0.35 * elo_n + 0.45 * form_n + 0.12 * apps_n + 0.08 * pos_n), 1)
+    apps_n = min(1.0, (apps or 0) / 38)
+    pos_n = _POS_WEIGHT.get(pos, 0.8)
+    g, a = goals or 0, assists or 0
+
+    if pos == "GK":
+        form_n = apps_n
+        blend = 0.50 * elo_n + 0.40 * form_n + 0.10 * pos_n
+    elif pos == "DEF":
+        # Defenders: minutes + team strength; goals/assists are a small bonus
+        form_n = min(1.0, apps_n * 0.85 + g * 0.04 + a * 0.06)
+        blend = 0.38 * elo_n + 0.32 * form_n + 0.20 * apps_n + 0.10 * pos_n
+    elif pos == "MID":
+        form_n = min(1.0, (a * 1.0 + g * 0.35) / 16)
+        blend = 0.32 * elo_n + 0.48 * form_n + 0.12 * apps_n + 0.08 * pos_n
+    elif pos == "FWD":
+        form_n = min(1.0, (g * 1.0 + a * 0.45) / 22)
+        blend = 0.32 * elo_n + 0.48 * form_n + 0.12 * apps_n + 0.08 * pos_n
+    else:
+        form_n = min(1.0, (g + a * 0.6) / 22)
+        blend = 0.35 * elo_n + 0.45 * form_n + 0.12 * apps_n + 0.08 * pos_n
+    return round(100 * blend, 1)
+
+
+def _standout_sql_order() -> str:
+    """Rough pre-sort in SQL so the candidate pool includes non-forwards."""
+    return (
+        "CASE COALESCE(p.position, '?') "
+        "  WHEN 'FWD' THEN pes.goals * 100 + pes.assists * 10 "
+        "  WHEN 'MID' THEN pes.assists * 100 + pes.goals * 10 "
+        "  WHEN 'DEF' THEN pes.appearances * 10 + pes.goals * 5 + pes.assists * 3 "
+        "  WHEN 'GK'  THEN pes.appearances * 100 "
+        "  ELSE pes.goals * 50 + pes.assists * 20 END"
+    )
 
 
 def _has_comp_scorers(conn, edition_id: int | None) -> bool:
@@ -351,10 +381,10 @@ def get_rankings(conn, comp: str = "WC", limit: int = 48) -> list:
 
 
 def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: int = 20) -> list:
-    """Standout players ranked by comp goals when available, else composite rating.
+    """Standout players ranked by position-aware form + team strength.
 
-    Composite rating (WC / pre-tournament): team Elo + best club-season G/A,
-    filtered to national squads only. Caps players per team for variety.
+    Forwards lean on goals; midfielders on assists; defenders/GKs on minutes
+    and team Elo. Caps players per team for variety.
     """
     limit = min(limit, 60)
     pos_filter = (position or "").upper() or None
@@ -377,8 +407,8 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
             if pos_filter:
                 sql += " AND p.position = %s "
                 params.append(pos_filter)
-            sql += " ORDER BY pes.goals DESC, pes.assists DESC, p.name LIMIT %s"
-            params.append(limit * 2)
+            sql += f" ORDER BY {_standout_sql_order()} DESC, p.name LIMIT %s"
+            params.append(limit * 4)
             cur.execute(sql, params)
             rows = cur.fetchall()
 
@@ -387,6 +417,7 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
             sr = _compute_standout_rating(rating, goals, ast, apps, pos)
             standouts.append(_row_player(
                 name, team, pos, rating, dob, nat, goals, ast, apps, sr))
+        standouts.sort(key=lambda x: (-(x.get("standout_rating") or 0), x["name"]))
         return _cap_players_per_team(standouts)[:limit]
 
     with conn.cursor() as cur:

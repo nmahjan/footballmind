@@ -35,6 +35,8 @@ SYSTEM = (
     "competition). For 'compare X vs Y' or 'who is better', call compare_players. "
     "For follow-ups like 'what about in La Liga', call compare_players with comp=PD "
     "and the same player names from the prior turn. "
+    "If a tool returns player_not_found or compare_failed, answer from context "
+    "or explain what data is unavailable — never quote the raw error as the reply. "
     "When discussing teams, use get_team_squad and explain roles tactically from "
     "ratings and squad composition. "
     "Be concise: 1-3 sentences unless the user asks for detail (player/team "
@@ -318,10 +320,22 @@ def _run_tool(conn, name, args, session_id):
         return search_players(conn, args["query"], args.get("comp"))
     if name == "get_player_profile":
         profile = get_player_profile(conn, args["name"], args.get("comp"))
-        return profile or {"error": f"No player found matching {args['name']!r}"}
+        if not profile:
+            return {
+                "error": "player_not_found",
+                "message": f"No synced profile for {args['name']!r}. "
+                           "Try search_players or rephrase — do not treat this as the "
+                           "final answer if the user asked about a team or tactic.",
+            }
     if name == "compare_players":
-        return compare_players(conn, args["player_a"], args["player_b"],
-                               args.get("comp"))
+        result = compare_players(conn, args["player_a"], args["player_b"],
+                                 args.get("comp"))
+        if result.get("error"):
+            return {
+                "error": "compare_failed",
+                "message": result["error"],
+            }
+        return result
     if name == "get_team_squad":
         return get_team_squad(conn, args["team"], args.get("comp"))
     if name == "list_standout_players":

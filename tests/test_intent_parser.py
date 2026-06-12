@@ -72,6 +72,11 @@ class TestParsePlayerCompare:
     def test_player_or(self):
         assert _parse_player_compare("Messi or Ronaldo") == ("Messi", "Ronaldo")
 
+    def test_rejects_passing_followup_with_or(self):
+        assert _parse_player_compare(
+            "What about their passing, is it a good completion rate or is it something else?"
+        ) is None
+
     def test_rejects_predict_queries(self):
         assert _parse_player_compare("Predict Mexico vs USA") is None
 

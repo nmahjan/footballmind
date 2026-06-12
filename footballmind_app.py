@@ -388,20 +388,54 @@ _PLAYER_VS = re.compile(
 _PREDICT_HINTS = ("predict", "forecast", "who will win", "who wins", "match", "fixture", "game")
 
 
+_COMPARE_TOPIC_WORDS = (
+    "what about", "how about", "their ", "the ", "is it", "does ", "did ",
+    "passing", "completion", "rate", "style", "tactics", "possession",
+    "defence", "defense", "pressing", "formation", "good ", "bad ",
+)
+
+
+def _looks_like_player_name(name: str) -> bool:
+    """Reject sentence fragments mistaken for player names."""
+    if not name or len(name) > 45:
+        return False
+    if any(c in name for c in "?:"):
+        return False
+    if any(w in name.lower() for w in _COMPARE_TOPIC_WORDS):
+        return False
+    return len(name.split()) <= 5
+
+
 def _parse_player_compare(message: str) -> tuple[str, str] | None:
     """Extract two player names from a comparison query, or None."""
     low = message.lower().strip()
     if any(h in low for h in _PREDICT_HINTS):
         return None
-    if not any(h in low for h in ("compare", " vs ", " versus ", "who is better",
-                                  "who's better", " or ")):
+    if any(w in low for w in _COMPARE_TOPIC_WORDS):
         return None
     m = _COMPARE_VS.match(message.strip())
-    if not m:
-        m = _PLAYER_VS.match(message.strip())
-    if not m:
+    if m:
+        a, b = _clean_team(m.group(1)), _clean_team(m.group(2))
+        if _looks_like_player_name(a) and _looks_like_player_name(b):
+            return a, b
         return None
-    return _clean_team(m.group(1)), _clean_team(m.group(2))
+    has_compare_hint = any(h in low for h in (
+        "compare", " vs ", " versus ", "who is better", "who's better",
+    ))
+    if has_compare_hint:
+        m = _PLAYER_VS.match(message.strip())
+        if m:
+            a, b = _clean_team(m.group(1)), _clean_team(m.group(2))
+            if _looks_like_player_name(a) and _looks_like_player_name(b):
+                return a, b
+    # "Messi or Ronaldo" — short name-only phrasing
+    if " or " in low and len(low.split()) <= 6:
+        m = _PLAYER_VS.match(message.strip())
+        if m:
+            a, b = _clean_team(m.group(1)), _clean_team(m.group(2))
+            if _looks_like_player_name(a) and _looks_like_player_name(b):
+                return a, b
+    return None
 
 
 def _format_player_compare(result: dict) -> str:
