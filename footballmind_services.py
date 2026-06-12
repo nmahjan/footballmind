@@ -909,6 +909,104 @@ def get_prediction_summary(conn) -> dict:
     }
 
 
+_CALIBRATION_BINS = [
+    (0.33, 0.45, "33–45%"),
+    (0.45, 0.55, "45–55%"),
+    (0.55, 0.65, "55–65%"),
+    (0.65, 0.75, "65–75%"),
+    (0.75, 0.85, "75–85%"),
+    (0.85, 1.001, "85%+"),
+]
+
+
+def get_prediction_calibration(conn) -> dict:
+    """Confidence calibration: when we say ~70%, do ~70% of those picks win?
+
+    Uses one graded prediction per match (most recent). Bins by predicted
+    confidence (max of W/D/L probabilities).
+    """
+    from footballmind_grading import grade_predictions
+
+    grade_predictions(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT ON (p.match_id) "
+            "       GREATEST(COALESCE(p.home_win_prob, 0), "
+            "                COALESCE(p.draw_prob, 0), "
+            "                COALESCE(p.away_win_prob, 0)) AS conf, "
+            "       p.was_correct "
+            "FROM predictions p "
+            "WHERE p.was_correct IS NOT NULL AND p.match_id IS NOT NULL "
+            "ORDER BY p.match_id, p.created_at DESC")
+        rows = cur.fetchall()
+
+    buckets = [
+        {"label": label, "min": lo, "max": hi, "count": 0, "correct": 0,
+         "conf_sum": 0.0}
+        for lo, hi, label in _CALIBRATION_BINS
+    ]
+    confs, outcomes = [], []
+    for conf, was_correct in rows:
+        if conf is None:
+            continue
+        conf = float(conf)
+        confs.append(conf)
+        outcomes.append(1.0 if was_correct else 0.0)
+        for b in buckets:
+            if b["min"] <= conf < b["max"]:
+                b["count"] += 1
+                b["conf_sum"] += conf
+                if was_correct:
+                    b["correct"] += 1
+                break
+
+    bins_out = []
+    abs_errors = []
+    for b in buckets:
+        if b["count"]:
+            expected = b["conf_sum"] / b["count"]
+            actual = b["correct"] / b["count"]
+            abs_errors.append(abs(actual - expected))
+            bins_out.append({
+                "label": b["label"],
+                "min": b["min"],
+                "max": b["max"],
+                "count": b["count"],
+                "correct": b["correct"],
+                "expected_rate": round(expected, 3),
+                "actual_rate": round(actual, 3),
+                "gap": round(actual - expected, 3),
+            })
+        else:
+            bins_out.append({
+                "label": b["label"],
+                "min": b["min"],
+                "max": b["max"],
+                "count": 0,
+                "correct": 0,
+                "expected_rate": None,
+                "actual_rate": None,
+                "gap": None,
+            })
+
+    graded = len(confs)
+    correct = int(sum(outcomes))
+    mean_conf = (sum(confs) / graded) if graded else None
+    hit_rate = (correct / graded) if graded else None
+    mace = (sum(abs_errors) / len(abs_errors)) if abs_errors else None
+
+    return {
+        "graded": graded,
+        "correct": correct,
+        "hit_rate": hit_rate,
+        "mean_confidence": round(mean_conf, 3) if mean_conf is not None else None,
+        "mean_abs_calibration_error": round(mace, 3) if mace is not None else None,
+        "bins": bins_out,
+        "note": ("Well calibrated when actual win rate ≈ predicted confidence "
+                 "in each bin. Needs several graded matches per bin to be meaningful."),
+    }
+
+
 def compare_players(conn, player_a: str, player_b: str,
                     comp: str | None = None) -> dict:
     """Side-by-side profile: national team, club, and season/comp stats."""

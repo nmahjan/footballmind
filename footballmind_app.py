@@ -37,6 +37,7 @@ from footballmind_services import (
     get_player_profile,
     get_prediction_results,
     get_prediction_summary,
+    get_prediction_calibration,
     get_rankings,
     get_standings,
     get_standouts,
@@ -571,6 +572,13 @@ def api_chat():
 def api_standings():
     return jsonify(_standings(get_conn(), request.args.get("comp", "PL"),
                               request.args.get("season")))
+
+
+@app.get("/api/predictions/calibration")
+@limiter.exempt
+def api_predictions_calibration():
+    """Confidence calibration bins for graded predictions (one row per match)."""
+    return jsonify(get_prediction_calibration(get_conn()))
 
 
 @app.get("/api/predictions")

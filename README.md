@@ -142,6 +142,7 @@ frontend/  (Vite + React → GitHub Pages)
 | POST | `/api/admin/availability` | Set player availability (admin key) |
 | DELETE | `/api/admin/availability` | Clear manual availability flag (admin key) |
 | GET | `/api/players/lineup?home=…&away=…` | Last H2H lineups |
+| GET | `/api/predictions/calibration` | Confidence calibration bins (predicted vs actual win rate) |
 | GET | `/api/predictions` | Graded prediction history + hit rate |
 
 Shared query logic lives in `footballmind_services.py` (used by both Flask and MCP).
