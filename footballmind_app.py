@@ -34,6 +34,7 @@ from footballmind_services import (
     get_match_lineup,
     get_player_profile,
     get_prediction_results,
+    get_prediction_summary,
     get_rankings,
     get_standings,
     get_standouts,
@@ -333,15 +334,7 @@ def api_predictions():
     conn = get_conn()
     if request.args.get("finished") in ("1", "true", "yes"):
         results = get_prediction_results(conn, limit)
-        with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FILTER (WHERE was_correct IS NOT NULL), "
-                        "       count(*) FILTER (WHERE was_correct) FROM predictions")
-            graded, correct = cur.fetchone()
-        return jsonify({
-            "results": results,
-            "summary": {"graded": graded or 0, "correct": correct or 0,
-                        "hit_rate": (correct / graded) if graded else None},
-        })
+        return jsonify({"results": results, "summary": get_prediction_summary(conn)})
     with conn.cursor() as cur:
         cur.execute(
             "SELECT p.id, "
@@ -359,12 +352,7 @@ def api_predictions():
             "ORDER BY p.created_at DESC LIMIT %s", (limit,))
         cols = [d[0] for d in cur.description]
         preds = [dict(zip(cols, r)) for r in cur.fetchall()]
-        cur.execute("SELECT count(*) FILTER (WHERE was_correct IS NOT NULL), "
-                    "       count(*) FILTER (WHERE was_correct) FROM predictions")
-        graded, correct = cur.fetchone()
-    return jsonify({"predictions": preds,
-                    "summary": {"graded": graded or 0, "correct": correct or 0,
-                                "hit_rate": (correct / graded) if graded else None}})
+    return jsonify({"predictions": preds, "summary": get_prediction_summary(conn)})
 
 
 @app.get("/api/history")

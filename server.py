@@ -152,6 +152,14 @@ def get_player_profile(name: str, comp: str | None = None) -> dict:
 
 
 @mcp.tool()
+def compare_players(player_a: str, player_b: str, comp: str | None = None) -> dict:
+    """Compare two players side-by-side: stats, position, team, age."""
+    from footballmind_services import compare_players as do_compare
+    with get_connection() as conn:
+        return do_compare(conn, player_a, player_b, comp)
+
+
+@mcp.tool()
 def get_top_scorers(comp: str = "PL", limit: int = 20) -> list:
     """Competition top scorers with goals, assists, and appearances."""
     with get_connection() as conn:

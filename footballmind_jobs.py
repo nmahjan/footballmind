@@ -55,15 +55,19 @@ def cmd_sync(full=False):
     with _connect() as conn:
         for code, name, ctype, team_type, season in COMPETITIONS:
             try:
+                print(f"[sync] {code} matches...", flush=True)
                 sync_competition(conn, client, code, name, ctype, season,
                                  team_type=team_type, since=since)
+                print(f"[sync] {code} squads...", flush=True)
                 n = sync_teams_and_squads(conn, client, code, team_type=team_type)
+                print(f"[sync] {code} scorers...", flush=True)
                 ns = sync_scorers(conn, client, code, season, team_type=team_type)
-                print(f"[sync] {code} ok ({n} squads, {ns} scorers)")
+                print(f"[sync] {code} ok ({n} squads, {ns} scorers)", flush=True)
             except Exception as e:        # one bad competition shouldn't kill the run
-                print(f"[sync] {code} FAILED: {e}", file=sys.stderr)
+                print(f"[sync] {code} FAILED: {e}", file=sys.stderr, flush=True)
+        print("[sync] match details...", flush=True)
         detail_n = sync_match_details(conn, client, limit=50 if full else 15)
-        print(f"[sync] match details: {detail_n} checked")
+        print(f"[sync] match details: {detail_n} checked", flush=True)
         linked = link_orphan_predictions(conn)
         graded = grade_predictions(conn)
         print(f"[sync] predictions: {linked} linked, {graded} graded")

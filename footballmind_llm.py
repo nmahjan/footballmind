@@ -20,9 +20,11 @@ SYSTEM = (
     "You are FootballMind, a football (soccer) intelligence assistant covering "
     "the Premier League, Champions League, and World Cup. Use the tools for any "
     "prediction, standings, squad, or player question; never invent probabilities, "
-    "tables, or player facts. When discussing players, use search_players or "
-    "get_team_squad for real squad data, then explain their role and why the "
-    "team works tactically based on team rating and squad composition. "
+    "tables, or player facts. When discussing players, use search_players, "
+    "get_player_profile, or compare_players for real stats and squad data. "
+    "For 'compare X vs Y' or 'who is better' questions, call compare_players with "
+    "both names. When discussing teams, use get_team_squad and explain roles "
+    "tactically from ratings and squad composition. "
     "Be concise: 1-3 sentences unless the user asks for detail (player/team "
     "questions may use a few short paragraphs). If using structure, put each "
     "heading on its own line; avoid long horizontal rules. If a question "
@@ -129,6 +131,41 @@ TOOLS = [
                     "comp": {"type": "string", "default": "PL"},
                     "limit": {"type": "integer", "default": 15},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_player_profile",
+            "description": "Look up one player by name: position, team, age, "
+                           "goals/assists when synced.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "comp": {"type": "string",
+                             "description": "Optional: WC, PL, CL, etc."},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compare_players",
+            "description": "Compare two players side-by-side: stats, position, "
+                           "team, age. Use for 'X vs Y', 'who is better', etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "player_a": {"type": "string"},
+                    "player_b": {"type": "string"},
+                    "comp": {"type": "string",
+                             "description": "Optional comp for stats: WC, PL, etc."},
+                },
+                "required": ["player_a", "player_b"],
             },
         },
     },
@@ -244,12 +281,14 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
 def _run_tool(conn, name, args, session_id):
     from footballmind_mcp_predict import _predict_match
     from footballmind_services import (
+        compare_players,
         get_standings,
         get_standouts,
         get_team_formations,
         get_team_squad,
         get_match_lineup,
         get_top_scorers,
+        get_player_profile,
         search_players,
     )
     if name == "predict_match":
@@ -260,6 +299,12 @@ def _run_tool(conn, name, args, session_id):
         return get_standings(conn, args.get("comp", "PL"), args.get("season"))
     if name == "search_players":
         return search_players(conn, args["query"], args.get("comp"))
+    if name == "get_player_profile":
+        profile = get_player_profile(conn, args["name"], args.get("comp"))
+        return profile or {"error": f"No player found matching {args['name']!r}"}
+    if name == "compare_players":
+        return compare_players(conn, args["player_a"], args["player_b"],
+                               args.get("comp"))
     if name == "get_team_squad":
         return get_team_squad(conn, args["team"], args.get("comp"))
     if name == "list_standout_players":

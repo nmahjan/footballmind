@@ -1418,7 +1418,9 @@ function AccuracyPanel({ summary }) {
         <span className="mb-1 text-xs" style={{ color: C.mute }}>hit rate</span>
       </div>
       <div className="mt-1 text-xs" style={{ color: C.mute }}>
-        {summary?.graded ? `${summary.correct}/${summary.graded} graded` : "No graded predictions yet"}
+        {summary?.graded
+          ? `${summary.correct}/${summary.graded} ${summary.graded === 1 ? "match" : "matches"}`
+          : "No graded predictions yet"}
       </div>
     </div>
   );

@@ -168,23 +168,21 @@ def upsert_match(cur, edition_id, m, team_type):
 # The two correctness-critical steps
 # ----------------------------------------------------------------------
 def apply_pending_ratings(conn, comp_code):
-    """Apply every finished-but-not-yet-rated match to Elo, oldest first.
-
-    Elo is sequential (each update depends on prior ratings) AND not
-    idempotent (applying a match twice corrupts ratings). This query handles
-    both: it selects only matches with NO rating_history yet, ordered by date,
-    so each match is rated exactly once, in chronological order."""
+    """Apply finished-but-not-yet-rated matches for one competition, oldest first."""
     importance = IMPORTANCE_BY_COMP.get(comp_code, "league")
     with conn.cursor() as cur:
         cur.execute(
             "SELECT m.id FROM matches m "
-            "WHERE m.home_goals IS NOT NULL "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "WHERE c.code = %s AND m.home_goals IS NOT NULL "
             "  AND NOT EXISTS (SELECT 1 FROM rating_history rh "
             "                  WHERE rh.match_id = m.id) "
-            "ORDER BY m.match_date ASC", )
+            "ORDER BY m.match_date ASC",
+            (comp_code,))
         pending = [row[0] for row in cur.fetchall()]
     for match_id in pending:
-        apply_match_result(conn, match_id, importance)   # commits per match
+        apply_match_result(conn, match_id, importance)
 
 
 def sync_competition(conn, client, comp_code, comp_name, comp_type, season,

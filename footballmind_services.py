@@ -744,3 +744,34 @@ def get_prediction_results(conn, limit: int = 30) -> list[dict]:
         })
     out.sort(key=lambda x: x.get("match_date") or "", reverse=True)
     return out
+
+
+def get_prediction_summary(conn) -> dict:
+    """Hit rate counting one result per match (not every duplicate chat prediction)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "WITH per_match AS ("
+            "  SELECT DISTINCT ON (p.match_id) p.was_correct "
+            "  FROM predictions p "
+            "  WHERE p.was_correct IS NOT NULL AND p.match_id IS NOT NULL "
+            "  ORDER BY p.match_id, p.created_at DESC"
+            ") "
+            "SELECT count(*), count(*) FILTER (WHERE was_correct) FROM per_match")
+        graded, correct = cur.fetchone()
+    return {
+        "graded": graded or 0,
+        "correct": correct or 0,
+        "hit_rate": (correct / graded) if graded else None,
+    }
+
+
+def compare_players(conn, player_a: str, player_b: str,
+                    comp: str | None = None) -> dict:
+    """Side-by-side profile for two players (stats, team, position, age)."""
+    a = get_player_profile(conn, player_a, comp)
+    b = get_player_profile(conn, player_b, comp)
+    if not a:
+        return {"error": f"No player found matching {player_a!r}"}
+    if not b:
+        return {"error": f"No player found matching {player_b!r}"}
+    return {"comp": comp, "player_a": a, "player_b": b}
