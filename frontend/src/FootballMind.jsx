@@ -259,6 +259,8 @@ function parseVs(msg) {
 }
 
 const VALID_COMPS = new Set(["WC", "PL", "PD", "BL1", "SA", "FL1", "CL", "DED"]);
+const DEEPLINK_STORAGE_KEY = "fm_deeplink_search";
+const PREDICTION_CACHE_KEY = "fm_prediction_cache";
 
 function buildPredictUrl(home, away, { comp, neutral } = {}) {
   const url = new URL(window.location.href);
@@ -270,12 +272,52 @@ function buildPredictUrl(home, away, { comp, neutral } = {}) {
   return url.toString();
 }
 
+function clearDeepLinkParams() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("predict");
+  url.searchParams.delete("home");
+  url.searchParams.delete("away");
+  const qs = url.searchParams.toString();
+  window.history.replaceState(null, "", url.pathname + (qs ? `?${qs}` : "") + url.hash);
+}
+
+function markDeepLinkHandled(search = window.location.search) {
+  try { sessionStorage.setItem(DEEPLINK_STORAGE_KEY, search || ""); } catch { /* ignore */ }
+}
+
+function deepLinkAlreadyHandled(search = window.location.search) {
+  try { return sessionStorage.getItem(DEEPLINK_STORAGE_KEY) === (search || ""); } catch { return false; }
+}
+
+function savePredictionCache(query, entry) {
+  try {
+    const key = (query || "").trim().toLowerCase();
+    if (!key) return;
+    const cache = JSON.parse(sessionStorage.getItem(PREDICTION_CACHE_KEY) || "{}");
+    cache[key] = entry;
+    const keys = Object.keys(cache);
+    if (keys.length > 24) {
+      for (const k of keys.slice(0, keys.length - 24)) delete cache[k];
+    }
+    sessionStorage.setItem(PREDICTION_CACHE_KEY, JSON.stringify(cache));
+  } catch { /* ignore */ }
+}
+
+function loadPredictionCache(query) {
+  try {
+    const cache = JSON.parse(sessionStorage.getItem(PREDICTION_CACHE_KEY) || "{}");
+    return cache[(query || "").trim().toLowerCase()] || null;
+  } catch { return null; }
+}
+
 function syncPredictUrl(home, away, comp, neutral) {
   if (!home || !away || typeof window === "undefined") return;
   const next = buildPredictUrl(home, away, { comp, neutral });
   if (window.location.href !== next) {
     window.history.replaceState(null, "", next);
   }
+  markDeepLinkHandled(new URL(next).search);
 }
 
 function parseDeepLinkSearch() {
@@ -2188,7 +2230,14 @@ export default function FootballMind() {
         const restored = [];
         for (const row of [...data.history].reverse()) {
           if (row.query) restored.push({ role: "user", text: row.query });
-          if (row.response) restored.push({ role: "bot", text: row.response });
+          if (row.response) {
+            const cached = loadPredictionCache(row.query);
+            restored.push({
+              role: "bot",
+              text: row.response,
+              ...(cached || {}),
+            });
+          }
         }
         if (restored.length) {
           setMessages((prev) => (prev.length ? prev : restored));
@@ -2270,7 +2319,16 @@ export default function FootballMind() {
         role: "bot", text: data.reply, prediction: data.prediction, teams,
         comp: effectiveComp, neutral: effectiveNeutral,
       }]);
+      if (data.prediction && teams) {
+        savePredictionCache(text, {
+          prediction: data.prediction,
+          teams,
+          comp: effectiveComp,
+          neutral: effectiveNeutral,
+        });
+      }
       if (teams) syncPredictUrl(teams.home, teams.away, effectiveComp, effectiveNeutral);
+      if (options.fromDeepLink) clearDeepLinkParams();
     } catch {
       if (!API_BASE) {
         if (teams) {
@@ -2298,11 +2356,20 @@ export default function FootballMind() {
     const link = parseDeepLinkSearch();
     if (!link) return;
     deepLinkHandled.current = true;
+
+    const search = window.location.search;
+    if (deepLinkAlreadyHandled(search)) {
+      clearDeepLinkParams();
+      return;
+    }
+
+    markDeepLinkHandled(search);
     if (link.comp) setChatComp(link.comp);
     if (link.neutral !== null) setVenueMode(link.neutral);
     const t = setTimeout(() => sendRef.current?.(link.query, {
       comp: link.comp ?? undefined,
       neutral: link.neutral,
+      fromDeepLink: true,
     }), 150);
     return () => clearTimeout(t);
   }, []);
