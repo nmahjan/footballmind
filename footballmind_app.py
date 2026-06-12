@@ -28,6 +28,7 @@ from flask_limiter import Limiter
 from footballmind_lineup import get_predicted_lineup
 from footballmind_mcp_predict import _predict_match, _TEAM_ALIASES
 from footballmind_services import (
+    compare_players,
     get_bracket,
     get_fixtures,
     get_groups,
@@ -219,17 +220,78 @@ def _clean_team(s):
     return s.strip()
 
 
+_COMPARE_VS = re.compile(
+    r"^\s*(?:compare|comparison(?:\s+of)?)\s+(.+?)\s+(?:vs\.?|versus|v)\s+(.+?)\s*[\?\.!]*$",
+    re.I)
+_PLAYER_VS = re.compile(
+    r"^\s*(?:who(?:'s|\s+is)\s+better[,:]?\s*)?(.+?)\s+(?:vs\.?|versus|v|or)\s+(.+?)\s*[\?\.!]*$",
+    re.I)
+_PREDICT_HINTS = ("predict", "forecast", "who will win", "who wins", "match", "fixture", "game")
+
+
+def _parse_player_compare(message: str) -> tuple[str, str] | None:
+    """Extract two player names from a comparison query, or None."""
+    low = message.lower().strip()
+    if any(h in low for h in _PREDICT_HINTS):
+        return None
+    if not any(h in low for h in ("compare", " vs ", " versus ", "who is better",
+                                  "who's better", " or ")):
+        return None
+    m = _COMPARE_VS.match(message.strip())
+    if not m:
+        m = _PLAYER_VS.match(message.strip())
+    if not m:
+        return None
+    return _clean_team(m.group(1)), _clean_team(m.group(2))
+
+
+def _format_player_compare(result: dict) -> str:
+    """Readable comparison from compare_players() output."""
+    a, b = result["player_a"], result["player_b"]
+    comp = result.get("comp") or "WC"
+
+    def line(p):
+        bits = [f"**{p['name']}** ({p.get('team', '?')}, {p.get('position', '?')})"]
+        if p.get("age"):
+            bits.append(f"{p['age']}y")
+        if p.get("goals") is not None:
+            bits.append(f"{p['goals']}G · {p.get('assists', 0)}A")
+        elif p.get("team_rating"):
+            bits.append(f"team Elo {round(p['team_rating'])}")
+        return " · ".join(bits)
+
+    parts = [line(a), line(b)]
+    ra = a.get("team_rating") or 0
+    rb = b.get("team_rating") or 0
+    ga = (a.get("goals") or 0) + (a.get("assists") or 0) * 0.5
+    gb = (b.get("goals") or 0) + (b.get("assists") or 0) * 0.5
+    if ga or gb:
+        edge = a["name"] if ga >= gb else b["name"]
+        parts.append(f"On {comp} form stats, **{edge}** has the stronger output so far.")
+    elif ra or rb:
+        edge = a["name"] if ra >= rb else b["name"]
+        parts.append(f"By national team strength (Elo), **{edge}**'s side rates higher.")
+    return "\n\n".join(parts)
+
+
 def parse_intent(message):
     low = message.lower()
     if "standing" in low or "table" in low or "league position" in low:
         return {"type": "standings"}
+    players = _parse_player_compare(message)
+    if players:
+        return {"type": "compare", "player_a": players[0], "player_b": players[1]}
     base, venue = _extract_venue(message)
     m = _VS.match(base)
-    if m and ("predict" in low or " vs" in low or "versus" in low or "against" in low):
-        return {"type": "predict",
-                "home": _clean_team(m.group(1)),
-                "away": _clean_team(m.group(2)),
-                "venue": venue}
+    if m and any(h in low for h in ("predict", "forecast", "who will win",
+                                    "who wins", " vs", "versus", "against")):
+        if any(h in low for h in ("compare", "who is better", "who's better")):
+            pass
+        else:
+            return {"type": "predict",
+                    "home": _clean_team(m.group(1)),
+                    "away": _clean_team(m.group(2)),
+                    "venue": venue}
     return {"type": "unknown"}
 
 
@@ -298,6 +360,13 @@ def api_chat():
                      f"{prediction['reasoning']}")
         except ValueError as e:
             reply = f"I couldn't run that prediction: {e}"
+    elif intent["type"] == "compare":
+        entities = {"player_a": intent["player_a"], "player_b": intent["player_b"]}
+        result = compare_players(conn, intent["player_a"], intent["player_b"], "WC")
+        if result.get("error"):
+            reply = result["error"]
+        else:
+            reply = _format_player_compare(result)
     elif intent["type"] == "standings":
         table = _standings(conn, "PL")
         entities = {"competition": "PL"}
