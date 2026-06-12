@@ -50,3 +50,9 @@ def test_midfield_roles_from_api_string():
 def test_midfield_heuristic():
     assert classify_line_role("Midfield", goals=2, assists=10) == "CAM"
     assert classify_line_role("Midfield", goals=1, assists=2) == "CDM"
+    assert classify_line_role("Midfield", goals=0, assists=0) == "CM"
+
+
+def test_coarse_position_codes():
+    assert classify_line_role("FWD", goals=6, assists=6) == "WING"
+    assert classify_line_role("MID", goals=0, assists=0) == "CM"

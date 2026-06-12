@@ -29,7 +29,15 @@ def normalize_position(raw: str | None) -> str | None:
     """Map football-data.org role strings to GK / DEF / MID / FWD."""
     if not raw:
         return None
-    s = raw.lower()
+    s = raw.lower().strip()
+    if s in ("gk", "goalkeeper"):
+        return "GK"
+    if s in ("def", "defence", "defense"):
+        return "DEF"
+    if s in ("mid", "midfield"):
+        return "MID"
+    if s in ("fwd", "forward", "offence", "offense"):
+        return "FWD"
     if "goal" in s:
         return "GK"
     if "mid" in s:
@@ -67,6 +75,8 @@ def classify_line_role(raw: str | None, goals: int = 0, assists: int = 0) -> str
         if "central" in s:
             return "CM"
         # Generic midfield — creative vs holding heuristic
+        if (goals or 0) + (assists or 0) == 0:
+            return "CM"
         if assists >= max(4, int(goals * 1.2) + 2):
             return "CAM"
         if goals <= 3 and assists <= 3:
