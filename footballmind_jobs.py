@@ -23,7 +23,8 @@ from datetime import date, timedelta
 from footballmind_db import get_connection
 from footballmind_sync import (TokenBucket, FootballDataClient,
                                sync_competition, sync_teams_and_squads,
-                               sync_scorers, sync_match_details)
+                               sync_scorers, sync_match_details,
+                               apply_team_captains)
 from footballmind_production import select_and_deploy
 from footballmind_seed_elo import seed_national_elo
 from footballmind_grading import grade_predictions, link_orphan_predictions
@@ -41,6 +42,11 @@ COMPETITIONS = [
     ("DED", "Eredivisie",            "domestic_league",   "club",     "2025/26"),
     ("WC",  "FIFA World Cup",        "international",     "national", "2026"),
 ]
+
+# football-data.org v4 no longer exposes captain on squad/person — maintain manually.
+TEAM_CAPTAINS: dict[tuple[str, str], str] = {
+    ("PL", "Arsenal FC"): "Martin Ødegaard",
+}
 
 
 def _connect():
@@ -120,6 +126,8 @@ def cmd_sync(full=False):
         print("[sync] match details...", flush=True)
         detail_n = sync_match_details(conn, client, limit=50 if full else 15)
         print(f"[sync] match details: {detail_n} checked", flush=True)
+        nc = apply_team_captains(conn, TEAM_CAPTAINS)
+        print(f"[sync] captains: {nc} flags set", flush=True)
         linked = link_orphan_predictions(conn)
         graded = grade_predictions(conn)
         print(f"[sync] predictions: {linked} linked, {graded} graded")

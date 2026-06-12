@@ -16,6 +16,13 @@ def test_matches_adds_date_to_when_date_from_set():
     assert "status" not in params
 
 
+def test_scorers_default_limit_is_500():
+    client = FootballDataClient("test-key", TokenBucket(10))
+    with patch.object(client, "_get", return_value={"scorers": []}) as get:
+        client.scorers("PL", season=2025)
+    assert get.call_args[0][1]["limit"] == 500
+
+
 def test_matches_omits_status_when_none():
     client = FootballDataClient("test-key", TokenBucket(10))
     with patch.object(client, "_get", return_value={"matches": []}) as get:

@@ -101,7 +101,7 @@ class FootballDataClient:
     def teams(self, comp):
         return self._get(f"/competitions/{comp}/teams").get("teams", [])
 
-    def scorers(self, comp, limit=100, season=None):
+    def scorers(self, comp, limit=500, season=None):
         params = {"limit": limit}
         if season is not None:
             params["season"] = season
@@ -114,6 +114,37 @@ class FootballDataClient:
 # ----------------------------------------------------------------------
 # Upserts (idempotent -- re-running the sync never double-writes)
 # ----------------------------------------------------------------------
+def _player_position_raw(p: dict) -> str | None:
+    """Prefer API role string (Midfield, Attacking Midfield) over coarse codes."""
+    return p.get("position") or p.get("section") or normalize_position(p.get("position"))
+
+
+def apply_team_captains(conn, captains: dict[tuple[str, str], str]) -> int:
+    """Set is_captain on affiliations. Keys: (comp_code, team_name) -> player name."""
+    n = 0
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE player_affiliations SET is_captain = FALSE "
+            "WHERE end_date IS NULL AND is_captain = TRUE")
+        for (comp_code, team_name), captain_name in captains.items():
+            cur.execute(
+                "UPDATE player_affiliations pa SET is_captain = TRUE "
+                "FROM players p, teams t "
+                "WHERE pa.player_id = p.id AND pa.team_id = t.id "
+                "  AND pa.end_date IS NULL AND pa.kind = 'club' "
+                "  AND p.name = %s AND t.name = %s "
+                "  AND EXISTS ("
+                "    SELECT 1 FROM matches m "
+                "    JOIN competition_editions e2 ON e2.id = m.edition_id "
+                "    JOIN competitions c2 ON c2.id = e2.competition_id "
+                "    WHERE c2.code = %s AND (m.home_team_id = t.id OR m.away_team_id = t.id)"
+                "  )",
+                (captain_name, team_name, comp_code))
+            n += cur.rowcount
+    conn.commit()
+    return n
+
+
 def upsert_team(cur, name, team_type, external_id, country_id=None):
     cur.execute(
         "INSERT INTO teams (name, type, external_id, country_id) "
@@ -232,7 +263,7 @@ def sync_squad(cur, squad, team_id, kind):
     today = date.today()
     for p in squad:
         nationality_id = upsert_country(cur, p.get("nationality"))
-        pos = normalize_position(p.get("position"))
+        pos = _player_position_raw(p)
         cur.execute(
             "INSERT INTO players (name, external_id, birth_date, nationality, position) "
             "VALUES (%s,%s,%s,%s,%s) "
@@ -281,7 +312,7 @@ def _edition_id(cur, comp_code, season):
 def upsert_player_row(cur, p, team_id, kind):
     """Upsert one API player object; ensure affiliation to team_id."""
     nationality_id = upsert_country(cur, p.get("nationality"))
-    pos = normalize_position(p.get("position") or p.get("section"))
+    pos = _player_position_raw(p)
     ext = p.get("id")
     if ext is None:
         return None
@@ -378,7 +409,7 @@ def _sync_side_lineup(cur, match_id, team_side, team_type, kind):
             player_id = _resolve_player_id(cur, p, team_id, kind)
             if not player_id:
                 continue
-            pos = normalize_position(p.get("position"))
+            pos = _player_position_raw(p)
             cur.execute(
                 "INSERT INTO match_lineup_players "
                 "(match_id, team_id, player_id, role, shirt_number, position) "

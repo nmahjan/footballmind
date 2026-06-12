@@ -148,7 +148,8 @@ def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
         "       COALESCE(prior_comp.assists, cs.assists, 0), "
         "       COALESCE(prior_comp.appearances, cs.appearances, 0), "
         "       COALESCE(team_career.career_apps, 0), "
-        "       cs.club_team "
+        "       cs.club_team, "
+        "       COALESCE(pa.is_captain, FALSE) "
         "FROM player_affiliations pa "
         "JOIN players p ON p.id = pa.player_id "
         "LEFT JOIN team_ratings tr ON tr.team_id = pa.team_id "
@@ -171,11 +172,13 @@ def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
         (*comp_params, team_id, kind))
     squad = []
     for (pid, name, pos, dob, rating, c_goals, c_ast, c_apps,
-         goals, ast, apps, career_apps, club) in cur.fetchall():
+         goals, ast, apps, career_apps, club, is_captain) in cur.fetchall():
         position = pos or "?"
         if c_apps > 0:
             goals, ast, apps = c_goals, c_ast, c_apps
         line_role = classify_line_role(pos, goals, ast)
+        if is_captain and line_role in ("CM", "CDM", "MID"):
+            line_role = "CAM"
         base = _compute_standout_rating(rating, goals, ast, apps, position)
         if c_apps == 0 and apps > 0:
             # Prior-season fallback — slight penalty for not featuring yet this campaign.
@@ -188,6 +191,8 @@ def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
         starts = recent_starts.get(pid, 0)
         # Recent starters and regulars in this comp rank above raw goal scorers.
         score = base + starts * 12 + min(apps, 30) * 0.35
+        if is_captain:
+            score += 25
         if line_role == "GK" or position == "GK":
             score += min(career_apps, 80) * 0.4 + starts * 8
         squad.append({
@@ -203,6 +208,7 @@ def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
             "appearances": apps,
             "career_apps": career_apps,
             "birth_date": dob,
+            "is_captain": is_captain,
         })
     squad.sort(key=lambda p: (-p["score"], p["name"]))
     return squad
