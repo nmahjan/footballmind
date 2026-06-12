@@ -949,6 +949,8 @@ const POS_META = {
   DEF: { label: "DEF", bg: "#1A6B47", fg: "#E8F5EE" },
   MID: { label: "MID", bg: "#1A3D6B", fg: "#DCE8FF" },
   FWD: { label: "FWD", bg: "#7B1F1F", fg: "#FFE0E0" },
+  ST:  { label: "ST",  bg: "#7B1F1F", fg: "#FFE0E0" },
+  WING:{ label: "WNG", bg: "#9B3030", fg: "#FFE0E0" },
   "?": { label: "?",   bg: "#333",    fg: "#aaa"    },
 };
 const POS_TABS = [

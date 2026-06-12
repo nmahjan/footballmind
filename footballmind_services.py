@@ -41,6 +41,33 @@ def normalize_position(raw: str | None) -> str | None:
     return None
 
 
+def classify_line_role(raw: str | None, goals: int = 0, assists: int = 0) -> str:
+    """Finer role for lineup slots: ST (striker) vs WING (wide forward) vs MID/DEF/GK."""
+    coarse = normalize_position(raw) or "?"
+    s = (raw or "").lower().replace("-", " ")
+    if coarse == "GK":
+        return "GK"
+    if coarse == "DEF":
+        return "DEF"
+    if coarse == "MID":
+        if "wing" in s or "wide" in s:
+            return "WING"
+        return "MID"
+    if coarse == "FWD":
+        if "wing" in s or "wide" in s or s.startswith("left ") or s.startswith("right "):
+            return "WING"
+        if any(w in s for w in ("centre forward", "center forward", "striker",
+                                "centre-forward", "center-forward")):
+            return "ST"
+        # Generic "Offence" / FWD — use output profile (strikers score, wingers assist)
+        if goals >= max(4, int(assists * 1.5) + 1):
+            return "ST"
+        if assists >= max(3, int(goals * 0.7)):
+            return "WING"
+        return "ST" if goals > assists else "WING"
+    return coarse if coarse in ("MID", "DEF", "GK") else "?"
+
+
 def _player_age(dob) -> int | None:
     if not dob:
         return None
