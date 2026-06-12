@@ -66,6 +66,9 @@ TOOLS = [
                                        "round_of_16", "quarter_final", "semi_final",
                                        "third_place", "final"],
                               "default": "regular_season"},
+                    "comp": {"type": "string",
+                             "description": "Competition code for stakes context: "
+                                            f"{_COMP_CODES}"},
                 },
                 "required": ["home_team", "away_team"],
             },
@@ -269,11 +272,30 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
 
     venue = "neutral venue" if prediction.get("neutral") else f"{home}'s home ground"
 
+    stakes = prediction.get("stakes") or {}
+    stakes_lines = []
+    for lbl in stakes.get("labels") or []:
+        stakes_lines.append(f"- {lbl}")
+    if stakes.get("summary"):
+        stakes_lines.append(f"- Stakes note: {stakes['summary']}")
+    ctx = stakes.get("context") or {}
+    for side, name in (("home", home), ("away", away)):
+        row = ctx.get(side) or {}
+        if row.get("rank"):
+            zone = (row.get("zone") or {}).get("label") or ""
+            extra = f" ({zone})" if zone else ""
+            stakes_lines.append(
+                f"- {name} table: rank {row['rank']}, {row.get('pts', '?')} pts{extra}")
+
+    stakes_block = "\n".join(stakes_lines) if stakes_lines else "- No specific table-pressure context"
+
     prompt = (
         f"You are a sharp football analyst writing for a match preview. "
         f"Write exactly 3–4 sentences in broadcast style explaining why "
         f"**{prediction['prediction']}** is the expected outcome for "
         f"**{home} vs {away}**. Use the stats below — be specific but punchy. "
+        f"Weave in mental pressure / stakes where relevant (relegation, "
+        f"qualification, knockout elimination) but do not invent facts. "
         f"Do NOT repeat the numbers verbatim; weave them into the narrative.\n\n"
         f"Stats:\n"
         f"- Elo ratings: {home} {prediction.get('home_elo', '?')} / "
@@ -287,6 +309,7 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
         f"- {away} last 5: {form_str(prediction.get('away_form'))}\n"
         f"- Head to head: {h2h_line}\n"
         f"- Venue: {venue}\n"
+        f"- Match stakes:\n{stakes_block}\n"
     )
 
     resp = litellm.completion(
@@ -313,7 +336,8 @@ def _run_tool(conn, name, args, session_id):
     if name == "predict_match":
         return _predict_match(conn, args["home_team"], args["away_team"], None,
                               args.get("stage", "regular_season"),
-                              session_id=session_id)
+                              session_id=session_id,
+                              comp=args.get("comp"))
     if name == "get_standings":
         return get_standings(conn, args.get("comp", "PL"), args.get("season"))
     if name == "search_players":

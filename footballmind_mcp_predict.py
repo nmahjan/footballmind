@@ -255,7 +255,8 @@ def _save_prediction(cur, session_id, match_id, home_id, away_id,
 
 
 def _predict_match(conn, home_team, away_team, match_date,
-                   stage="regular_season", session_id=None, neutral=None):
+                   stage="regular_season", session_id=None, neutral=None,
+                   comp=None):
     """Predict a match.
 
     neutral: True  = no home-field bonus (WC / Euros / all international tournaments)
@@ -308,14 +309,28 @@ def _predict_match(conn, home_team, away_team, match_date,
         away_form = _team_form(cur, away_id)
         h2h = _head_to_head(cur, home_id, away_id)
 
+        from footballmind_stakes import compute_match_stakes, infer_comp_for_fixture
+        eff_comp = comp
+        eff_stage = stage
+        if not eff_comp:
+            inf_comp, inf_stage = infer_comp_for_fixture(cur, home_id, away_id)
+            eff_comp = inf_comp or comp
+            if inf_stage and stage == "regular_season":
+                eff_stage = inf_stage
+        stakes = compute_match_stakes(
+            conn, eff_comp, home_id, away_id, home_team, away_team, eff_stage)
+
         # Replace terse numeric string with full narrative
         reasoning = _build_narrative(home_team, away_team, home_elo, away_elo,
                                      lam_h, lam_a, home_form, away_form, h2h, neutral)
+        if stakes.get("summary"):
+            reasoning = reasoning.rstrip(".") + f". {stakes['summary']}"
         key_factors = [
             f"Rating gap: {home_elo - away_elo:+.0f}",
             "Neutral venue" if neutral else "Home advantage applied",
             f"xG: {lam_h:.2f} – {lam_a:.2f}",
         ]
+        key_factors.extend(stakes.get("labels") or [])
 
         from footballmind_grading import find_fixture
         match_id = find_fixture(cur, home_id, away_id)
@@ -342,6 +357,9 @@ def _predict_match(conn, home_team, away_team, match_date,
         "home_xg":       round(lam_h, 2),
         "away_xg":       round(lam_a, 2),
         "neutral":       neutral,
+        "comp":          eff_comp,
+        "stage":         eff_stage,
+        "stakes":        stakes,
     }
 
 

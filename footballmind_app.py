@@ -546,7 +546,8 @@ def api_predict():
                                 data.get("match_date"),
                                 data.get("stage", "regular_season"),
                                 session_id=data.get("session_id"),
-                                neutral=neutral)
+                                neutral=neutral,
+                                comp=data.get("comp"))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(result)
@@ -605,7 +606,7 @@ def api_chat():
         try:
             prediction = _predict_match(conn, home, away,
                                         None, "regular_season", session_id=session_id,
-                                        neutral=neutral)
+                                        neutral=neutral, comp=chat_comp)
             note = _venue_note(neutral if neutral is not None else prediction.get("neutral"),
                                venue_label, home)
             reply = (f"{prediction['prediction']} "
@@ -932,6 +933,22 @@ def api_analyze():
     import footballmind_llm
     if not footballmind_llm.is_configured():
         return jsonify({"error": "ANTHROPIC_API_KEY not configured on the server"}), 503
+    comp = data.get("comp") or prediction.get("comp")
+    if not prediction.get("stakes"):
+        from footballmind_mcp_predict import _resolve_team
+        from footballmind_stakes import compute_match_stakes
+        conn = get_conn()
+        with conn.cursor() as cur:
+            try:
+                home_id, _ = _resolve_team(cur, home)
+                away_id, _ = _resolve_team(cur, away)
+                prediction = dict(prediction)
+                prediction["stakes"] = compute_match_stakes(
+                    conn, comp, home_id, away_id, home, away,
+                    prediction.get("stage", "regular_season"))
+                prediction.setdefault("comp", comp)
+            except ValueError:
+                pass
     try:
         analysis = footballmind_llm.analyze_match(home, away, prediction)
     except Exception as e:

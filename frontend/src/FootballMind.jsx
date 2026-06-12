@@ -545,7 +545,7 @@ function PredictionCard({ p, home, away, comp = "WC", neutral = null }) {
     try {
       const res = await fetch(`${API_BASE}/api/analyze`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ home, away, prediction: p }),
+        body: JSON.stringify({ home, away, prediction: p, comp }),
       });
       if (res.status === 429) {
         setAnalyzeError(await readApiError(res));
@@ -593,6 +593,20 @@ function PredictionCard({ p, home, away, comp = "WC", neutral = null }) {
           <FormDots results={p.home_form} label={home.split(" ")[0]} />
           <FormDots results={p.away_form} label={away.split(" ")[0]} />
         </div>
+      )}
+
+      {p.stakes?.labels?.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1">
+          {p.stakes.labels.map((lbl) => (
+            <span key={lbl} className="rounded-md px-2 py-0.5 text-[10px] font-semibold"
+              style={{ background: "rgba(251,191,36,0.12)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.35)" }}>
+              {lbl}
+            </span>
+          ))}
+        </div>
+      )}
+      {p.stakes?.summary && (
+        <p className="mt-1.5 text-[11px] leading-snug" style={{ color: C.mute }}>{p.stakes.summary}</p>
       )}
 
       <div className="mt-3">
