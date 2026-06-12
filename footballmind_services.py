@@ -309,6 +309,8 @@ def compute_standings(rows):
 
 
 def get_standings(conn, comp_code: str = "PL", season: str | None = None) -> list:
+    from footballmind_standings_zones import annotate_standings
+
     with conn.cursor() as cur:
         cur.execute(
             "SELECT th.name, ta.name, m.home_goals, m.away_goals FROM matches m "
@@ -318,7 +320,7 @@ def get_standings(conn, comp_code: str = "PL", season: str | None = None) -> lis
             "JOIN teams ta ON ta.id = m.away_team_id "
             "WHERE c.code = %s AND m.home_goals IS NOT NULL "
             "  AND (%s::text IS NULL OR e.season = %s)", (comp_code, season, season))
-        return compute_standings(cur.fetchall())
+        return annotate_standings(compute_standings(cur.fetchall()), comp_code)
 
 
 def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:

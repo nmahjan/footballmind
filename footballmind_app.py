@@ -625,9 +625,20 @@ def api_chat():
         table = _standings(conn, chat_comp)
         entities = {"competition": chat_comp, "comp": chat_comp}
         comp_label = _COMP_LABELS.get(chat_comp, chat_comp)
-        reply = (f"Top of the {comp_label} table: "
-                 + ", ".join(f"{t['rank']}. {t['team']} ({t['Pts']})" for t in table[:5])
-                 if table else f"No {comp_label} results recorded yet.")
+        if table:
+            top = ", ".join(
+                f"{t['rank']}. {t['team']} ({t['Pts']})"
+                + (f" [{t['zone']['short']}]" if t.get("zone") else "")
+                for t in table[:5]
+            )
+            rel = [t for t in table if (t.get("zone") or {}).get("id") == "rel"]
+            rel_note = (
+                f" Relegation zone: {', '.join(t['team'] for t in rel)}."
+                if rel else ""
+            )
+            reply = f"Top of the {comp_label} table: {top}.{rel_note}"
+        else:
+            reply = f"No {comp_label} results recorded yet."
     else:
         import footballmind_llm                 # lazy: litellm is heavy and optional
         if footballmind_llm.is_configured():

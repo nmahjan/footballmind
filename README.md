@@ -18,8 +18,8 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **Deep analysis** — optional Claude Haiku write-up per prediction (`/api/analyze`)
 - **Sidebar modes** — **Matches** (fixtures, tables, bracket, rankings) or **Players** (squads, scorers, search)
 - **Upcoming fixtures** — tabbed panel for WC, PL, La Liga, Bundesliga, Serie A, Ligue 1, CL, Eredivisie
-- **League tables** — live standings for all synced domestic leagues + CL
-- **WC group standings** — per-group tables during the tournament
+- **League tables** — live standings for all synced domestic leagues + CL, with **qualification zone highlights** (Champions League, Europa League, Conference League, relegation, and CL knockout cutoffs)
+- **WC group standings** — per-group tables with **top-two knockout** highlighting
 - **Tournament bracket** — knockout rounds (Final → Semi → QF → R16) for WC and CL
 - **Power rankings** — national team Elo rankings
 - **Players panel** — standouts, top scorers, **predicted starting XI** (pitch view), full team squads; tap a player to ask the chat
@@ -38,7 +38,8 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 ### Backend
 
 - Hybrid **Elo + Dixon-Coles** model with weekly retrain (RPS backtest)
-- football-data.org sync every 6 hours (GitHub Actions) — matches, squads, **top scorers** (100/comp)
+- football-data.org sync every 6 hours (GitHub Actions) — matches, squads, **top scorers** (500/comp)
+- **Free enrichment feeds** (`sync-enrich`) — FPL injury flags for the Premier League, Understat xG for top-5 leagues; optional API-Football key for non-PL injuries + match ratings (see [Data enrichment](#data-enrichment))
 - Match-day sync every 30 min when fixtures are in the live window — results + grading only
 - **Historical scorer backfill** — `backfill-scorers` pulls past seasons into `player_edition_stats` (additive; never wipes current season)
 - LLM chat covers **all synced competitions** (PL, PD, BL1, SA, FL1, CL, DED, WC) via tool calls — not just PL/CL/WC
@@ -130,7 +131,7 @@ frontend/  (Vite + React → GitHub Pages)
 | POST | `/api/predict` | Direct match prediction |
 | POST | `/api/chat` | Intent router + LLM fallback; accepts optional `history` and `comp` (sidebar context) for multi-turn follow-ups (rate-limited) |
 | POST | `/api/analyze` | Claude match analysis (rate-limited) |
-| GET | `/api/standings?comp=PL` | League table |
+| GET | `/api/standings?comp=PL` | League table with per-row `zone` (UCL / UEL / relegation etc.) |
 | GET | `/api/fixtures?comp=WC` | Upcoming fixtures |
 | GET | `/api/groups?comp=WC` | Tournament group standings |
 | GET | `/api/bracket?comp=CL` | Knockout bracket |
@@ -187,6 +188,8 @@ POST /api/chat
 ├── footballmind_asgi.py       # Combined REST + MCP for Render
 ├── footballmind_app.py        # Flask REST API
 ├── footballmind_services.py   # Shared read/query helpers
+├── footballmind_standings_zones.py  # UCL / UEL / relegation zone rules
+├── footballmind_enrich.py     # FPL + API-Football + Understat enrichment
 ├── footballmind_lineup.py     # Predicted XI + availability logic
 ├── footballmind_mcp_predict.py
 ├── footballmind_sync.py       # football-data.org ingestion
@@ -218,13 +221,58 @@ POST /api/chat
 
 Run a full backfill after adding a league: **GitHub Actions → footballmind-jobs → Run workflow → sync → check "Full season backfill".**
 
-Migrations (`006` player positions, `007` scorer stats / lineup schema, `008` prediction team links, `009` player availability, `010` prediction dedupe per session) run automatically at the start of each Actions job. To check locally:
+Migrations (`006` player positions, `007` scorer stats / lineup schema, `008` prediction team links, `009` player availability, `010` prediction dedupe per session, `011` captain flags, `012` enrichment tables) run automatically at the start of each Actions job. To check locally:
 
 ```bash
 python footballmind_migrate.py --status
 ```
 
 **Note:** football-data.org free tier includes competition scorers but not per-match lineups/goals in match detail. Formation tools populate when that data becomes available (paid tier or live tournament detail).
+
+### League table zones
+
+Standings rows include a `zone` object when the team sits in a qualification or relegation band. The sidebar colours each row and shows a legend.
+
+| Competition | Zones shown |
+|-------------|-------------|
+| PL, PD, SA | UCL (1–4), Europa (5), Conference (6), Relegation (bottom 3) |
+| BL1, DED | UCL, Europa, Conference, Relegation play-off, Relegation |
+| FL1 | UCL (1–3), Europa (4), Conference (5), Relegation (bottom 3) |
+| CL | Round of 16 (1–8), Knockout play-offs (9–24), Eliminated |
+| WC groups | Top 2 → knockout stage |
+
+Zone rules live in `footballmind_standings_zones.py` (shared by the API and frontend). Cup-winner spot shuffles (e.g. FA Cup → Europa) are not modelled — league positions only.
+
+Example API row:
+
+```json
+{
+  "rank": 4,
+  "team": "Arsenal FC",
+  "Pts": 71,
+  "GD": 28,
+  "zone": { "id": "ucl", "label": "Champions League", "short": "UCL", "color": "#38bdf8" }
+}
+```
+
+### Data enrichment
+
+Complements football-data.org with zero/low-cost feeds. Run manually or as part of `sync`:
+
+```bash
+python footballmind_jobs.py sync-enrich   # enrichment only
+python footballmind_jobs.py sync          # includes sync-enrich at the end
+```
+
+| Source | Env var | What it adds |
+|--------|---------|--------------|
+| **FPL API** | — | Premier League injury/doubt flags → `player_availability` (`source=fpl`) |
+| **Understat** | — | Match xG for PL, La Liga, Bundesliga, Serie A, Ligue 1 |
+| **API-Football** | `API_FOOTBALL_KEY` | Non-PL injuries + per-match player ratings (optional) |
+
+**API-Football free tier:** the key validates, but the free plan does **not** include the current season (2025/26) or the `last N fixtures` shortcut used for ratings — expect **0 rows** until you upgrade (~$10/mo). **FPL still covers PL injuries** without a key.
+
+Manual availability (`source=manual`) is never overwritten by feed sync.
 
 ### Player stats & seasons
 
@@ -245,7 +293,7 @@ When you roll into a new campaign, bump the season string in `COMPETITIONS` insi
 1. **Formation** — prefers the team's most recent synced formation (including **4-3-2-1**); when lineups are synced, keeps last-match starters where possible; otherwise picks from modern club shapes before defaulting to 4-3-3.
 2. **Starters** — ranked by comp appearances + recent starts, not goals alone (so mids/GKs aren't benched for fringe forwards).
 3. **Red-card suspensions** — computed at runtime from `match_events` (player sent off in last finished match is excluded for the next fixture).
-4. **Injuries / doubtful** — stored in `player_availability` (manual flags until an injury feed is added).
+4. **Injuries / doubtful** — `player_availability` from FPL (PL), API-Football (other leagues, paid tier), or manual admin flags.
 
 Flag a player out via the **Predicted XI** admin panel (append `?admin_key=YOUR_KEY` once to enable), the REST admin API, or SQL:
 
@@ -385,6 +433,7 @@ The combined ASGI app serves MCP at `/mcp` alongside the existing REST API. **Th
 | `FOOTBALLMIND_ADMIN_KEY` | Render env var | Bearer token for `/api/admin/*` (optional; falls back to `MCP_API_KEY`) |
 | `MCP_API_KEY` | Render + local `.env` | Bearer token for remote MCP at `/mcp` (optional for website) |
 | `FOOTBALL_DATA_API_KEY` | Actions secret | football-data.org API key |
+| `API_FOOTBALL_KEY` | Actions secret (optional) | api-sports.io key for enrichment; free tier limited to older seasons |
 | `ANTHROPIC_API_KEY` | Render env var | Claude API (LLM chat + deep analysis) |
 | `FRONTEND_ORIGIN` | Render env var | GitHub Pages URL for CORS (or `*`) |
 | `VITE_API_BASE` | GitHub Pages repo variable | `https://football-mind.onrender.com` |

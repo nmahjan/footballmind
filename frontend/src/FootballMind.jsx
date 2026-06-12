@@ -54,6 +54,87 @@ const LEAGUES = [
   { code: "DED", label: "Eredivisie",      short: "Eredivisie" },
 ];
 
+// Qualification / relegation zones (mirrors footballmind_standings_zones.py)
+const STANDING_ZONES = {
+  PL: [
+    { id: "ucl", label: "Champions League", short: "UCL", color: "#38bdf8", from: 1, to: 4 },
+    { id: "uel", label: "Europa League", short: "UEL", color: "#fb923c", from: 5, to: 5 },
+    { id: "uecl", label: "Conference League", short: "UECL", color: "#a78bfa", from: 6, to: 6 },
+    { id: "rel", label: "Relegation", short: "REL", color: "#f87171", fromEnd: 3, toEnd: 1 },
+  ],
+  PD: [
+    { id: "ucl", label: "Champions League", short: "UCL", color: "#38bdf8", from: 1, to: 4 },
+    { id: "uel", label: "Europa League", short: "UEL", color: "#fb923c", from: 5, to: 5 },
+    { id: "uecl", label: "Conference League", short: "UECL", color: "#a78bfa", from: 6, to: 6 },
+    { id: "rel", label: "Relegation", short: "REL", color: "#f87171", fromEnd: 3, toEnd: 1 },
+  ],
+  BL1: [
+    { id: "ucl", label: "Champions League", short: "UCL", color: "#38bdf8", from: 1, to: 4 },
+    { id: "uel", label: "Europa League", short: "UEL", color: "#fb923c", from: 5, to: 5 },
+    { id: "uecl", label: "Conference League", short: "UECL", color: "#a78bfa", from: 6, to: 6 },
+    { id: "playoff", label: "Relegation play-off", short: "PO", color: "#fbbf24", fromEnd: 3, toEnd: 3 },
+    { id: "rel", label: "Relegation", short: "REL", color: "#f87171", fromEnd: 2, toEnd: 1 },
+  ],
+  SA: [
+    { id: "ucl", label: "Champions League", short: "UCL", color: "#38bdf8", from: 1, to: 4 },
+    { id: "uel", label: "Europa League", short: "UEL", color: "#fb923c", from: 5, to: 5 },
+    { id: "uecl", label: "Conference League", short: "UECL", color: "#a78bfa", from: 6, to: 6 },
+    { id: "rel", label: "Relegation", short: "REL", color: "#f87171", fromEnd: 3, toEnd: 1 },
+  ],
+  FL1: [
+    { id: "ucl", label: "Champions League", short: "UCL", color: "#38bdf8", from: 1, to: 3 },
+    { id: "uel", label: "Europa League", short: "UEL", color: "#fb923c", from: 4, to: 4 },
+    { id: "uecl", label: "Conference League", short: "UECL", color: "#a78bfa", from: 5, to: 5 },
+    { id: "rel", label: "Relegation", short: "REL", color: "#f87171", fromEnd: 3, toEnd: 1 },
+  ],
+  DED: [
+    { id: "ucl", label: "Champions League", short: "UCL", color: "#38bdf8", from: 1, to: 2 },
+    { id: "uel", label: "Europa League", short: "UEL", color: "#fb923c", from: 3, to: 3 },
+    { id: "playoff", label: "Relegation play-off", short: "PO", color: "#fbbf24", fromEnd: 3, toEnd: 3 },
+    { id: "rel", label: "Relegation", short: "REL", color: "#f87171", fromEnd: 2, toEnd: 1 },
+  ],
+  CL: [
+    { id: "r16", label: "Round of 16", short: "R16", color: "#34d399", from: 1, to: 8 },
+    { id: "kopo", label: "Knockout play-offs", short: "PO", color: "#fbbf24", from: 9, to: 24 },
+    { id: "out", label: "Eliminated", short: "OUT", color: "#64748b", from: 25, to: 99 },
+  ],
+};
+
+const WC_GROUP_ZONES = [
+  { id: "adv", label: "Knockout stage", short: "KO", color: "#34d399", from: 1, to: 2 },
+];
+
+function zoneForRank(compCode, rank, teamCount) {
+  const zones = STANDING_ZONES[compCode];
+  if (!zones || !rank || !teamCount) return null;
+  for (const z of zones) {
+    if (z.fromEnd != null) {
+      const rankHi = teamCount - z.fromEnd + 1;
+      const rankLo = teamCount - (z.toEnd ?? 1) + 1;
+      if (rank >= rankHi && rank <= rankLo) {
+        return { id: z.id, label: z.label, short: z.short, color: z.color };
+      }
+    } else if (rank >= z.from && rank <= z.to) {
+      return { id: z.id, label: z.label, short: z.short, color: z.color };
+    }
+  }
+  return null;
+}
+
+function standingLegend(compCode) {
+  const zones = STANDING_ZONES[compCode] ?? [];
+  const seen = new Set();
+  return zones.filter((z) => {
+    if (seen.has(z.id)) return false;
+    seen.add(z.id);
+    return true;
+  }).map(({ id, label, short, color }) => ({ id, label, short, color }));
+}
+
+function rowZone(compCode, row, teamCount) {
+  return row.zone ?? zoneForRank(compCode, row.rank, teamCount);
+}
+
 // ─── Suggestion chips ─────────────────────────────────────────────────────
 const CHIPS = [
   "Predict Mexico vs USA",
@@ -1747,6 +1828,7 @@ function GroupsPanel({ groups }) {
         ))}
       </div>
       {open && groups[open] && (
+        <>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[10px] uppercase" style={{ color: C.mute }}>
@@ -1759,10 +1841,22 @@ function GroupsPanel({ groups }) {
             </tr>
           </thead>
           <tbody>
-            {groups[open].map((r, i) => (
-              <tr key={i} className="border-t" style={{ borderColor: C.line }}>
+            {groups[open].map((r, i) => {
+              const rank = i + 1;
+              const zone = zoneForRank("WC", rank, groups[open].length)
+                ?? (rank <= 2 ? WC_GROUP_ZONES[0] : null);
+              return (
+              <tr key={i} className="border-t" style={{
+                borderColor: C.line,
+                background: zone ? `${zone.color}12` : undefined,
+                boxShadow: zone ? `inset 3px 0 0 ${zone.color}` : undefined,
+              }}>
                 <td className="px-3 py-1.5 text-xs" style={{ color: C.chalk }}>
+                  <span className="mr-1.5 tabular-nums" style={{ color: zone?.color ?? C.mute }}>{rank}</span>
                   {flag(r.team)}{r.team}
+                  {zone && (
+                    <span className="ml-1 text-[10px] font-medium" style={{ color: zone.color }}>{zone.short}</span>
+                  )}
                 </td>
                 <td className="px-2 py-1.5 text-center text-xs tabular-nums" style={{ color: C.chalk }}>{r.W}</td>
                 <td className="px-2 py-1.5 text-center text-xs tabular-nums" style={{ color: C.mute }}>{r.D}</td>
@@ -1774,10 +1868,35 @@ function GroupsPanel({ groups }) {
                   {r.Pts}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
+        <div className="flex flex-wrap gap-x-3 gap-y-1 border-t px-3 py-2" style={{ borderColor: C.line }}>
+          {WC_GROUP_ZONES.map((z) => (
+            <span key={z.id} className="inline-flex items-center gap-1 text-[10px]" style={{ color: C.mute }}>
+              <span className="inline-block h-2 w-2 rounded-sm shrink-0" style={{ background: z.color }} />
+              Top 2 — {z.label}
+            </span>
+          ))}
+        </div>
+        </>
       )}
+    </div>
+  );
+}
+
+function StandingsLegend({ compCode }) {
+  const items = standingLegend(compCode);
+  if (!items.length) return null;
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-1 border-t px-3 py-2" style={{ borderColor: C.line }}>
+      {items.map((z) => (
+        <span key={z.id} className="inline-flex items-center gap-1 text-[10px]" style={{ color: C.mute }}>
+          <span className="inline-block h-2 w-2 rounded-sm shrink-0" style={{ background: z.color }} />
+          {z.label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -1831,25 +1950,42 @@ function StandingsPanel({ apiBase, offline, onCompChange }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase" style={{ color: C.mute }}>
-              <th className="px-3 py-1.5 text-left font-medium">#</th>
+              <th className="px-3 py-1.5 text-left font-medium w-8">#</th>
               <th className="px-2 py-1.5 text-left font-medium">Club</th>
               <th className="px-2 py-1.5 text-right font-medium">GD</th>
               <th className="px-3 py-1.5 text-right font-medium">Pts</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.rank} className="border-t" style={{ borderColor: C.line }}>
-                <td className="px-3 py-2 tabular-nums" style={{ color: C.mute }}>{r.rank}</td>
-                <td className="px-2 py-2 max-w-[140px] truncate" style={{ color: C.chalk }}>{r.team}</td>
+            {rows.map((r) => {
+              const zone = rowZone(activeComp, r, rows.length);
+              return (
+              <tr key={r.rank} className="border-t" style={{
+                borderColor: C.line,
+                background: zone ? `${zone.color}12` : undefined,
+                boxShadow: zone ? `inset 3px 0 0 ${zone.color}` : undefined,
+              }}>
+                <td className="px-3 py-2 tabular-nums" style={{ color: zone?.color ?? C.mute }}>
+                  {r.rank}
+                </td>
+                <td className="px-2 py-2 max-w-[140px] truncate" style={{ color: C.chalk }}>
+                  {r.team}
+                  {zone && (
+                    <span className="ml-1.5 text-[10px] font-medium" style={{ color: zone.color }}>
+                      {zone.short}
+                    </span>
+                  )}
+                </td>
                 <td className="px-2 py-2 text-right tabular-nums" style={{ color: C.mute }}>
                   {r.GD > 0 ? `+${r.GD}` : r.GD}
                 </td>
                 <td className="px-3 py-2 text-right font-semibold tabular-nums" style={{ color: C.chalk }}>{r.Pts}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
+        <StandingsLegend compCode={activeComp} />
       )}
     </div>
   );
