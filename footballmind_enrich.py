@@ -59,6 +59,9 @@ _FPL_TEAM_NAMES = {
     "Wolves": "Wolverhampton Wanderers FC",
     "Newcastle": "Newcastle United FC",
     "Brighton": "Brighton & Hove Albion FC",
+    "Bournemouth": "AFC Bournemouth",
+    "Sunderland": "Sunderland AFC",
+    "Leeds": "Leeds United FC",
 }
 
 
@@ -84,8 +87,8 @@ def _store_provider_id(cur, entity_type: str, entity_id: int,
         "INSERT INTO provider_external_ids "
         "(entity_type, entity_id, provider, external_id) "
         "VALUES (%s,%s,%s,%s) "
-        "ON CONFLICT (provider, external_id) DO UPDATE SET "
-        "  entity_type = EXCLUDED.entity_type, entity_id = EXCLUDED.entity_id",
+        "ON CONFLICT (entity_type, entity_id, provider) DO UPDATE SET "
+        "  external_id = EXCLUDED.external_id",
         (entity_type, entity_id, provider, str(external_id)))
 
 
@@ -95,7 +98,7 @@ def _resolve_team_id(cur, name: str) -> int | None:
     try:
         team_id, _ = _resolve_team(cur, name)
         return team_id
-    except LookupError:
+    except ValueError:
         return None
 
 

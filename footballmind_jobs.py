@@ -144,6 +144,17 @@ def cmd_sync_enrich():
         stats = sync_enrichment(conn)
         parts = ", ".join(f"{k}={v}" for k, v in sorted(stats.items()))
         print(f"[sync-enrich] {parts}", flush=True)
+        if (
+            os.environ.get("API_FOOTBALL_KEY", "").strip()
+            and stats.get("api_football_injuries", 0) == 0
+            and stats.get("api_football_ratings", 0) == 0
+        ):
+            print(
+                "[sync-enrich] API-Football key is set but returned no rows — "
+                "the free plan only covers older seasons and blocks the "
+                "'last N fixtures' shortcut; upgrade for 2025/26 ratings.",
+                flush=True,
+            )
 
 
 def _season_labels_before(current: str, count: int) -> list[str]:

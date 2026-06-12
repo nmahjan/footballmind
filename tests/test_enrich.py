@@ -17,6 +17,8 @@ def test_norm_strips_accents():
 def test_fpl_team_name_mapping():
     assert _fpl_team_name({"name": "Man City"}) == "Manchester City FC"
     assert _fpl_team_name({"name": "Arsenal"}) == "Arsenal FC"
+    assert _fpl_team_name({"name": "Bournemouth"}) == "AFC Bournemouth"
+    assert _fpl_team_name({"name": "Sunderland"}) == "Sunderland AFC"
 
 
 def test_parse_understat_matches_string_json():
