@@ -106,7 +106,8 @@ def _player_age(dob) -> int | None:
 
 def _row_player(name, team, pos, rating, dob, nationality=None,
                 goals=None, assists=None, appearances=None,
-                standout_rating=None, club_team=None):
+                standout_rating=None, club_team=None,
+                ga_per_game=None, clean_sheets=None, saves=None, team_gp=None):
     row = {
         "name": name,
         "team": team,
@@ -125,31 +126,71 @@ def _row_player(name, team, pos, rating, dob, nationality=None,
         row["standout_rating"] = standout_rating
     if club_team:
         row["club_team"] = club_team
+    if ga_per_game is not None:
+        row["ga_per_game"] = ga_per_game
+    if clean_sheets is not None:
+        row["clean_sheets"] = clean_sheets
+    if saves is not None:
+        row["saves"] = saves
+    if team_gp is not None:
+        row["team_gp"] = team_gp
     return row
 
 
-def _affil_kind_for_comp(conn, comp: str) -> str:
+def _defensive_form_score(ga_per_game: float | None) -> float:
+    """0–1 where lower goals-against per game is better (typical range ~0.7–2.2)."""
+    if ga_per_game is None:
+        return 0.5
+    return max(0.0, min(1.0, (2.3 - ga_per_game) / 1.6))
+
+
+def _team_season_defense(conn, edition_id: int) -> dict[int, dict]:
+    """Per-team defensive record for a competition edition."""
     with conn.cursor() as cur:
-        cur.execute("SELECT type FROM competitions WHERE code = %s", (comp,))
-        row = cur.fetchone()
-    return "national" if row and row[0] == "international" else "club"
+        cur.execute(
+            "SELECT home_team_id, away_team_id, home_goals, away_goals "
+            "FROM matches WHERE edition_id = %s AND home_goals IS NOT NULL",
+            (edition_id,))
+        rows = cur.fetchall()
+    stats: dict[int, dict] = {}
+    for hid, aid, hg, ag in rows:
+        for tid, conceded in ((hid, ag), (aid, hg)):
+            slot = stats.setdefault(tid, {"ga": 0, "gp": 0, "clean_sheets": 0})
+            slot["ga"] += conceded
+            slot["gp"] += 1
+            if conceded == 0:
+                slot["clean_sheets"] += 1
+    for slot in stats.values():
+        gp = slot["gp"]
+        slot["ga_per_game"] = round(slot["ga"] / gp, 2) if gp else None
+    return stats
 
 
-def _compute_standout_rating(team_rating, goals, assists, apps, position) -> float:
-    """0–100 blend: team strength + position-appropriate form (not goals-only)."""
+def _compute_standout_rating(team_rating, goals, assists, apps, position,
+                             ga_per_game=None, clean_sheets=None, saves=None,
+                             team_gp=None) -> float:
+    """0–100 blend: team strength + position-appropriate form."""
     pos = (position or "?").upper()
     elo_n = min(1.0, max(0.0, ((team_rating or 1500) - 1400) / 450))
     apps_n = min(1.0, (apps or 0) / 38)
     pos_n = _POS_WEIGHT.get(pos, 0.8)
     g, a = goals or 0, assists or 0
+    gp = team_gp or 0
+    def_n = _defensive_form_score(ga_per_game)
+    cs_n = min(1.0, (clean_sheets or 0) / max(gp, 1) * 2.5) if gp else def_n * 0.85
+    saves_n = min(1.0, (saves or 0) / 90) if saves else None
 
     if pos == "GK":
-        form_n = apps_n
-        blend = 0.50 * elo_n + 0.40 * form_n + 0.10 * pos_n
+        # Saves + fewest goals conceded (team proxy when no individual GK stats).
+        if saves_n is not None:
+            blend = 0.28 * elo_n + 0.18 * apps_n + 0.32 * def_n + 0.17 * saves_n + 0.05 * pos_n
+        else:
+            blend = 0.30 * elo_n + 0.22 * apps_n + 0.40 * def_n + 0.03 * cs_n + 0.05 * pos_n
     elif pos == "DEF":
-        # Defenders: minutes + team strength; goals/assists are a small bonus
-        form_n = min(1.0, apps_n * 0.85 + g * 0.04 + a * 0.06)
-        blend = 0.38 * elo_n + 0.32 * form_n + 0.20 * apps_n + 0.10 * pos_n
+        # Clean sheets + low GA + regular minutes; goals/assists are a small bonus.
+        contrib_n = min(1.0, apps_n * 0.75 + g * 0.04 + a * 0.06)
+        blend = (0.26 * elo_n + 0.28 * def_n + 0.24 * cs_n
+                 + 0.16 * contrib_n + 0.06 * pos_n)
     elif pos == "MID":
         form_n = min(1.0, (a * 1.0 + g * 0.35) / 16)
         blend = 0.32 * elo_n + 0.48 * form_n + 0.12 * apps_n + 0.08 * pos_n
@@ -160,6 +201,13 @@ def _compute_standout_rating(team_rating, goals, assists, apps, position) -> flo
         form_n = min(1.0, (g + a * 0.6) / 22)
         blend = 0.35 * elo_n + 0.45 * form_n + 0.12 * apps_n + 0.08 * pos_n
     return round(100 * blend, 1)
+
+
+def _affil_kind_for_comp(conn, comp: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT type FROM competitions WHERE code = %s", (comp,))
+        row = cur.fetchone()
+    return "national" if row and row[0] == "international" else "club"
 
 
 def _standout_sql_order() -> str:
@@ -438,22 +486,38 @@ def get_rankings(conn, comp: str = "WC", limit: int = 48) -> list:
     ]
 
 
+def _standout_from_row(name, team, pos, rating, dob, nat, goals, ast, apps,
+                       team_id, team_defense, club=None):
+    td = team_defense.get(team_id, {}) if team_id else {}
+    ga_pg = td.get("ga_per_game")
+    cs = td.get("clean_sheets")
+    gp = td.get("gp")
+    sr = _compute_standout_rating(
+        rating, goals, ast, apps, pos,
+        ga_per_game=ga_pg, clean_sheets=cs, team_gp=gp)
+    return _row_player(
+        name, team, pos, rating, dob, nat, goals, ast, apps, sr, club,
+        ga_per_game=ga_pg, clean_sheets=cs, team_gp=gp)
+
+
 def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: int = 20) -> list:
     """Standout players ranked by position-aware form + team strength.
 
-    Forwards lean on goals; midfielders on assists; defenders/GKs on minutes
-    and team Elo. Caps players per team for variety.
+    Forwards lean on goals; midfielders on assists; defenders on clean sheets
+    and low goals against; GKs on saves (when synced) and team GA rate.
     """
     limit = min(limit, 60)
     pos_filter = (position or "").upper() or None
     edition_id = _edition_id_for_comp(conn, comp)
     kind = _affil_kind_for_comp(conn, comp)
+    team_defense = _team_season_defense(conn, edition_id) if edition_id else {}
 
     if edition_id and _has_comp_scorers(conn, edition_id):
         with conn.cursor() as cur:
             sql = (
                 "SELECT p.name, t.name, p.position, tr.rating, p.birth_date, "
-                "       co.name, pes.goals, pes.assists, pes.appearances "
+                "       co.name, pes.goals, pes.assists, pes.appearances, "
+                "       COALESCE(pes.team_id, t.id) "
                 "FROM player_edition_stats pes "
                 "JOIN players p ON p.id = pes.player_id "
                 "LEFT JOIN teams t ON t.id = pes.team_id "
@@ -471,10 +535,10 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
             rows = cur.fetchall()
 
         standouts = []
-        for name, team, pos, rating, dob, nat, goals, ast, apps in rows:
-            sr = _compute_standout_rating(rating, goals, ast, apps, pos)
-            standouts.append(_row_player(
-                name, team, pos, rating, dob, nat, goals, ast, apps, sr))
+        for name, team, pos, rating, dob, nat, goals, ast, apps, team_id in rows:
+            standouts.append(_standout_from_row(
+                name, team, pos, rating, dob, nat, goals, ast, apps,
+                team_id, team_defense))
         standouts.sort(key=lambda x: (-(x.get("standout_rating") or 0), x["name"]))
         return _cap_players_per_team(standouts)[:limit]
 
@@ -482,7 +546,7 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
         sql = (
             "SELECT p.id, p.name, t.name, p.position, tr.rating, p.birth_date, "
             "       co.name, COALESCE(cs.goals, 0), COALESCE(cs.assists, 0), "
-            "       COALESCE(cs.appearances, 0), cs.club_team "
+            "       COALESCE(cs.appearances, 0), cs.club_team, t.id "
             "FROM player_affiliations pa "
             "JOIN players p ON p.id = pa.player_id "
             "JOIN teams t ON t.id = pa.team_id "
@@ -514,11 +578,10 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
         rows = cur.fetchall()
 
     standouts = []
-    for _pid, name, team, pos, rating, dob, nat, goals, ast, apps, club in rows:
-        sr = _compute_standout_rating(rating, goals, ast, apps, pos)
-        standouts.append(_row_player(
+    for _pid, name, team, pos, rating, dob, nat, goals, ast, apps, club, team_id in rows:
+        standouts.append(_standout_from_row(
             name, team, pos, rating, dob, nat, goals or None, ast or None,
-            apps or None, sr, club))
+            apps or None, team_id, team_defense, club))
 
     standouts.sort(key=lambda x: (-(x.get("standout_rating") or 0), x["name"]))
     return _cap_players_per_team(standouts)[:limit]

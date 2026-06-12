@@ -1092,9 +1092,25 @@ function PlayerCard({ p, onSelect, compact }) {
         </span>
         {p.age && <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>{p.age}y</span>}
       </div>
-      {(p.goals != null || p.assists != null) && (
+      {(p.goals != null || p.assists != null) && p.position !== "GK" && p.position !== "DEF" && (
         <div className="text-[10px] font-semibold tabular-nums mt-0.5" style={{ color: C.home }}>
           {p.goals ?? 0}G{p.assists != null ? ` · ${p.assists}A` : ""}
+          {p.appearances != null ? ` · ${p.appearances} apps` : ""}
+        </div>
+      )}
+      {p.position === "GK" && (p.ga_per_game != null || p.saves != null) && (
+        <div className="text-[10px] font-semibold tabular-nums mt-0.5" style={{ color: C.home }}>
+          {p.saves != null ? `${p.saves} saves` : ""}
+          {p.saves != null && p.ga_per_game != null ? " · " : ""}
+          {p.ga_per_game != null ? `${p.ga_per_game} GA/game` : ""}
+          {p.clean_sheets != null && p.team_gp ? ` · ${p.clean_sheets} CS` : ""}
+        </div>
+      )}
+      {p.position === "DEF" && p.ga_per_game != null && (
+        <div className="text-[10px] font-semibold tabular-nums mt-0.5" style={{ color: C.home }}>
+          {p.clean_sheets != null ? `${p.clean_sheets} clean sheets` : ""}
+          {p.clean_sheets != null ? " · " : ""}
+          {p.ga_per_game} GA/game
           {p.appearances != null ? ` · ${p.appearances} apps` : ""}
         </div>
       )}
@@ -1494,7 +1510,7 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, adminKey }) {
           Players & Squads
         </div>
         <p className="mt-1 text-[10px]" style={{ color: C.mute }}>
-          Tap a player to ask the chat. Standouts ranked by form + team strength (max 2 per nation).
+          Tap a player to ask the chat. Standouts: scorers/assists for attackers, clean sheets and low GA for defenders, saves and GA for keepers (max 2 per nation).
         </p>
       </div>
 
