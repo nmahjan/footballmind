@@ -50,6 +50,9 @@ from footballmind_services import (
     list_availability_flags,
     set_availability_flag,
     clear_availability_flag,
+    COMP_LABELS,
+    SUPPORTED_COMP_CODES,
+    parse_comp_from_text,
 )
 
 app = Flask(__name__)
@@ -182,12 +185,8 @@ def _normalize_history(raw) -> list[dict]:
     return out
 
 
-_VALID_COMPS = frozenset({"PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC"})
-_COMP_LABELS = {
-    "PL": "Premier League", "PD": "La Liga", "BL1": "Bundesliga",
-    "SA": "Serie A", "FL1": "Ligue 1", "CL": "Champions League",
-    "DED": "Eredivisie", "WC": "World Cup",
-}
+_VALID_COMPS = SUPPORTED_COMP_CODES
+_COMP_LABELS = COMP_LABELS
 
 
 def _resolve_chat_comp(data, default: str = "WC") -> str:
@@ -233,6 +232,35 @@ def _is_followup(message: str, history: list[dict]) -> bool:
     return len(words) <= 3 and text.lower().rstrip("?.!") in {
         "explain", "why", "how", "more", "continue", "elaborate",
     }
+
+
+def _last_compare_from_history(history: list[dict]) -> tuple[str, str] | None:
+    for turn in reversed(history):
+        if turn.get("role") != "user":
+            continue
+        players = _parse_player_compare(turn.get("content") or "")
+        if players:
+            return players
+    return None
+
+
+def _comp_switch_compare(message: str, history: list[dict]) -> str | None:
+    """Competition named in a follow-up after a player compare, e.g. 'what about La Liga'."""
+    if not history or not _last_compare_from_history(history):
+        return None
+    comp = parse_comp_from_text(message)
+    if not comp:
+        return None
+    low = message.lower()
+    if any(p in low for p in (
+        "what about", "how about", "and in", "in the", "for the", " for ",
+        "switch", "instead",
+    )):
+        return comp
+    # short follow-up that is mostly just a competition name
+    if len(low.split()) <= 6:
+        return comp
+    return None
 
 
 # ----------------------------------------------------------------------
@@ -407,10 +435,15 @@ def _format_player_compare(result: dict) -> str:
                 f"{cs.get('assists', 0)}A · {cs.get('appearances', 0)} apps"
             )
         if p.get("goals") is not None and comp:
+            season = p.get("comp_season")
+            hist = " (synced season)" if p.get("comp_stats_are_historical") else ""
+            label = f"{comp} stats ({season}){hist}" if season else f"{comp} stats"
             lines.append(
-                f"{comp} stats: {p['goals']}G · {p.get('assists', 0)}A · "
+                f"{label}: {p['goals']}G · {p.get('assists', 0)}A · "
                 f"{p.get('appearances', 0)} apps"
             )
+        elif comp and not cs:
+            lines.append(f"No synced {comp} stats on file for this player.")
         elif not cs and p.get("team_rating"):
             lines.append(f"Squad Elo: {round(p['team_rating'])}")
         return "\n".join(lines)
@@ -504,7 +537,17 @@ def api_chat():
     intent = parse_intent(message)
     entities, prediction = {"comp": chat_comp}, None
 
-    if _is_followup(message, history):
+    switch_comp = _comp_switch_compare(message, history)
+    if switch_comp:
+        players = _last_compare_from_history(history)
+        entities = {"player_a": players[0], "player_b": players[1], "comp": switch_comp}
+        result = compare_players(conn, players[0], players[1], switch_comp)
+        if result.get("error"):
+            reply = result["error"]
+        else:
+            reply = _format_player_compare(result)
+        intent = {"type": "compare"}
+    elif _is_followup(message, history):
         import footballmind_llm
         if footballmind_llm.is_configured():
             reply, prediction = footballmind_llm.answer_followup(

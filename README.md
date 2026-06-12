@@ -270,6 +270,11 @@ python footballmind_jobs.py sync --full
 python footballmind_jobs.py seed-elo
 python footballmind_jobs.py retrain
 
+# Optional: pull past season top scorers (Messi/Ronaldo La Liga era, etc.)
+python footballmind_jobs.py backfill-scorers
+# Or specific seasons:
+python footballmind_jobs.py backfill-scorers 2019/20 2020/21
+
 # REST API only
 flask --app footballmind_app run --port 5000
 

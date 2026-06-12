@@ -7,6 +7,20 @@ from datetime import date
 
 KNOCKOUT_ORDER = ["final", "semi_final", "quarter_final", "round_of_16", "round_of_32"]
 POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3, "?": 9}
+
+SUPPORTED_COMP_CODES = frozenset({"PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC"})
+COMP_LABELS = {
+    "PL": "Premier League", "PD": "La Liga", "BL1": "Bundesliga",
+    "SA": "Serie A", "FL1": "Ligue 1", "CL": "Champions League",
+    "DED": "Eredivisie", "WC": "World Cup",
+}
+# Longest phrases first so "champions league" beats "liga".
+COMP_PHRASES = (
+    ("champions league", "CL"), ("premier league", "PL"), ("la liga", "PD"),
+    ("laliga", "PD"), ("primera division", "PD"), ("primera división", "PD"),
+    ("bundesliga", "BL1"), ("serie a", "SA"), ("ligue 1", "FL1"),
+    ("eredivisie", "DED"), ("world cup", "WC"),
+)
 _POS_WEIGHT = {"FWD": 1.0, "MID": 0.9, "DEF": 0.75, "GK": 0.65, "?": 0.8}
 _STANDOUT_TEAM_CAP = 2          # max players per team in one standouts list
 
@@ -97,16 +111,89 @@ def _cap_players_per_team(players: list, cap: int = _STANDOUT_TEAM_CAP) -> list:
     return out
 
 
-def _edition_id_for_comp(conn, comp: str) -> int | None:
+def parse_comp_from_text(text: str) -> str | None:
+    """Map a competition name or code in user text to a comp code."""
+    import re
+
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    m = re.search(r"\b(PL|PD|BL1|SA|FL1|CL|DED|WC)\b", raw, re.I)
+    if m:
+        code = m.group(1).upper()
+        return code if code in SUPPORTED_COMP_CODES else None
+    low = raw.lower()
+    for phrase, code in COMP_PHRASES:
+        if phrase in low:
+            return code
+    return None
+
+
+def _edition_id_for_comp(conn, comp: str, season: str | None = None) -> int | None:
+    with conn.cursor() as cur:
+        if season:
+            cur.execute(
+                "SELECT e.id FROM competition_editions e "
+                "JOIN competitions c ON c.id = e.competition_id "
+                "WHERE c.code = %s AND e.season = %s",
+                (comp, season))
+        else:
+            cur.execute(
+                "SELECT e.id FROM competition_editions e "
+                "JOIN competitions c ON c.id = e.competition_id "
+                "WHERE c.code = %s "
+                "ORDER BY e.start_date DESC NULLS LAST, e.season DESC LIMIT 1",
+                (comp,))
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _current_season_for_comp(conn, comp: str) -> str | None:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT e.id FROM competition_editions e "
+            "SELECT e.season FROM competition_editions e "
             "JOIN competitions c ON c.id = e.competition_id "
             "WHERE c.code = %s "
-            "ORDER BY e.start_date DESC NULLS LAST LIMIT 1",
+            "ORDER BY e.start_date DESC NULLS LAST, e.season DESC LIMIT 1",
             (comp,))
         row = cur.fetchone()
     return row[0] if row else None
+
+
+def _player_stats_in_comp(conn, player_id: int, comp: str) -> dict | None:
+    """Stats for a player in a competition: current synced season first, else best past."""
+    current_edition = _edition_id_for_comp(conn, comp)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pes.goals, pes.assists, pes.appearances, pes.penalties, "
+            "       t.name, e.season, e.id "
+            "FROM player_edition_stats pes "
+            "JOIN competition_editions e ON e.id = pes.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "LEFT JOIN teams t ON t.id = pes.team_id "
+            "WHERE pes.player_id = %s AND c.code = %s "
+            "ORDER BY "
+            "  CASE WHEN e.id = %s THEN 0 ELSE 1 END, "
+            "  e.start_date DESC NULLS LAST, e.season DESC, "
+            "  (pes.goals + pes.assists) DESC "
+            "LIMIT 1",
+            (player_id, comp, current_edition))
+        row = cur.fetchone()
+    if not row:
+        return None
+    goals, assists, apps, pens, team, season, edition_id = row
+    current_season = _current_season_for_comp(conn, comp)
+    return {
+        "goals": goals,
+        "assists": assists,
+        "appearances": apps,
+        "penalties": pens,
+        "stats_team": team,
+        "comp": comp,
+        "comp_season": season,
+        "comp_stats_are_historical": bool(
+            current_season and season != current_season),
+    }
 
 
 def compute_standings(rows):
@@ -578,7 +665,7 @@ def _build_compare_profile(conn, name: str, comp: str | None) -> dict | None:
         profile["club_season"] = club_season
 
     if comp:
-        stats = get_player_comp_stats(conn, profile["name"], comp)
+        stats = _player_stats_in_comp(conn, pid, comp)
         if stats:
             profile.update(stats)
 
@@ -609,7 +696,11 @@ def _comparison_context(comp: str | None, conn) -> tuple[str, str]:
             f"Comparing as national squad members ({comp} context). "
             "Club season form is included where synced."
         )
-    return "club_competition", f"Comparing players in {comp} competition stats."
+    label = COMP_LABELS.get(comp, comp)
+    return "club_competition", (
+        f"Comparing players in {label} ({comp}) stats "
+        "(current synced season when available, otherwise best past season on file)."
+    )
 
 
 def _form_score(p: dict) -> float:
@@ -622,26 +713,10 @@ def _form_score(p: dict) -> float:
 
 
 def get_player_comp_stats(conn, name: str, comp: str) -> dict | None:
-    edition_id = _edition_id_for_comp(conn, comp)
-    if not edition_id:
+    base = _find_player_record(conn, name)
+    if not base:
         return None
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT pes.goals, pes.assists, pes.appearances, pes.penalties, t.name "
-            "FROM player_edition_stats pes "
-            "JOIN players p ON p.id = pes.player_id "
-            "LEFT JOIN teams t ON t.id = pes.team_id "
-            "WHERE pes.edition_id = %s AND p.name ILIKE %s "
-            "ORDER BY pes.goals DESC LIMIT 1",
-            (edition_id, name.strip()))
-        row = cur.fetchone()
-    if not row:
-        return None
-    goals, assists, apps, pens, team = row
-    return {
-        "goals": goals, "assists": assists, "appearances": apps,
-        "penalties": pens, "stats_team": team, "comp": comp,
-    }
+    return _player_stats_in_comp(conn, base["id"], comp)
 
 
 def get_top_scorers(conn, comp: str = "PL", limit: int = 20) -> list:

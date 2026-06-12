@@ -13,18 +13,30 @@ to the canned help reply when no key is set.
 import os
 import json
 
+from footballmind_services import COMP_LABELS, SUPPORTED_COMP_CODES
+
 MODEL = os.environ.get("FOOTBALLMIND_LLM_MODEL", "anthropic/claude-sonnet-4-6")
 MAX_TOOL_ROUNDS = 4
 
+_COMP_LIST = ", ".join(
+    f"{COMP_LABELS[c]} ({c})" for c in
+    ("PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC")
+)
+_COMP_CODES = ", ".join(sorted(SUPPORTED_COMP_CODES))
+
 SYSTEM = (
     "You are FootballMind, a football (soccer) intelligence assistant covering "
-    "the Premier League, Champions League, and World Cup. Use the tools for any "
-    "prediction, standings, squad, or player question; never invent probabilities, "
-    "tables, or player facts. When discussing players, use search_players, "
-    "get_player_profile, or compare_players for real stats and squad data. "
-    "For 'compare X vs Y' or 'who is better' questions, call compare_players with "
-    "both names. When discussing teams, use get_team_squad and explain roles "
-    "tactically from ratings and squad composition. "
+    f"{_COMP_LIST}. Use the tools for any prediction, standings, squad, or player "
+    "question; never invent probabilities, tables, or player facts. "
+    "Competition codes: " + _COMP_CODES + ". "
+    "When discussing players, use search_players, get_player_profile, or "
+    "compare_players for real stats and squad data. Player comp stats use synced "
+    "season data (current season first, then the best past synced season in that "
+    "competition). For 'compare X vs Y' or 'who is better', call compare_players. "
+    "For follow-ups like 'what about in La Liga', call compare_players with comp=PD "
+    "and the same player names from the prior turn. "
+    "When discussing teams, use get_team_squad and explain roles tactically from "
+    "ratings and squad composition. "
     "Be concise: 1-3 sentences unless the user asks for detail (player/team "
     "questions may use a few short paragraphs). If using structure, put each "
     "heading on its own line; avoid long horizontal rules. If a question "
@@ -62,7 +74,7 @@ TOOLS = [
         "function": {
             "name": "get_standings",
             "description": "Current league table computed from results. "
-                           "comp is a competition code: PL, CL, or WC.",
+                           f"comp codes: {_COMP_CODES}.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -84,7 +96,7 @@ TOOLS = [
                 "properties": {
                     "query": {"type": "string", "description": "Player name or fragment"},
                     "comp": {"type": "string",
-                             "description": "Optional comp filter: WC, PL, CL, etc."},
+                             "description": f"Competition code ({_COMP_CODES})"},
                 },
                 "required": ["query"],
             },
@@ -101,7 +113,7 @@ TOOLS = [
                 "properties": {
                     "team": {"type": "string"},
                     "comp": {"type": "string",
-                             "description": "Optional comp: WC, PL, CL, etc."},
+                             "description": f"Competition code ({_COMP_CODES})"},
                 },
                 "required": ["team"],
             },
@@ -159,14 +171,16 @@ TOOLS = [
         "function": {
             "name": "compare_players",
             "description": "Compare two players side-by-side: stats, position, "
-                           "team, age. Use for 'X vs Y', 'who is better', etc.",
+                           "team, age. Uses synced season stats (current or best "
+                           "past season in that comp). Use for 'X vs Y', comp "
+                           "switch follow-ups, 'who is better', etc.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "player_a": {"type": "string"},
                     "player_b": {"type": "string"},
                     "comp": {"type": "string",
-                             "description": "Optional comp for stats: WC, PL, etc."},
+                             "description": f"Competition for stats ({_COMP_CODES})"},
                 },
                 "required": ["player_a", "player_b"],
             },
@@ -334,11 +348,7 @@ def _run_tool(conn, name, args, session_id):
     return {"error": f"unknown tool {name}"}
 
 
-_COMP_LABELS = {
-    "PL": "Premier League", "PD": "La Liga", "BL1": "Bundesliga",
-    "SA": "Serie A", "FL1": "Ligue 1", "CL": "Champions League",
-    "DED": "Eredivisie", "WC": "World Cup",
-}
+_COMP_LABELS = COMP_LABELS
 
 
 def _comp_system_hint(comp: str | None) -> str:

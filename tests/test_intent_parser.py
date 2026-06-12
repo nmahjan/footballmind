@@ -3,12 +3,15 @@
 import pytest
 
 from footballmind_app import (
+    _comp_switch_compare,
     _extract_venue,
     _is_followup,
+    _last_compare_from_history,
     _parse_player_compare,
     _resolve_prediction_venue,
     parse_intent,
 )
+from footballmind_services import parse_comp_from_text
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +100,28 @@ class TestIsFollowup:
 
     def test_new_query_not_followup(self):
         assert _is_followup("Predict England vs France", self._hist) is False
+
+
+# ---------------------------------------------------------------------------
+# Competition switch follow-ups
+# ---------------------------------------------------------------------------
+class TestCompSwitch:
+    _hist = [
+        {"role": "user", "content": "Compare Messi vs Ronaldo"},
+        {"role": "assistant", "content": "..."},
+    ]
+
+    def test_parse_la_liga(self):
+        assert parse_comp_from_text("what about in la liga") == "PD"
+
+    def test_comp_switch_after_compare(self):
+        assert _comp_switch_compare("what about in la liga", self._hist) == "PD"
+
+    def test_no_switch_without_history(self):
+        assert _comp_switch_compare("what about in la liga", []) is None
+
+    def test_last_compare_from_history(self):
+        assert _last_compare_from_history(self._hist) == ("Messi", "Ronaldo")
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ Two commands, triggered by GitHub Actions cron (see
 
     python footballmind_jobs.py sync           # every ~6h: pull results, update Elo
     python footballmind_jobs.py sync-matchday  # every ~30m on match days: fixtures only
-    python footballmind_jobs.py retrain        # weekly: sweep + redeploy best models
+    python footballmind_jobs.py backfill-scorers  # past season top scorers (optional)
 
 Running these from GitHub Actions (not in-process) means they fire on schedule
 even while a free-tier web service is asleep.
@@ -125,6 +125,38 @@ def cmd_sync(full=False):
         print(f"[sync] predictions: {linked} linked, {graded} graded")
 
 
+def _season_labels_before(current: str, count: int) -> list[str]:
+    """Season labels strictly before current, e.g. 2025/26 -> 2018/19 .. 2024/25."""
+    start = int(current.split("/")[0]) if "/" in current else int(current)
+    out = []
+    for i in range(count, 0, -1):
+        y = start - i
+        out.append(f"{y}/{(y + 1) % 100:02d}" if "/" in current else str(y))
+    return out
+
+
+def cmd_backfill_scorers(seasons: list[str] | None = None):
+    """Pull top scorers for past seasons into player_edition_stats (additive — never wipes).
+
+    Default: eight seasons before each comp's configured current season (club comps only).
+    """
+    bucket = TokenBucket(10)
+    client = FootballDataClient(os.environ["FOOTBALL_DATA_API_KEY"], bucket)
+    with _connect() as conn:
+        for code, name, ctype, team_type, current in COMPETITIONS:
+            if team_type != "club":
+                continue
+            labels = seasons or _season_labels_before(current, 8)
+            for season in labels:
+                try:
+                    n = sync_scorers(conn, client, code, season, team_type=team_type,
+                                     comp_name=name, comp_type=ctype)
+                    print(f"[backfill-scorers] {code} {season}: {n} scorers", flush=True)
+                except Exception as e:
+                    print(f"[backfill-scorers] {code} {season} FAILED: {e}",
+                          file=sys.stderr, flush=True)
+
+
 def cmd_seed_elo():
     with _connect() as conn:
         seeded, skipped, unmatched = seed_national_elo(conn)
@@ -180,6 +212,10 @@ if __name__ == "__main__":
         cmd_retrain()
     elif cmd == "seed-elo":
         cmd_seed_elo()
+    elif cmd == "backfill-scorers":
+        extra = [a for a in sys.argv[2:] if not a.startswith("-")]
+        cmd_backfill_scorers(extra or None)
     else:
-        print("usage: footballmind_jobs.py [sync|sync-matchday|retrain|seed-elo]")
+        print("usage: footballmind_jobs.py "
+              "[sync|sync-matchday|backfill-scorers|retrain|seed-elo]")
         sys.exit(1)

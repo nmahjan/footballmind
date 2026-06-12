@@ -95,8 +95,10 @@ class FootballDataClient:
     def teams(self, comp):
         return self._get(f"/competitions/{comp}/teams").get("teams", [])
 
-    def scorers(self, comp, limit=100):
+    def scorers(self, comp, limit=100, season=None):
         params = {"limit": limit}
+        if season is not None:
+            params["season"] = season
         return self._get(f"/competitions/{comp}/scorers", params).get("scorers", [])
 
     def match(self, match_id):
@@ -304,12 +306,17 @@ def upsert_player_row(cur, p, team_id, kind):
     return player_id
 
 
-def sync_scorers(conn, client, comp_code, season, team_type="club"):
+def sync_scorers(conn, client, comp_code, season, team_type="club",
+                 comp_name=None, comp_type=None):
     """Pull competition top scorers -> player_edition_stats."""
     kind = "national" if team_type == "national" else "club"
-    rows = client.scorers(comp_code)
+    year = int(season.split("/")[0]) if "/" in season else int(season)
+    rows = client.scorers(comp_code, season=year)
     with conn.cursor() as cur:
-        edition_id = _edition_id(cur, comp_code, season)
+        if comp_name and comp_type:
+            edition_id = get_or_create_edition(cur, comp_code, comp_name, comp_type, season)
+        else:
+            edition_id = _edition_id(cur, comp_code, season)
         if edition_id is None:
             return 0
         n = 0
