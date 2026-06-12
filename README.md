@@ -27,6 +27,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **Player chat** — LLM answers with squad/scorer tools; markdown replies render as formatted text
 - **Player compare** — *"Compare Messi vs Ronaldo"* returns national team Elo, club affiliation, and best club-season G/A (with context label for WC vs club comps)
 - **Conversational follow-ups** — short replies like *"explain"*, *"why?"*, or *"tell me more"* use prior chat turns (frontend history + session log) so you don't have to repeat yourself
+- **Chat persists on refresh** — your session id is stored locally and prior messages reload from `/api/history`
 - **Neutral venue toggle** — disable home-field advantage for WC / neutral-site games
 - **Host venue in chat** — e.g. *"Predict Mexico vs South Korea in Mexico"* applies home advantage to Mexico; the 🏠 Home / 🏟 Neutral buttons also work in chat
 - **Share prediction** — copy a formatted summary to clipboard

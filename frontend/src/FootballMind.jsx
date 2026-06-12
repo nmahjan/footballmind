@@ -69,6 +69,21 @@ const PLAYER_CHIPS = [
   "Who are Spain's key midfielders?",
 ];
 
+const SESSION_KEY = "footballmind_session_id";
+
+function getOrCreateSessionId() {
+  try {
+    let id = localStorage.getItem(SESSION_KEY);
+    if (!id) {
+      id = crypto?.randomUUID?.() || String(Math.random());
+      localStorage.setItem(SESSION_KEY, id);
+    }
+    return id;
+  } catch {
+    return crypto?.randomUUID?.() || String(Math.random());
+  }
+}
+
 const COMP_OPTIONS = [
   ["WC", "🌍 World Cup"], ["PL", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL"], ["PD", "🇪🇸 La Liga"],
   ["BL1", "🇩🇪 Bundesliga"], ["SA", "🇮🇹 Serie A"], ["FL1", "🇫🇷 Ligue 1"], ["CL", "⭐ CL"],
@@ -1428,7 +1443,7 @@ function AccuracyPanel({ summary }) {
 
 // ─── Main app ─────────────────────────────────────────────────────────────
 export default function FootballMind() {
-  const [sessionId] = useState(() => (crypto?.randomUUID?.() || String(Math.random())));
+  const [sessionId] = useState(getOrCreateSessionId);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [venueMode, setVenueMode] = useState(null); // null=auto, true=neutral, false=home
@@ -1482,6 +1497,24 @@ export default function FootballMind() {
     const t2 = setTimeout(loadSidebarData, 12000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
+
+  useEffect(() => {
+    if (!API_BASE) return;
+    fetch(`${API_BASE}/api/history?session_id=${encodeURIComponent(sessionId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data?.history?.length) return;
+        const restored = [];
+        for (const row of [...data.history].reverse()) {
+          if (row.query) restored.push({ role: "user", text: row.query });
+          if (row.response) restored.push({ role: "bot", text: row.response });
+        }
+        if (restored.length) {
+          setMessages((prev) => (prev.length ? prev : restored));
+        }
+      })
+      .catch(() => {});
+  }, [sessionId]);
 
   useEffect(() => { scroller.current?.scrollTo(0, scroller.current.scrollHeight); }, [messages, busy]);
 
