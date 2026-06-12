@@ -39,7 +39,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - Hybrid **Elo + Dixon-Coles** model with weekly retrain (RPS backtest)
 - football-data.org sync every 6 hours (GitHub Actions) — matches, squads, **top scorers** (100/comp)
 - Migrations run automatically before each Actions sync (`footballmind_migrate.py`)
-- Rate-limited LLM chat (20 req/hr per IP) to protect API cost
+- Rate-limited LLM chat (20 req/hr per IP) with friendly retry messaging; deep analysis limited to 10/hr
 - **MCP server** — 13+ tools for Cursor / Claude Desktop (local stdio + remote HTTP)
 
 ---

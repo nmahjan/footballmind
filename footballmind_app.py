@@ -24,6 +24,7 @@ import time
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 from flask_limiter import Limiter
+from flask_limiter.errors import RateLimitExceeded
 
 from footballmind_lineup import get_predicted_lineup
 from footballmind_mcp_predict import _predict_match, _TEAM_ALIASES
@@ -77,14 +78,55 @@ def client_ip():
 # Render instance (counters reset on restart, acceptable). Read endpoints are
 # explicitly exempted below.
 limiter = Limiter(client_ip, app=app, default_limits=["200 per day"],
-                  storage_uri="memory://")
+                  storage_uri="memory://", headers_enabled=True)
 
 
-@app.errorhandler(429)
+def _human_retry(secs: int | None) -> str | None:
+    if secs is None or secs <= 0:
+        return None
+    if secs >= 3600:
+        h = (secs + 1799) // 3600
+        return f"{h} hour{'s' if h != 1 else ''}"
+    if secs >= 60:
+        m = (secs + 59) // 60
+        return f"{m} minute{'s' if m != 1 else ''}"
+    return f"{secs} second{'s' if secs != 1 else ''}"
+
+
+def _rate_limit_message(retry_secs: int | None) -> str:
+    path = request.path or ""
+    if path.endswith("/chat"):
+        base = "You've hit the chat limit (20 requests per hour per IP)."
+    elif path.endswith("/analyze"):
+        base = "You've hit the deep analysis limit (10 requests per hour per IP)."
+    else:
+        base = "You've hit a rate limit on this endpoint."
+    human = _human_retry(retry_secs)
+    if human:
+        return f"{base} Try again in about {human}."
+    return f"{base} Please wait a bit and try again."
+
+
+@app.errorhandler(RateLimitExceeded)
 def _rate_limited(e):
-    return jsonify({"error": "rate limit exceeded",
-                    "detail": f"Too many requests ({e.description}). "
-                              "Please slow down and try again later."}), 429
+    retry_secs = None
+    try:
+        cl = limiter.current_limit
+        if cl:
+            retry_secs = max(0, int(cl.reset_at - time.time()))
+    except Exception:
+        pass
+    message = _rate_limit_message(retry_secs)
+    resp = jsonify({
+        "error": "rate_limit_exceeded",
+        "message": message,
+        "retry_after_seconds": retry_secs,
+        "limit": getattr(e, "description", None),
+    })
+    resp.status_code = 429
+    if retry_secs:
+        resp.headers["Retry-After"] = str(retry_secs)
+    return resp
 
 
 def touch_session(conn, session_id, ip):

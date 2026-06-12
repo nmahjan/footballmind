@@ -140,6 +140,15 @@ async function pingBackend(apiBase, timeoutMs = 28000) {
   }
 }
 
+async function readApiError(res) {
+  try {
+    const data = await res.json();
+    return data.message || data.detail || data.error || `Request failed (${res.status})`;
+  } catch {
+    return `Request failed (${res.status})`;
+  }
+}
+
 const COMP_OPTIONS = [
   ["WC", "🌍 World Cup"], ["PL", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL"], ["PD", "🇪🇸 La Liga"],
   ["BL1", "🇩🇪 Bundesliga"], ["SA", "🇮🇹 Serie A"], ["FL1", "🇫🇷 Ligue 1"], ["CL", "⭐ CL"],
@@ -390,8 +399,12 @@ function PredictionCard({ p, home, away }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ home, away, prediction: p }),
       });
+      if (res.status === 429) {
+        setAnalyzeError(await readApiError(res));
+        return;
+      }
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      if (!res.ok) throw new Error(data.error || data.message || "Failed");
       setAnalysis(data.analysis);
     } catch (e) {
       setAnalyzeError(e.message || "Analysis unavailable");
@@ -1643,6 +1656,10 @@ export default function FootballMind() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (res.status === 429) {
+        setMessages((m) => [...m, { role: "bot", text: await readApiError(res), rateLimited: true }]);
+        return;
+      }
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
       setBackendStatus("live");
