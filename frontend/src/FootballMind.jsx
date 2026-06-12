@@ -84,6 +84,62 @@ function getOrCreateSessionId() {
   }
 }
 
+const LOAD_MESSAGES = {
+  waking: "Waking up backend…",
+  waking_slow: "Still waking up — Render free tier can take ~30 seconds",
+  predict: "Running prediction model…",
+  compare: "Comparing players…",
+  standings: "Loading standings…",
+  llm: "Consulting FootballMind AI…",
+  thinking: "Thinking…",
+  still_thinking: "Almost there — complex questions can take a few seconds",
+};
+
+function guessLoadPhase(text, backendStatus) {
+  if (backendStatus === "connecting" || backendStatus === "unreachable") return "waking";
+  const low = text.toLowerCase();
+  if (/\b(predict|forecast)\b/.test(low) || /\bvs\.?\b|\bversus\b/.test(low)) return "predict";
+  if (/\bcompare\b|\bwho('s| is) better\b/.test(low)) return "compare";
+  if (/\btable\b|\bstanding\b/.test(low)) return "standings";
+  if (/\b(squad|scorer|player|lineup|formation)\b/.test(low)) return "llm";
+  return "thinking";
+}
+
+function TypingIndicator({ phase }) {
+  const msg = LOAD_MESSAGES[phase] || LOAD_MESSAGES.thinking;
+  return (
+    <div className="flex justify-start">
+      <div className="rounded-xl px-3.5 py-2.5 text-sm" style={{ background: C.panel, color: C.mute }}>
+        <div className="flex items-center gap-2.5">
+          <span className="flex items-center gap-1" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                className="fm-typing-dot inline-block h-1.5 w-1.5 rounded-full"
+                style={{ background: C.home, animationDelay: `${i * 0.18}s` }}
+              />
+            ))}
+          </span>
+          <span className="text-xs leading-snug">{msg}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+async function pingBackend(apiBase, timeoutMs = 28000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${apiBase}/api/health`, { signal: ctrl.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const COMP_OPTIONS = [
   ["WC", "🌍 World Cup"], ["PL", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL"], ["PD", "🇪🇸 La Liga"],
   ["BL1", "🇩🇪 Bundesliga"], ["SA", "🇮🇹 Serie A"], ["FL1", "🇫🇷 Ligue 1"], ["CL", "⭐ CL"],
@@ -1455,6 +1511,7 @@ export default function FootballMind() {
   const [input, setInput] = useState("");
   const [venueMode, setVenueMode] = useState(null); // null=auto, true=neutral, false=home
   const [busy, setBusy] = useState(false);
+  const [loadPhase, setLoadPhase] = useState(null);
   const [wcFixtures, setWcFixtures] = useState(API_BASE ? [] : DEMO_FIXTURES);
   const [plFixtures, setPlFixtures] = useState([]);
   const [groups, setGroups] = useState({});
@@ -1528,7 +1585,21 @@ export default function FootballMind() {
       .catch(() => {});
   }, [sessionId]);
 
-  useEffect(() => { scroller.current?.scrollTo(0, scroller.current.scrollHeight); }, [messages, busy]);
+  useEffect(() => { scroller.current?.scrollTo(0, scroller.current.scrollHeight); }, [messages, busy, loadPhase]);
+
+  async function ensureBackendAwake() {
+    if (!API_BASE || backendStatus === "live") return true;
+    setLoadPhase("waking");
+    const ok = await pingBackend(API_BASE);
+    if (ok) {
+      setBackendStatus("live");
+      setOffline(false);
+      return true;
+    }
+    setBackendStatus("unreachable");
+    setLoadPhase("waking_slow");
+    return false;
+  }
 
   function handleFixtureClick(f) {
     setInput(`Predict ${f.home} vs ${f.away}`);
@@ -1552,8 +1623,20 @@ export default function FootballMind() {
     );
     setMessages((m) => [...m, { role: "user", text }]);
     setBusy(true);
+    setLoadPhase(guessLoadPhase(text, backendStatus));
+    const slowTimer = setTimeout(() => {
+      setLoadPhase((p) => {
+        if (p === "waking" || p === "waking_slow") return "waking_slow";
+        return "still_thinking";
+      });
+    }, 10000);
     try {
       if (!API_BASE) throw new Error("offline");
+      let isLive = backendStatus === "live";
+      if (!isLive) {
+        isLive = await ensureBackendAwake();
+        setLoadPhase(guessLoadPhase(text, isLive ? "live" : "unreachable"));
+      }
       const body = { message: text, session_id: sessionId, history, comp: chatComp };
       if (venueMode !== null) body.neutral = venueMode;
       const res = await fetch(`${API_BASE}/api/chat`, {
@@ -1562,6 +1645,8 @@ export default function FootballMind() {
       });
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
+      setBackendStatus("live");
+      setOffline(false);
       setMessages((m) => [...m, { role: "bot", text: data.reply, prediction: data.prediction, teams }]);
     } catch {
       if (!API_BASE) {
@@ -1572,10 +1657,15 @@ export default function FootballMind() {
           setMessages((m) => [...m, { role: "bot", text: 'Try a matchup like "Predict Mexico vs USA", or "show the table".', demo: true }]);
         }
       } else {
-        setMessages((m) => [...m, { role: "bot", text: "Backend unavailable — Render may be waking up. Wait ~30s and try again." }]);
+        setBackendStatus("unreachable");
+        setMessages((m) => [...m, { role: "bot", text: "Backend unavailable — Render may still be waking up. Wait ~30s and try again." }]);
         loadSidebarData();
       }
-    } finally { setBusy(false); }
+    } finally {
+      clearTimeout(slowTimer);
+      setBusy(false);
+      setLoadPhase(null);
+    }
   }
 
   const showChips = messages.length === 0;
@@ -1638,7 +1728,7 @@ export default function FootballMind() {
                 </div>
               </div>
             ))}
-            {busy && <div className="text-xs" style={{ color: C.mute }}>Reading the match&hellip;</div>}
+            {busy && loadPhase && <TypingIndicator phase={loadPhase} />}
           </div>
 
           {/* Suggestion chips */}

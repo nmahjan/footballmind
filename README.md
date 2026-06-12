@@ -29,6 +29,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 - **Conversational follow-ups** — short replies like *"explain"*, *"why?"*, or *"tell me more"* use prior chat turns (frontend history + session log) so you don't have to repeat yourself
 - **Chat persists on refresh** — your session id is stored locally and prior messages reload from `/api/history`
 - **Competition-aware chat** — the active sidebar tab (WC, PL, La Liga, etc.) is sent as `comp` so *"show the table"* or *"top scorers"* default to what you're viewing
+- **Chat loading states** — animated typing indicator with context-aware messages (model run, player compare, backend wake-up on Render cold start)
 - **Neutral venue toggle** — disable home-field advantage for WC / neutral-site games
 - **Host venue in chat** — e.g. *"Predict Mexico vs South Korea in Mexico"* applies home advantage to Mexico; the 🏠 Home / 🏟 Neutral buttons also work in chat
 - **Share prediction** — copy a formatted summary to clipboard
