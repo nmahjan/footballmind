@@ -49,6 +49,15 @@ COMPETITIONS = [
 # football-data.org v4 no longer exposes captain on squad/person — maintain manually.
 TEAM_CAPTAINS: dict[tuple[str, str], str] = {
     ("PL", "Arsenal FC"): "Martin Ødegaard",
+    ("WC", "Argentina"): "Lionel Messi",
+    ("WC", "Spain"): "Álvaro Morata",
+    ("WC", "England"): "Harry Kane",
+    ("WC", "France"): "Kylian Mbappé",
+    ("WC", "Brazil"): "Casemiro",
+    ("WC", "Germany"): "İlkay Gündoğan",
+    ("WC", "Portugal"): "Cristiano Ronaldo",
+    ("WC", "Netherlands"): "Virgil van Dijk",
+    ("WC", "Belgium"): "Kevin De Bruyne",
 }
 
 

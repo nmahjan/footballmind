@@ -20,6 +20,7 @@ FORMATION_SLOTS: dict[str, list[str]] = {
     "4-4-2": ["GK", "LB", "CB", "CB", "RB", "CM", "CM", "WING", "WING", "ST", "ST"],
     "4-2-3-1": ["GK", "LB", "CB", "CB", "RB", "CDM", "CDM", "WING", "CAM", "WING", "ST"],
     "4-3-2-1": ["GK", "LB", "CB", "CB", "RB", "CDM", "CM", "CAM", "WING", "WING", "ST"],
+    "4-1-4-1": ["GK", "LB", "CB", "CB", "RB", "CDM", "WING", "CM", "CM", "WING", "ST"],
     "3-5-2": ["GK", "CB", "CB", "CB", "LB", "CDM", "CM", "CM", "RB", "ST", "ST"],
     "5-3-2": ["GK", "LB", "CB", "CB", "CB", "RB", "CM", "CM", "CM", "ST", "ST"],
     "3-4-3": ["GK", "CB", "CB", "CB", "WING", "CM", "CM", "WING", "WING", "ST", "WING"],
@@ -27,7 +28,12 @@ FORMATION_SLOTS: dict[str, list[str]] = {
 
 # When no synced formation, try these first for club sides (modern default shapes).
 _CLUB_FORMATION_PREF = (
-    "4-2-3-1", "4-3-3", "4-3-2-1", "3-4-3", "4-4-2", "3-5-2", "5-3-2",
+    "4-2-3-1", "4-3-3", "4-3-2-1", "3-4-3", "4-4-2", "4-1-4-1", "3-5-2", "5-3-2",
+)
+
+# National sides rarely play five at the back without synced evidence — prefer wide shapes.
+_NATIONAL_FORMATION_PREF = (
+    "4-3-3", "4-2-3-1", "4-4-2", "4-1-4-1", "4-3-2-1", "3-4-3", "3-5-2", "5-3-2",
 )
 
 # Known shapes when API lineups are unavailable (comp, team) -> formation.
@@ -41,6 +47,7 @@ _FORMATION_ALIASES = {
     "4231": "4-2-3-1",
     "433": "4-3-3",
     "442": "4-4-2",
+    "4141": "4-1-4-1",
     "343": "3-4-3",
     "352": "3-5-2",
     "532": "5-3-2",
@@ -89,9 +96,15 @@ def _eligible_starter(player: dict) -> bool:
     """Block academy call-ups from model-picked slots unless they have real minutes."""
     age = _player_age(player.get("birth_date"))
     apps = int(player.get("appearances") or 0)
+    score = float(player.get("score") or 0)
     if age is not None and age < 18:
+        # Established teens (e.g. Yamal) — not raw academy trialists.
+        if apps >= 5 or score >= 85:
+            return True
         return False
     if age is not None and age < 20 and apps < 8:
+        if score >= 85:
+            return True
         return False
     return True
 
@@ -219,6 +232,9 @@ def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
         score = base + starts * 12 + min(apps, 30) * 0.35
         if is_captain:
             score += 25
+        if is_captain and c_apps == 0 and line_role in ("CAM", "ST", "CM", "WING"):
+            # Captain / talisman with no synced tournament minutes yet (e.g. Messi).
+            score = max(score, base + 35)
         if line_role == "GK" or position == "GK":
             score += min(career_apps, 80) * 0.4 + starts * 8
         squad.append({
@@ -238,6 +254,28 @@ def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
         })
     squad.sort(key=lambda p: (-p["score"], p["name"]))
     return squad
+
+
+def _apply_team_captain_boost(squad: list[dict], comp: str, team_name: str) -> None:
+    """Apply manual captain flags when DB sync has not set them yet."""
+    try:
+        from footballmind_jobs import TEAM_CAPTAINS
+    except ImportError:
+        return
+    captain = TEAM_CAPTAINS.get((comp, team_name))
+    if not captain:
+        return
+    for p in squad:
+        if p["name"] != captain and captain not in p["name"]:
+            continue
+        p["is_captain"] = True
+        if p.get("line_role") == "WING" and (p.get("goals") or 0) + (p.get("assists") or 0) == 0:
+            p["line_role"] = "CAM"
+        if (p.get("appearances") or 0) == 0:
+            p["score"] = round(max(float(p["score"]), 90) + 25, 1)
+        else:
+            p["score"] = round(float(p["score"]) + 25, 1)
+    squad.sort(key=lambda p: (-p["score"], p["name"]))
 
 
 def _slot_matches_player(slot: str, player: dict) -> bool:
@@ -275,8 +313,13 @@ def _sorted_candidates(candidates: list[dict], key_fn) -> list[dict]:
 
 def _prefer_senior(candidates: list[dict], min_age: int = 20) -> list[dict]:
     """Prefer established players over academy names when scores are close."""
-    senior = [p for p in candidates if (_player_age(p.get("birth_date")) or 99) >= min_age]
-    return senior if senior else candidates
+    if not candidates:
+        return candidates
+    ranked = sorted(candidates, key=lambda p: (-p["score"], p["name"]))
+    if _eligible_starter(ranked[0]):
+        return ranked
+    senior = [p for p in ranked if (_player_age(p.get("birth_date")) or 99) >= min_age]
+    return senior if senior else ranked
 
 
 def _gk_rank_key(player: dict) -> tuple:
@@ -418,6 +461,12 @@ def _formation_score(slots: list[str], squad: list[dict]) -> float:
         picked = _candidates_for_slot(slot, squad, taken)[0]
         total += picked["score"]
         taken.add(picked["player_id"])
+    wing_slots = slots.count("WING")
+    elite_wings = [p for p in squad if p.get("line_role") == "WING"][:2]
+    if len(elite_wings) >= 2 and wing_slots < 2:
+        total -= sum(p["score"] for p in elite_wings) * 0.12
+    if wing_slots >= 2 and len(elite_wings) >= 2:
+        total += min(elite_wings[0]["score"], elite_wings[1]["score"]) * 0.08
     return total
 
 
@@ -425,7 +474,10 @@ def _pick_formation(squad: list[dict], preferred: str | None, kind: str) -> str:
     preferred = normalize_formation(preferred)
     if preferred and preferred in FORMATION_SLOTS and _can_fill(FORMATION_SLOTS[preferred], squad):
         return preferred
-    order = list(_CLUB_FORMATION_PREF) if kind == "club" else list(FORMATION_SLOTS)
+    order = (
+        list(_CLUB_FORMATION_PREF) if kind == "club"
+        else list(_NATIONAL_FORMATION_PREF)
+    )
     best_f, best_s = "4-3-3", -1.0
     scores: dict[str, float] = {}
     for fname in order:
@@ -435,8 +487,9 @@ def _pick_formation(squad: list[dict], preferred: str | None, kind: str) -> str:
         scores[fname] = score
         if score > best_s:
             best_s, best_f = score, fname
-    if kind == "club" and best_s > 0:
-        for fname in _CLUB_FORMATION_PREF:
+    pref_list = _CLUB_FORMATION_PREF if kind == "club" else _NATIONAL_FORMATION_PREF
+    if best_s > 0:
+        for fname in pref_list:
             if scores.get(fname, -1) >= best_s * 0.97:
                 return fname
     return best_f
@@ -575,31 +628,35 @@ def _next_opponent(cur, team_id: int, comp: str) -> str | None:
 
 _FORMATION_ROW_SLOTS: dict[str, list[tuple[str, list[int]]]] = {
     "4-3-2-1": [
-        ("ST", [11]), ("WING", [9, 10]), ("CAM", [8]), ("CM", [7]), ("CDM", [6]),
+        ("ST", [11]), ("WING", [9, 10]), ("CAM", [8]), ("MID", [7, 6]),
         ("DEF", [2, 3, 4, 5]), ("GK", [1]),
     ],
     "4-3-3": [
-        ("ST", [10]), ("WING", [9, 11]), ("CM", [7, 8]), ("CDM", [6]),
+        ("ST", [10]), ("WING", [9, 11]), ("MID", [7, 6, 8]),
         ("DEF", [2, 3, 4, 5]), ("GK", [1]),
     ],
     "4-2-3-1": [
-        ("ST", [11]), ("WING", [8, 10]), ("CAM", [9]), ("CDM", [6, 7]),
+        ("ST", [11]), ("WING", [8, 10]), ("CAM", [9]), ("MID", [6, 7]),
         ("DEF", [2, 3, 4, 5]), ("GK", [1]),
     ],
     "4-4-2": [
-        ("ST", [10, 11]), ("WING", [8, 9]), ("CM", [6, 7]),
+        ("ST", [10, 11]), ("MID", [8, 6, 7, 9]),
+        ("DEF", [2, 3, 4, 5]), ("GK", [1]),
+    ],
+    "4-1-4-1": [
+        ("ST", [11]), ("MID", [7, 8, 9, 10]), ("CDM", [6]),
         ("DEF", [2, 3, 4, 5]), ("GK", [1]),
     ],
     "3-5-2": [
-        ("ST", [10, 11]), ("CM", [7, 8]), ("CDM", [6]), ("WING", [5, 9]),
+        ("ST", [10, 11]), ("MID", [5, 6, 7, 8, 9]),
         ("DEF", [2, 3, 4]), ("GK", [1]),
     ],
     "5-3-2": [
-        ("ST", [10, 11]), ("CM", [7, 8, 9]),
+        ("ST", [10, 11]), ("MID", [7, 8, 9]),
         ("DEF", [2, 3, 4, 5, 6]), ("GK", [1]),
     ],
     "3-4-3": [
-        ("ST", [10]), ("WING", [8, 9, 11]), ("CM", [6, 7]),
+        ("ST", [10]), ("WING", [8, 11]), ("MID", [6, 7, 9]),
         ("DEF", [2, 3, 4]), ("GK", [1]),
     ],
 }
@@ -630,6 +687,119 @@ def _formation_rows(xi: list[dict], formation: str,
     return list(reversed(rows))
 
 
+def _line_bucket(line_role: str, position: str) -> str:
+    lr = (line_role or "?").upper()
+    pos = (position or "?").upper()
+    if lr == "GK" or pos == "GK":
+        return "GK"
+    if lr in ("LB", "RB", "CB", "DEF") or pos == "DEF":
+        return "DEF"
+    if lr == "ST" or (pos == "FWD" and lr not in ("WING", "CAM")):
+        return "ST"
+    if lr == "WING":
+        return "WING"
+    if lr == "CAM":
+        return "CAM"
+    if lr == "CDM":
+        return "CDM"
+    return "MID"
+
+
+def _sort_defenders(players: list[dict]) -> list[dict]:
+    order = {"LB": 0, "CB": 1, "DEF": 1, "RB": 2}
+    return sorted(
+        players,
+        key=lambda p: (
+            order.get((p.get("position") or "?").upper(), 1),
+            p.get("shirt_number") or 99,
+            p.get("name") or "",
+        ),
+    )
+
+
+def _rows_from_confirmed_starters(
+    starters: list[dict],
+    roster: dict[int, dict],
+    ratings: dict[int, float] | None = None,
+) -> list[dict]:
+    """Build pitch rows from synced starters (don't re-pick XI slots)."""
+    ratings = ratings or {}
+    buckets: dict[str, list[dict]] = {
+        "ST": [], "WING": [], "CAM": [], "MID": [], "CDM": [], "DEF": [], "GK": [],
+    }
+    for s in starters:
+        pid = s["player_id"]
+        r = roster.get(pid, {})
+        pos = s.get("position") or r.get("position") or "?"
+        lr = r.get("line_role") or classify_line_role(
+            pos, r.get("goals"), r.get("assists"))
+        bucket = _line_bucket(lr, pos)
+        if bucket == "MID" and lr == "CM":
+            bucket = "MID"
+        entry = {
+            "name": s.get("name") or r.get("name", "?"),
+            "score": r.get("score"),
+            "position": lr if lr != "?" else pos,
+            "rating": ratings.get(pid),
+            "shirt_number": s.get("shirt_number"),
+            "player_id": pid,
+        }
+        buckets[bucket].append(entry)
+
+    for key in buckets:
+        buckets[key].sort(key=lambda p: (p.get("shirt_number") or 99, p.get("name") or ""))
+
+    rows: list[dict] = []
+    if buckets["ST"]:
+        rows.append({"line": "ST", "players": buckets["ST"]})
+    attack_mid = buckets["WING"] + buckets["CAM"]
+    if attack_mid:
+        rows.append({"line": "WING" if buckets["WING"] else "CAM", "players": attack_mid})
+    mid = buckets["MID"] + buckets["CDM"]
+    if mid:
+        rows.append({"line": "MID", "players": mid})
+    if buckets["DEF"]:
+        rows.append({"line": "DEF", "players": _sort_defenders(buckets["DEF"])})
+    if buckets["GK"]:
+        rows.append({"line": "GK", "players": buckets["GK"]})
+    return list(reversed(rows))
+
+
+def _confirmed_from_starters(
+    last_starters: list[dict],
+    roster: dict[int, dict],
+    formation: str | None,
+    last_match: dict | None,
+    last_ratings: dict[int, float],
+    unavailable_ids: set[int],
+) -> dict | None:
+    if len(last_starters) < 9:
+        return None
+    cf = normalize_formation(formation) or "4-3-3"
+    active = [s for s in last_starters if s["player_id"] not in unavailable_ids]
+    if len(active) < 9:
+        return None
+    starters_out = []
+    for s in active:
+        r = roster.get(s["player_id"], {})
+        lr = r.get("line_role") or classify_line_role(
+            s.get("position") or r.get("position"),
+            r.get("goals"), r.get("assists"))
+        starters_out.append({
+            "name": s.get("name") or r.get("name", "?"),
+            "position": lr,
+            "shirt_number": s.get("shirt_number"),
+            "score": r.get("score"),
+            "rating": last_ratings.get(s["player_id"]),
+        })
+    return {
+        "formation": cf,
+        "match": last_match,
+        "starters": starters_out,
+        "rows": _rows_from_confirmed_starters(active, roster, last_ratings),
+    }
+
+
 def get_predicted_lineup(conn, team_name: str, comp: str | None = "WC") -> dict:
     from footballmind_mcp_predict import _resolve_team
 
@@ -644,6 +814,7 @@ def get_predicted_lineup(conn, team_name: str, comp: str | None = "WC") -> dict:
         recent_starts = _recent_starter_counts(cur, team_id, comp)
         last_formation, last_starters, last_match = _last_match_starters(cur, team_id, comp)
         squad = _ranked_squad(cur, team_id, kind, comp, recent_starts)
+        _apply_team_captain_boost(squad, comp, resolved)
         if not squad:
             return {"team": resolved, "comp": comp, "error": "No squad on file for this team."}
 
@@ -665,24 +836,12 @@ def get_predicted_lineup(conn, team_name: str, comp: str | None = "WC") -> dict:
     if last_match and last_match.get("match_id"):
         from footballmind_enrich import get_match_ratings
         last_ratings = get_match_ratings(conn, last_match["match_id"])
+    roster = {p["player_id"]: p for p in avail_squad}
     if len(last_starters) >= 9 and last_formation:
-        cf = normalize_formation(last_formation) or formation
-        if cf in FORMATION_SLOTS:
-            cxi = _pick_xi(FORMATION_SLOTS[cf], avail_squad, unavailable_ids, last_starters)
-            confirmed = {
-                "formation": cf,
-                "match": last_match,
-                "starters": [
-                    {"name": p["name"], "position": p["line_pos"],
-                     "shirt_number": next(
-                         (s.get("shirt_number") for s in last_starters
-                          if s["player_id"] == p["player_id"]), None),
-                     "score": p["score"],
-                     "rating": last_ratings.get(p["player_id"])}
-                    for p in cxi
-                ],
-                "rows": _formation_rows(cxi, cf, last_ratings),
-            }
+        confirmed = _confirmed_from_starters(
+            last_starters, roster, last_formation, last_match,
+            last_ratings, unavailable_ids,
+        )
     xi_ids = {p["player_id"] for p in xi}
     pool = [p for p in squad if p["player_id"] not in xi_ids
             and p["player_id"] not in unavailable_ids]
