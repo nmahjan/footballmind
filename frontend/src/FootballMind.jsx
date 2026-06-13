@@ -262,32 +262,60 @@ const VALID_COMPS = new Set(["WC", "PL", "PD", "BL1", "SA", "FL1", "CL", "DED"])
 const DEEPLINK_STORAGE_KEY = "fm_deeplink_search";
 const PREDICTION_CACHE_KEY = "fm_prediction_cache";
 
+function deepLinkParamsHasPredict(params) {
+  return Boolean(
+    params.get("predict")?.trim() ||
+    (params.get("home")?.trim() && params.get("away")?.trim())
+  );
+}
+
+/** Query params (legacy) or hash (LinkedIn / in-app browsers often strip ?predict=). */
+function getDeepLinkParams() {
+  if (typeof window === "undefined") return new URLSearchParams();
+  const fromSearch = new URLSearchParams(window.location.search);
+  if (deepLinkParamsHasPredict(fromSearch)) return fromSearch;
+  const raw = window.location.hash.replace(/^#/, "").trim();
+  if (raw) {
+    const fromHash = new URLSearchParams(raw);
+    if (deepLinkParamsHasPredict(fromHash)) return fromHash;
+  }
+  return fromSearch;
+}
+
+function deepLinkSignature() {
+  const params = getDeepLinkParams();
+  return deepLinkParamsHasPredict(params) ? params.toString() : "";
+}
+
 function buildPredictUrl(home, away, { comp, neutral } = {}) {
   const url = new URL(window.location.href);
   url.search = "";
-  url.searchParams.set("predict", `${home} vs ${away}`);
-  if (comp && comp !== "WC") url.searchParams.set("comp", comp);
-  if (neutral === true) url.searchParams.set("neutral", "1");
-  else if (neutral === false) url.searchParams.set("neutral", "0");
+  const params = new URLSearchParams();
+  params.set("predict", `${home} vs ${away}`);
+  if (comp && comp !== "WC") params.set("comp", comp);
+  if (neutral === true) params.set("neutral", "1");
+  else if (neutral === false) params.set("neutral", "0");
+  url.hash = params.toString();
   return url.toString();
 }
 
 function clearDeepLinkParams() {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
-  url.searchParams.delete("predict");
-  url.searchParams.delete("home");
-  url.searchParams.delete("away");
+  for (const key of ["predict", "home", "away", "comp", "neutral"]) {
+    url.searchParams.delete(key);
+  }
+  url.hash = "";
   const qs = url.searchParams.toString();
-  window.history.replaceState(null, "", url.pathname + (qs ? `?${qs}` : "") + url.hash);
+  window.history.replaceState(null, "", url.pathname + (qs ? `?${qs}` : ""));
 }
 
-function markDeepLinkHandled(search = window.location.search) {
-  try { sessionStorage.setItem(DEEPLINK_STORAGE_KEY, search || ""); } catch { /* ignore */ }
+function markDeepLinkHandled(sig = deepLinkSignature()) {
+  try { sessionStorage.setItem(DEEPLINK_STORAGE_KEY, sig || ""); } catch { /* ignore */ }
 }
 
-function deepLinkAlreadyHandled(search = window.location.search) {
-  try { return sessionStorage.getItem(DEEPLINK_STORAGE_KEY) === (search || ""); } catch { return false; }
+function deepLinkAlreadyHandled(sig = deepLinkSignature()) {
+  try { return sessionStorage.getItem(DEEPLINK_STORAGE_KEY) === (sig || ""); } catch { return false; }
 }
 
 function savePredictionCache(query, entry) {
@@ -317,11 +345,11 @@ function syncPredictUrl(home, away, comp, neutral) {
   if (window.location.href !== next) {
     window.history.replaceState(null, "", next);
   }
-  markDeepLinkHandled(new URL(next).search);
+  markDeepLinkHandled(deepLinkSignature());
 }
 
 function parseDeepLinkSearch() {
-  const params = new URLSearchParams(window.location.search);
+  const params = getDeepLinkParams();
   const predict = params.get("predict")?.trim();
   const home = params.get("home")?.trim();
   const away = params.get("away")?.trim();
@@ -341,8 +369,7 @@ function parseDeepLinkSearch() {
 }
 
 function hasDeepLinkPredict() {
-  const params = new URLSearchParams(window.location.search);
-  return Boolean(params.get("predict")?.trim() || (params.get("home")?.trim() && params.get("away")?.trim()));
+  return deepLinkParamsHasPredict(getDeepLinkParams());
 }
 
 // ─── Stage badge labels ───────────────────────────────────────────────────
@@ -2171,6 +2198,8 @@ export default function FootballMind() {
   const scroller = useRef(null);
   const sendRef = useRef(null);
   const deepLinkHandled = useRef(false);
+  const shareLinkAtLoad = useRef(parseDeepLinkSearch());
+  const historyBlockedRef = useRef(Boolean(shareLinkAtLoad.current));
 
   function handleCompChange(code) {
     if (code && COMP_LABELS[code]) setChatComp(code);
@@ -2222,10 +2251,12 @@ export default function FootballMind() {
   }, []);
 
   useEffect(() => {
-    if (!API_BASE || hasDeepLinkPredict()) return;
-    fetch(`${API_BASE}/api/history?session_id=${encodeURIComponent(sessionId)}`)
+    if (!API_BASE || historyBlockedRef.current) return;
+    const ctrl = new AbortController();
+    fetch(`${API_BASE}/api/history?session_id=${encodeURIComponent(sessionId)}`, { signal: ctrl.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
+        if (historyBlockedRef.current || shareLinkAtLoad.current) return;
         if (!data?.history?.length) return;
         const restored = [];
         for (const row of [...data.history].reverse()) {
@@ -2243,7 +2274,10 @@ export default function FootballMind() {
           setMessages((prev) => (prev.length ? prev : restored));
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+      });
+    return () => ctrl.abort();
   }, [sessionId]);
 
   useEffect(() => { scroller.current?.scrollTo(0, scroller.current.scrollHeight); }, [messages, busy, loadPhase]);
@@ -2356,14 +2390,16 @@ export default function FootballMind() {
     const link = parseDeepLinkSearch();
     if (!link) return;
     deepLinkHandled.current = true;
+    historyBlockedRef.current = true;
 
-    const search = window.location.search;
-    if (deepLinkAlreadyHandled(search)) {
+    const sig = deepLinkSignature();
+    if (deepLinkAlreadyHandled(sig)) {
       clearDeepLinkParams();
       return;
     }
 
-    markDeepLinkHandled(search);
+    markDeepLinkHandled(sig);
+    setMessages([]);
     if (link.comp) setChatComp(link.comp);
     if (link.neutral !== null) setVenueMode(link.neutral);
     const t = setTimeout(() => sendRef.current?.(link.query, {
