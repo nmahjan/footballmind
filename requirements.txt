@@ -11,6 +11,7 @@ gunicorn>=21.0            # production WSGI server (legacy; see footballmind_asg
 uvicorn>=0.30             # ASGI server (Flask + MCP on Render)
 litellm>=1.40             # LLM gateway (footballmind_llm.py, needs ANTHROPIC_API_KEY)
 mcp>=1.0                  # MCP server SDK (server.py)
+lxml>=5.0                 # SoFIFA profile HTML parsing (footballmind_sofifa.py)
 pytest>=8.0               # intent parser unit tests (tests/test_intent_parser.py)
 # Fuller app (add when you build those layers):
 # sentence-transformers   # v2 semantic player search

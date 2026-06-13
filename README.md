@@ -190,6 +190,7 @@ POST /api/chat
 ├── footballmind_services.py   # Shared read/query helpers
 ├── footballmind_standings_zones.py  # UCL / UEL / relegation zone rules
 ├── footballmind_enrich.py     # FPL + API-Football + Understat enrichment
+├── footballmind_sofifa.py     # EA FC / SoFIFA height, foot, overall (optional sync)
 ├── footballmind_lineup.py     # Predicted XI + availability logic
 ├── footballmind_mcp_predict.py
 ├── footballmind_sync.py       # football-data.org ingestion
@@ -269,10 +270,36 @@ python footballmind_jobs.py sync          # includes sync-enrich at the end
 | **FPL API** | — | Premier League injury/doubt flags → `player_availability` (`source=fpl`) |
 | **Understat** | — | Match xG for PL, La Liga, Bundesliga, Serie A, Ligue 1 |
 | **API-Football** | `API_FOOTBALL_KEY` | Non-PL injuries + per-match player ratings (optional) |
+| **SoFIFA / EA FC** | — (optional) | Height, weight, preferred/weak foot, overall/potential → `player_eafc_attributes` |
 
 **API-Football free tier:** the key validates, but the free plan does **not** include the current season (2025/26) or the `last N fixtures` shortcut used for ratings — expect **0 rows** until you upgrade (~$10/mo). **FPL still covers PL injuries** without a key.
 
 Manual availability (`source=manual`) is never overwritten by feed sync.
+
+### EA FC / SoFIFA attributes
+
+Real-world APIs (football-data.org) do not expose height, weight, or weak foot. We optionally ingest those from [SoFIFA](https://sofifa.com) — EA FC’s public player database — into `player_eafc_attributes`.
+
+| Field | Example | Used for |
+|-------|---------|----------|
+| `height_cm` / `weight_kg` | 180 / 72 | Squad tab, player compare, chat context |
+| `preferred_foot` / `weak_foot` | Left / 3 | Compare, scouting-style questions |
+| `overall_rating` / `potential` | 89 / 95 | Display; future tie-break when comp stats are sparse |
+
+**What we do *not* use EA FC for:** match predictions and Elo still come from real results. Game overalls are **not** mixed into the hybrid W/D/L model.
+
+**Sync (optional — not part of the default 6h job):**
+
+```bash
+pip install -r requirements-sofifa.txt   # soccerdata + selenium
+python footballmind_jobs.py sync-sofifa                    # top-5 European leagues
+python footballmind_jobs.py sync-sofifa --teams Spain,Argentina   # national squads on SoFIFA
+python footballmind_jobs.py sync-sofifa --max 50           # cap for testing
+```
+
+SoFIFA is Cloudflare-protected; the sync uses **Chrome via soccerdata** and is meant for **local runs** or a manual GitHub Actions job — not the Render web service. Club-league sync covers most WC squad players (via their domestic clubs). After sync, squad and compare API responses include an `eafc` object when matched.
+
+**Not in soccerdata’s default export:** `read_player_ratings()` returns skill columns only — our parser adds height, weight, and foot data from the same profile HTML.
 
 ### Player stats & seasons
 

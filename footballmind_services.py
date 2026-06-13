@@ -650,7 +650,7 @@ def get_team_squad(conn, team_name: str, comp: str | None = None) -> dict:
         resolved_name = cur.fetchone()[0]
 
         sql = (
-            "SELECT p.name, p.position, pa.shirt_number, p.birth_date, co.name "
+            "SELECT p.id, p.name, p.position, pa.shirt_number, p.birth_date, co.name "
             "FROM player_affiliations pa "
             "JOIN players p ON p.id = pa.player_id "
             "LEFT JOIN countries co ON co.id = p.nationality "
@@ -677,15 +677,23 @@ def get_team_squad(conn, team_name: str, comp: str | None = None) -> dict:
         rating_row = cur.fetchone()
         team_rating = round(rating_row[0]) if rating_row else None
 
+    from footballmind_sofifa import get_eafc_attributes_bulk
+    pids = [r[0] for r in rows]
+    eafc_map = get_eafc_attributes_bulk(conn, pids)
+
     squad = []
-    for name, pos, shirt, dob, nationality in rows:
-        squad.append({
+    for pid, name, pos, shirt, dob, nationality in rows:
+        entry = {
             "name": name,
             "position": pos or "?",
             "shirt_number": shirt,
             "age": _player_age(dob),
             "nationality": nationality,
-        })
+        }
+        eafc = eafc_map.get(pid)
+        if eafc:
+            entry["eafc"] = eafc
+        squad.append(entry)
     squad.sort(key=lambda p: (POS_ORDER.get(p["position"], 9), p["name"]))
 
     by_pos = {"GK": [], "DEF": [], "MID": [], "FWD": [], "?": []}
@@ -704,15 +712,18 @@ def get_team_squad(conn, team_name: str, comp: str | None = None) -> dict:
 
 
 def get_player_profile(conn, name: str, comp: str | None = None) -> dict | None:
-    base = search_players(conn, name, comp, limit=5)
+    base = _find_player_record(conn, name)
     if not base:
         return None
-    exact = [h for h in base if h["name"].lower() == name.strip().lower()]
-    profile = dict(exact[0] if exact else base[0])
+    profile = dict(base)
     if comp:
         stats = get_player_comp_stats(conn, profile["name"], comp)
         if stats:
             profile.update(stats)
+    from footballmind_sofifa import get_eafc_attributes
+    eafc = get_eafc_attributes(conn, base["id"])
+    if eafc:
+        profile["eafc"] = eafc
     return profile
 
 
@@ -820,6 +831,11 @@ def _build_compare_profile(conn, name: str, comp: str | None) -> dict | None:
         stats = _player_stats_in_comp(conn, pid, comp)
         if stats:
             profile.update(stats)
+
+    from footballmind_sofifa import get_eafc_attributes
+    eafc = get_eafc_attributes(conn, pid)
+    if eafc:
+        profile["eafc"] = eafc
 
     # Legacy fields used by MCP / older formatters
     kind = _affil_kind_for_comp(conn, comp) if comp else None

@@ -7,6 +7,7 @@ Two commands, triggered by GitHub Actions cron (see
     python footballmind_jobs.py sync           # every ~6h: pull results, update Elo
     python footballmind_jobs.py sync-matchday  # every ~30m on match days: fixtures only
     python footballmind_jobs.py sync-espn-wc   # ESPN WC lineups (batch / backfill)
+    python footballmind_jobs.py sync-sofifa    # EA FC attrs via SoFIFA (optional, needs Chrome)
     python footballmind_jobs.py backfill-scorers  # past season top scorers (optional)
 
 Running these from GitHub Actions (not in-process) means they fire on schedule
@@ -31,6 +32,7 @@ from footballmind_seed_elo import seed_national_elo
 from footballmind_grading import grade_predictions, link_orphan_predictions
 from footballmind_enrich import sync_enrichment
 from footballmind_espn_wc import backfill_espn_wc_dates, sync_espn_wc_lineups
+from footballmind_sofifa import sync_sofifa_attributes, SOFIFA_CLUB_LEAGUES
 
 # (code, name, comp_type, team_type, season)
 # football-data.org free-tier competitions available without a paid plan:
@@ -251,6 +253,43 @@ def cmd_retrain():
                   f"cred={best['full_credibility']} RPS={best['mean_rps']:.4f}")
 
 
+def cmd_sync_sofifa():
+    """EA FC physical/meta attributes from SoFIFA (optional soccerdata + Chrome)."""
+    teams = None
+    leagues = None
+    max_players = None
+    version_id = None
+    args = sys.argv[2:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--teams" and i + 1 < len(args):
+            teams = [t.strip() for t in args[i + 1].split(",") if t.strip()]
+            i += 2
+        elif args[i] == "--leagues" and i + 1 < len(args):
+            leagues = [t.strip() for t in args[i + 1].split(",") if t.strip()]
+            i += 2
+        elif args[i] == "--max" and i + 1 < len(args):
+            max_players = int(args[i + 1])
+            i += 2
+        elif args[i] == "--version" and i + 1 < len(args):
+            version_id = int(args[i + 1])
+            i += 2
+        else:
+            i += 1
+    with _connect() as conn:
+        stats = sync_sofifa_attributes(
+            conn,
+            leagues=leagues or list(SOFIFA_CLUB_LEAGUES),
+            teams=teams,
+            version_id=version_id,
+            max_players=max_players,
+        )
+        if stats.get("error"):
+            print(f"[sync-sofifa] {stats['error']}", file=sys.stderr, flush=True)
+        parts = ", ".join(f"{k}={v}" for k, v in sorted(stats.items()))
+        print(f"[sync-sofifa] {parts}", flush=True)
+
+
 def cmd_sync_espn_wc():
     """ESPN fifa.world lineups for WC matches missing formation data."""
     with _connect() as conn:
@@ -286,7 +325,9 @@ if __name__ == "__main__":
         cmd_backfill_scorers(extra or None)
     elif cmd == "sync-espn-wc":
         cmd_sync_espn_wc()
+    elif cmd == "sync-sofifa":
+        cmd_sync_sofifa()
     else:
         print("usage: footballmind_jobs.py "
-              "[sync|sync-matchday|sync-enrich|sync-espn-wc|backfill-scorers|retrain|seed-elo]")
+              "[sync|sync-matchday|sync-enrich|sync-espn-wc|sync-sofifa|backfill-scorers|retrain|seed-elo]")
         sys.exit(1)

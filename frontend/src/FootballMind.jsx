@@ -182,6 +182,17 @@ function createNewSessionId() {
   return id;
 }
 
+function formatEafc(eafc) {
+  if (!eafc) return null;
+  const parts = [];
+  if (eafc.height_cm) parts.push(`${eafc.height_cm}cm`);
+  if (eafc.weight_kg) parts.push(`${eafc.weight_kg}kg`);
+  if (eafc.preferred_foot) parts.push(eafc.preferred_foot);
+  if (eafc.weak_foot) parts.push(`WF ${eafc.weak_foot}`);
+  if (eafc.overall_rating) parts.push(`OVR ${eafc.overall_rating}`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 const LOAD_MESSAGES = {
   waking: "Waking up backend…",
   waking_slow: "Still waking up — Render free tier can take ~30 seconds",
@@ -1877,8 +1888,15 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, adminKey }) {
                           <button key={p.name} type="button" onClick={() => askPlayer({ ...p, team: squad.team })}
                             className="flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-left hover:opacity-80"
                             style={{ borderColor: C.line, background: C.panel2 }}>
-                            <span className="text-xs font-medium truncate" style={{ color: C.chalk }}>{p.name}</span>
-                            <span className="text-[10px] shrink-0 ml-2" style={{ color: C.mute }}>
+                            <div className="min-w-0">
+                              <div className="text-xs font-medium truncate" style={{ color: C.chalk }}>{p.name}</div>
+                              {formatEafc(p.eafc) && (
+                                <div className="text-[9px] truncate mt-0.5" style={{ color: C.mute }}>
+                                  {formatEafc(p.eafc)}
+                                </div>
+                              )}
+                            </div>
+                            <span className="text-[10px] shrink-0 ml-2 text-right" style={{ color: C.mute }}>
                               {p.age ? `${p.age}y` : ""}{p.nationality ? ` · ${p.nationality}` : ""}
                             </span>
                           </button>

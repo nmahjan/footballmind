@@ -1,0 +1,3 @@
+# Optional — only needed for `python footballmind_jobs.py sync-sofifa`
+soccerdata>=1.8
+selenium>=4.0
