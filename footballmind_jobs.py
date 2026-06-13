@@ -6,6 +6,7 @@ Two commands, triggered by GitHub Actions cron (see
 
     python footballmind_jobs.py sync           # every ~6h: pull results, update Elo
     python footballmind_jobs.py sync-matchday  # every ~30m on match days: fixtures only
+    python footballmind_jobs.py sync-espn-wc   # ESPN WC lineups (batch / backfill)
     python footballmind_jobs.py backfill-scorers  # past season top scorers (optional)
 
 Running these from GitHub Actions (not in-process) means they fire on schedule
@@ -29,6 +30,7 @@ from footballmind_production import select_and_deploy
 from footballmind_seed_elo import seed_national_elo
 from footballmind_grading import grade_predictions, link_orphan_predictions
 from footballmind_enrich import sync_enrichment
+from footballmind_espn_wc import backfill_espn_wc_dates, sync_espn_wc_lineups
 
 # (code, name, comp_type, team_type, season)
 # football-data.org free-tier competitions available without a paid plan:
@@ -103,6 +105,12 @@ def cmd_sync_matchday(force=False):
         linked = link_orphan_predictions(conn)
         graded = grade_predictions(conn)
         print(f"[sync-matchday] predictions: {linked} linked, {graded} graded")
+        try:
+            espn = sync_espn_wc_lineups(conn, limit=30)
+            print(f"[sync-matchday] espn-wc: checked={espn['checked']} "
+                  f"synced={espn['synced']} players={espn['players']}", flush=True)
+        except Exception as e:
+            print(f"[sync-matchday] espn-wc FAILED: {e}", file=sys.stderr, flush=True)
 
 
 def cmd_sync(full=False):
@@ -234,6 +242,24 @@ def cmd_retrain():
                   f"cred={best['full_credibility']} RPS={best['mean_rps']:.4f}")
 
 
+def cmd_sync_espn_wc():
+    """ESPN fifa.world lineups for WC matches missing formation data."""
+    with _connect() as conn:
+        if "--backfill" in sys.argv:
+            extra = [a for a in sys.argv[2:] if a not in ("--backfill",) and not a.startswith("-")]
+            if len(extra) >= 2:
+                start = date.fromisoformat(extra[0])
+                end = date.fromisoformat(extra[1])
+            else:
+                start = date(2022, 11, 20)
+                end = date(2022, 12, 18)
+            stats = backfill_espn_wc_dates(conn, start, end)
+            print(f"[sync-espn-wc] backfill {start}..{end}: {stats}", flush=True)
+        else:
+            stats = sync_espn_wc_lineups(conn, limit=40)
+            print(f"[sync-espn-wc] {stats}", flush=True)
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "sync":
@@ -249,7 +275,9 @@ if __name__ == "__main__":
     elif cmd == "backfill-scorers":
         extra = [a for a in sys.argv[2:] if not a.startswith("-")]
         cmd_backfill_scorers(extra or None)
+    elif cmd == "sync-espn-wc":
+        cmd_sync_espn_wc()
     else:
         print("usage: footballmind_jobs.py "
-              "[sync|sync-matchday|sync-enrich|backfill-scorers|retrain|seed-elo]")
+              "[sync|sync-matchday|sync-enrich|sync-espn-wc|backfill-scorers|retrain|seed-elo]")
         sys.exit(1)
