@@ -31,7 +31,6 @@ SOFIFA_CLUB_LEAGUES = (
     "GER-Bundesliga",
     "ITA-Serie A",
     "FRA-Ligue 1",
-    "NED-Eredivisie",
 )
 
 # soccerdata / SoFIFA short names -> football-data.org team names in our DB

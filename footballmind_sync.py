@@ -128,10 +128,14 @@ def apply_team_captains(conn, captains: dict[tuple[str, str], str]) -> int:
             "WHERE end_date IS NULL AND is_captain = TRUE")
         for (comp_code, team_name), captain_name in captains.items():
             cur.execute(
+                "SELECT type FROM competitions WHERE code = %s", (comp_code,))
+            row = cur.fetchone()
+            kind = "national" if row and row[0] == "international" else "club"
+            cur.execute(
                 "UPDATE player_affiliations pa SET is_captain = TRUE "
                 "FROM players p, teams t "
                 "WHERE pa.player_id = p.id AND pa.team_id = t.id "
-                "  AND pa.end_date IS NULL AND pa.kind = 'club' "
+                "  AND pa.end_date IS NULL AND pa.kind = %s "
                 "  AND p.name = %s AND t.name = %s "
                 "  AND EXISTS ("
                 "    SELECT 1 FROM matches m "
@@ -139,7 +143,7 @@ def apply_team_captains(conn, captains: dict[tuple[str, str], str]) -> int:
                 "    JOIN competitions c2 ON c2.id = e2.competition_id "
                 "    WHERE c2.code = %s AND (m.home_team_id = t.id OR m.away_team_id = t.id)"
                 "  )",
-                (captain_name, team_name, comp_code))
+                (kind, captain_name, team_name, comp_code))
             n += cur.rowcount
     conn.commit()
     return n
