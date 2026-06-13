@@ -336,6 +336,17 @@ def _build_sofifa_reader(
     )
 
 
+def _persist_eafc_attributes(player_id: int, attrs: dict[str, Any],
+                             fifa_edition: str) -> None:
+    """Write one row on a fresh connection (Neon pooler drops idle SSL during long scrapes)."""
+    from footballmind_db import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            _upsert_attributes(cur, player_id, attrs, fifa_edition)
+        conn.commit()
+
+
 def _resolve_player_by_name(cur, name: str) -> int | None:
     if not name:
         return None
@@ -389,9 +400,8 @@ def sync_sofifa_from_cache(
             if not any(attrs.get(k) for k in ("height_cm", "overall_rating", "preferred_foot")):
                 skipped += 1
                 continue
-            _upsert_attributes(cur, player_id, attrs, "cached")
+            _persist_eafc_attributes(player_id, attrs, "cached")
             synced += 1
-        conn.commit()
 
     return {"checked": len(files), "synced": synced, "skipped": skipped, "cache_dir": str(cache_dir)}
 
@@ -445,15 +455,13 @@ def sync_sofifa_attributes(
 
     synced = skipped = checked = 0
     seen_players: set[int] = set()
+    work: list[tuple[int, int]] = []
 
     with conn.cursor() as cur:
         for sofifa_id, row in roster.iterrows():
-            if max_players and synced >= max_players:
-                break
             if sofifa_id in seen_players:
                 continue
             seen_players.add(int(sofifa_id))
-            checked += 1
             team_name = row.get("team") or ""
             player_name = row.get("player") or ""
             team_id = _resolve_team_id(cur, str(team_name))
@@ -464,21 +472,29 @@ def sync_sofifa_attributes(
             if not player_id:
                 skipped += 1
                 continue
-            try:
-                page = _fetch_profile_html(reader, int(sofifa_id), vid)
-                if _is_cloudflare_challenge(page):
-                    skipped += 1
-                    continue
-                attrs = parse_player_profile_html(page, sofifa_id=int(sofifa_id))
-            except Exception:
+            work.append((player_id, int(sofifa_id)))
+
+    for player_id, sofifa_id in work:
+        if max_players and synced >= max_players:
+            break
+        checked += 1
+        try:
+            page = _fetch_profile_html(reader, sofifa_id, vid)
+            if _is_cloudflare_challenge(page):
                 skipped += 1
                 continue
-            if not any(attrs.get(k) for k in ("height_cm", "overall_rating", "preferred_foot")):
-                skipped += 1
-                continue
-            _upsert_attributes(cur, player_id, attrs, fifa_edition)
+            attrs = parse_player_profile_html(page, sofifa_id=sofifa_id)
+        except Exception:
+            skipped += 1
+            continue
+        if not any(attrs.get(k) for k in ("height_cm", "overall_rating", "preferred_foot")):
+            skipped += 1
+            continue
+        try:
+            _persist_eafc_attributes(player_id, attrs, fifa_edition)
             synced += 1
-        conn.commit()
+        except Exception:
+            skipped += 1
 
     out = {
         "checked": checked,
