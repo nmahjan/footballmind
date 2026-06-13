@@ -292,12 +292,19 @@ Real-world APIs (football-data.org) do not expose height, weight, or weak foot. 
 
 ```bash
 pip install -r requirements-sofifa.txt   # soccerdata + selenium
-python footballmind_jobs.py sync-sofifa                    # top-5 European leagues
-python footballmind_jobs.py sync-sofifa --teams Spain,Argentina   # national squads on SoFIFA
-python footballmind_jobs.py sync-sofifa --max 50           # cap for testing
+python footballmind_jobs.py sync-sofifa --max 20 --visible   # visible Chrome (pass Cloudflare)
+python footballmind_jobs.py sync-sofifa                      # top-5 European leagues (headless)
+python footballmind_jobs.py sync-sofifa --teams Spain,Argentina
+python footballmind_jobs.py sync-sofifa --import-cache         # offline: ~/soccerdata/data/SoFIFA/*.html
+python footballmind_jobs.py sync-sofifa --version 250001     # pin EA FC release id (SOFIFA_VERSION_R)
 ```
 
-SoFIFA is Cloudflare-protected; the sync uses **Chrome via soccerdata** and is meant for **local runs** or a manual GitHub Actions job — not the Render web service. Club-league sync covers most WC squad players (via their domestic clubs). After sync, squad and compare API responses include an `eafc` object when matched.
+SoFIFA is Cloudflare-protected. If headless sync returns 0 rows:
+
+1. Run with **`--visible`** — a Chrome window opens; complete the Cloudflare check if prompted.
+2. Or browse SoFIFA normally, then import cached HTML with **`--import-cache`** (soccerdata stores pages under `~/soccerdata/data/SoFIFA/`).
+
+Club-league sync covers most WC squad players (via their domestic clubs). After sync, squad and compare API responses include an `eafc` object when matched.
 
 **Not in soccerdata’s default export:** `read_player_ratings()` returns skill columns only — our parser adds height, weight, and foot data from the same profile HTML.
 

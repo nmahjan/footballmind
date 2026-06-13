@@ -19,3 +19,9 @@ def test_parse_height_weight_and_feet():
     assert attrs["overall_rating"] == 89
     assert attrs["potential"] == 95
     assert attrs["work_rate"] == "High/Low"
+
+
+def test_cloudflare_challenge_detected():
+    from footballmind_sofifa import _is_cloudflare_challenge
+    assert _is_cloudflare_challenge("<html>Performing security verification</html>")
+    assert not _is_cloudflare_challenge(FIXTURE.read_text())

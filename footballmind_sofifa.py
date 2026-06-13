@@ -17,13 +17,18 @@ CI with browser support:
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
+from pathlib import Path
 from typing import Any
 
 from lxml import html
 
 from footballmind_enrich import _store_provider_id
+
+DEFAULT_SOFIFA_CACHE = Path.home() / "soccerdata" / "data" / "SoFIFA"
+DEFAULT_SOFIFA_VERSION_R = int(os.environ.get("SOFIFA_VERSION_R", "250001"))
 
 SOFIFA_CLUB_LEAGUES = (
     "ENG-Premier League",
@@ -293,6 +298,104 @@ def get_eafc_attributes_bulk(conn, player_ids: list[int]) -> dict[int, dict]:
         return out
 
 
+def _is_cloudflare_challenge(page_html: str) -> bool:
+    low = (page_html or "").lower()
+    return "performing security verification" in low or "challenge-platform" in low
+
+
+def _patch_sofifa_versions(version_id: int) -> None:
+    """Bypass broken SoFIFA version dropdown scrape with a pinned release id."""
+    import pandas as pd
+    import soccerdata.sofifa as sf_mod
+
+    def pinned_versions(self, max_age=1):  # noqa: ARG001
+        return pd.DataFrame([{
+            "fifa_edition": "EA FC",
+            "update": "pinned",
+            "version_id": version_id,
+        }]).set_index("version_id")
+
+    sf_mod.SoFIFA.read_versions = pinned_versions  # type: ignore[method-assign]
+
+
+def _build_sofifa_reader(
+    *,
+    leagues: list[str],
+    version_id: int | None,
+    headless: bool,
+):
+    import soccerdata as sd
+
+    vid = version_id or DEFAULT_SOFIFA_VERSION_R
+    _patch_sofifa_versions(vid)
+    return sd.SoFIFA(
+        leagues=leagues,
+        versions=vid,
+        no_store=True,
+        headless=headless,
+    )
+
+
+def _resolve_player_by_name(cur, name: str) -> int | None:
+    if not name:
+        return None
+    cur.execute(
+        "SELECT p.id FROM players p "
+        "WHERE p.name ILIKE %s OR p.name ILIKE %s "
+        "ORDER BY CASE WHEN LOWER(p.name) = LOWER(%s) THEN 0 ELSE 1 END, p.name "
+        "LIMIT 1",
+        (name.strip(), f"%{name.strip().split()[-1]}%", name.strip()))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def sync_sofifa_from_cache(
+    conn,
+    cache_dir: Path | str | None = None,
+    *,
+    max_files: int | None = None,
+) -> dict[str, int | str]:
+    """Import player profiles from cached SoFIFA HTML (offline / post-manual browse)."""
+    cache_dir = Path(cache_dir or DEFAULT_SOFIFA_CACHE)
+    if not cache_dir.is_dir():
+        return {"error": f"cache dir not found: {cache_dir}", "synced": 0}
+
+    files = sorted(cache_dir.glob("player_*_*.html"))
+    if max_files:
+        files = files[:max_files]
+    if not files:
+        return {"error": f"no player_*.html files in {cache_dir}", "synced": 0}
+
+    synced = skipped = 0
+    with conn.cursor() as cur:
+        for path in files:
+            m = re.match(r"player_(\d+)_(\d+)\.html$", path.name)
+            if not m:
+                skipped += 1
+                continue
+            sofifa_id = int(m.group(1))
+            page = path.read_text(encoding="utf-8", errors="replace")
+            if _is_cloudflare_challenge(page):
+                skipped += 1
+                continue
+            attrs = parse_player_profile_html(page, sofifa_id=sofifa_id)
+            player_id = None
+            player_name = attrs.get("name")
+            if player_name:
+                player_id = _resolve_player_by_name(cur, player_name)
+            if not player_id:
+                skipped += 1
+                continue
+            if not any(attrs.get(k) for k in ("height_cm", "overall_rating", "preferred_foot")):
+                skipped += 1
+                continue
+            _upsert_attributes(cur, player_id, attrs, "cached")
+            synced += 1
+        conn.commit()
+
+    return {"checked": len(files), "synced": synced, "skipped": skipped, "cache_dir": str(cache_dir)}
+
+
 def _fetch_profile_html(reader, sofifa_id: int, version_id: int) -> str:
     url = f"https://sofifa.com/player/{sofifa_id}/?r={version_id}&set=true"
     filepath = reader.data_dir / f"player_{sofifa_id}_{version_id}.html"
@@ -306,22 +409,27 @@ def sync_sofifa_attributes(
     teams: list[str] | None = None,
     version_id: int | None = None,
     max_players: int | None = None,
+    headless: bool = True,
 ) -> dict[str, int | str]:
     """Pull SoFIFA profiles for club/national squads and upsert player_eafc_attributes."""
     try:
-        import soccerdata as sd
-    except ImportError as e:
-        return {"error": "soccerdata not installed — pip install soccerdata", "synced": 0}
+        import soccerdata  # noqa: F401
+    except ImportError:
+        return {"error": "soccerdata not installed — pip install -r requirements-sofifa.txt", "synced": 0}
 
     leagues = leagues or list(SOFIFA_CLUB_LEAGUES)
-    kwargs: dict[str, Any] = {"leagues": leagues, "no_store": True}
-    if version_id is not None:
-        kwargs["versions"] = version_id
-
     try:
-        reader = sd.SoFIFA(**kwargs)
+        reader = _build_sofifa_reader(
+            leagues=leagues,
+            version_id=version_id,
+            headless=headless,
+        )
     except Exception as e:
-        return {"error": f"SoFIFA init failed (Chrome/Cloudflare?): {e}", "synced": 0}
+        return {
+            "error": f"SoFIFA init failed (Chrome/Cloudflare?): {e}",
+            "synced": 0,
+            "hint": "Try: sync-sofifa --visible, or pass Cloudflare in Chrome then --import-cache",
+        }
 
     version_row = reader.versions.iloc[-1]
     vid = int(version_row.name)
@@ -358,6 +466,9 @@ def sync_sofifa_attributes(
                 continue
             try:
                 page = _fetch_profile_html(reader, int(sofifa_id), vid)
+                if _is_cloudflare_challenge(page):
+                    skipped += 1
+                    continue
                 attrs = parse_player_profile_html(page, sofifa_id=int(sofifa_id))
             except Exception:
                 skipped += 1
@@ -369,9 +480,15 @@ def sync_sofifa_attributes(
             synced += 1
         conn.commit()
 
-    return {
+    out = {
         "checked": checked,
         "synced": synced,
         "skipped": skipped,
         "fifa_edition": fifa_edition,
     }
+    if synced == 0 and checked > 0:
+        out["hint"] = (
+            "Cloudflare likely blocked Selenium — open sofifa.com in Chrome, "
+            "pass the check, then retry with --visible or --import-cache"
+        )
+    return out

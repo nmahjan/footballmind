@@ -121,6 +121,9 @@ def _player_position_raw(p: dict) -> str | None:
 
 def apply_team_captains(conn, captains: dict[tuple[str, str], str]) -> int:
     """Set is_captain on affiliations. Keys: (comp_code, team_name) -> player name."""
+    from footballmind_mcp_predict import _resolve_team
+    from footballmind_services import _resolve_player_on_team
+
     n = 0
     with conn.cursor() as cur:
         cur.execute(
@@ -131,19 +134,26 @@ def apply_team_captains(conn, captains: dict[tuple[str, str], str]) -> int:
                 "SELECT type FROM competitions WHERE code = %s", (comp_code,))
             row = cur.fetchone()
             kind = "national" if row and row[0] == "international" else "club"
+            try:
+                team_id, _ = _resolve_team(cur, team_name)
+            except ValueError:
+                continue
+            found = _resolve_player_on_team(cur, captain_name, team_id)
+            if not found:
+                continue
+            player_id, _ = found
             cur.execute(
                 "UPDATE player_affiliations pa SET is_captain = TRUE "
-                "FROM players p, teams t "
-                "WHERE pa.player_id = p.id AND pa.team_id = t.id "
+                "WHERE pa.player_id = %s AND pa.team_id = %s "
                 "  AND pa.end_date IS NULL AND pa.kind = %s "
-                "  AND p.name = %s AND t.name = %s "
                 "  AND EXISTS ("
                 "    SELECT 1 FROM matches m "
                 "    JOIN competition_editions e2 ON e2.id = m.edition_id "
                 "    JOIN competitions c2 ON c2.id = e2.competition_id "
-                "    WHERE c2.code = %s AND (m.home_team_id = t.id OR m.away_team_id = t.id)"
+                "    WHERE c2.code = %s AND (m.home_team_id = pa.team_id "
+                "       OR m.away_team_id = pa.team_id)"
                 "  )",
-                (kind, captain_name, team_name, comp_code))
+                (player_id, team_id, kind, comp_code))
             n += cur.rowcount
     conn.commit()
     return n

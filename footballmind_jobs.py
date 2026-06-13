@@ -49,14 +49,17 @@ COMPETITIONS = [
 ]
 
 # football-data.org v4 no longer exposes captain on squad/person — maintain manually.
+# Keys: (comp_code, team_name) -> player name on that team's current squad.
+# Use names that exist in our synced roster (football-data.org); Morata/Gündoğan
+# are not on Spain/Germany WC squads in FDO — use in-squad leaders instead.
 TEAM_CAPTAINS: dict[tuple[str, str], str] = {
     ("PL", "Arsenal FC"): "Martin Ødegaard",
     ("WC", "Argentina"): "Lionel Messi",
-    ("WC", "Spain"): "Álvaro Morata",
+    ("WC", "Spain"): "Dani Olmo",
     ("WC", "England"): "Harry Kane",
     ("WC", "France"): "Kylian Mbappé",
     ("WC", "Brazil"): "Casemiro",
-    ("WC", "Germany"): "İlkay Gündoğan",
+    ("WC", "Germany"): "Joshua Kimmich",
     ("WC", "Portugal"): "Cristiano Ronaldo",
     ("WC", "Netherlands"): "Virgil van Dijk",
     ("WC", "Belgium"): "Kevin De Bruyne",
@@ -259,6 +262,9 @@ def cmd_sync_sofifa():
     leagues = None
     max_players = None
     version_id = None
+    headless = os.environ.get("SOFIFA_VISIBLE", "").lower() not in ("1", "true", "yes")
+    import_cache = False
+    cache_dir = None
     args = sys.argv[2:]
     i = 0
     while i < len(args):
@@ -274,19 +280,36 @@ def cmd_sync_sofifa():
         elif args[i] == "--version" and i + 1 < len(args):
             version_id = int(args[i + 1])
             i += 2
+        elif args[i] == "--visible":
+            headless = False
+            i += 1
+        elif args[i] == "--import-cache":
+            import_cache = True
+            i += 1
+        elif args[i] == "--cache-dir" and i + 1 < len(args):
+            cache_dir = args[i + 1]
+            import_cache = True
+            i += 2
         else:
             i += 1
     with _connect() as conn:
-        stats = sync_sofifa_attributes(
-            conn,
-            leagues=leagues or list(SOFIFA_CLUB_LEAGUES),
-            teams=teams,
-            version_id=version_id,
-            max_players=max_players,
-        )
+        if import_cache:
+            from footballmind_sofifa import sync_sofifa_from_cache
+            stats = sync_sofifa_from_cache(conn, cache_dir, max_files=max_players)
+        else:
+            stats = sync_sofifa_attributes(
+                conn,
+                leagues=leagues or list(SOFIFA_CLUB_LEAGUES),
+                teams=teams,
+                version_id=version_id,
+                max_players=max_players,
+                headless=headless,
+            )
         if stats.get("error"):
             print(f"[sync-sofifa] {stats['error']}", file=sys.stderr, flush=True)
-        parts = ", ".join(f"{k}={v}" for k, v in sorted(stats.items()))
+        if stats.get("hint"):
+            print(f"[sync-sofifa] hint: {stats['hint']}", flush=True)
+        parts = ", ".join(f"{k}={v}" for k, v in sorted(stats.items()) if k != "hint")
         print(f"[sync-sofifa] {parts}", flush=True)
 
 
