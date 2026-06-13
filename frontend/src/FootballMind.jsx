@@ -168,13 +168,18 @@ function getOrCreateSessionId() {
   try {
     let id = localStorage.getItem(SESSION_KEY);
     if (!id) {
-      id = crypto?.randomUUID?.() || String(Math.random());
-      localStorage.setItem(SESSION_KEY, id);
+      id = createNewSessionId();
     }
     return id;
   } catch {
     return crypto?.randomUUID?.() || String(Math.random());
   }
+}
+
+function createNewSessionId() {
+  const id = crypto?.randomUUID?.() || String(Math.random());
+  try { localStorage.setItem(SESSION_KEY, id); } catch { /* ignore */ }
+  return id;
 }
 
 const LOAD_MESSAGES = {
@@ -2179,7 +2184,7 @@ function CalibrationPanel({ summary, apiBase, offline }) {
 
 // ─── Main app ─────────────────────────────────────────────────────────────
 export default function FootballMind() {
-  const [sessionId] = useState(getOrCreateSessionId);
+  const [sessionId, setSessionId] = useState(getOrCreateSessionId);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [venueMode, setVenueMode] = useState(null); // null=auto, true=neutral, false=home
@@ -2304,6 +2309,21 @@ export default function FootballMind() {
   function handlePlayerAsk(text) {
     send(text);
     scroller.current?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  function startNewChat() {
+    if (busy) return;
+    setSessionId(createNewSessionId());
+    setMessages([]);
+    setInput("");
+    try {
+      sessionStorage.removeItem(DEEPLINK_STORAGE_KEY);
+      sessionStorage.removeItem(PREDICTION_CACHE_KEY);
+    } catch { /* ignore */ }
+    clearDeepLinkParams();
+    shareLinkAtLoad.current = null;
+    historyBlockedRef.current = false;
+    deepLinkHandled.current = true;
   }
 
   async function send(text, options = {}) {
@@ -2442,6 +2462,18 @@ export default function FootballMind() {
         {/* ── Chat panel ── */}
         <section className="flex min-h-[60vh] flex-1 flex-col rounded-xl border md:basis-[60%]"
           style={{ borderColor: C.line, background: C.panel2 }}>
+          <div className="flex items-center justify-between border-b px-4 py-2" style={{ borderColor: C.line }}>
+            <span className="text-[10px] font-medium" style={{ color: C.mute }}>Chat</span>
+            <button
+              type="button"
+              onClick={startNewChat}
+              disabled={busy}
+              title="Start a fresh conversation"
+              className="rounded-md border px-2.5 py-1 text-[10px] font-semibold transition-opacity hover:opacity-80 disabled:opacity-40"
+              style={{ borderColor: C.line, color: C.chalk, background: C.panel }}>
+              New chat
+            </button>
+          </div>
           <div ref={scroller} className="flex-1 space-y-4 overflow-y-auto p-4" style={{ maxHeight: "70vh" }}>
             {messages.length === 0 && (
               <div className="mt-10 text-center">
