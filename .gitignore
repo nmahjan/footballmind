@@ -9,5 +9,6 @@ venv/
 *.egg-info/
 .pytest_cache/
 deps/
+downloaded_files/
 frontend/node_modules/
 frontend/dist/
