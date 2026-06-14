@@ -355,6 +355,33 @@ function loadPredictionCache(query) {
   } catch { return null; }
 }
 
+function restoreSharePredictionMessages(link) {
+  const cached = loadPredictionCache(link?.query);
+  if (!cached?.prediction) return null;
+  const p = cached.prediction;
+  const text = `${p.prediction} (${pct(p.confidence)} confidence). ${p.reasoning || ""}`.trim();
+  return [
+    { role: "user", text: link.query },
+    {
+      role: "bot",
+      text,
+      prediction: cached.prediction,
+      teams: cached.teams,
+      comp: cached.comp,
+      neutral: cached.neutral,
+    },
+  ];
+}
+
+function initialShareLinkState() {
+  const link = parseDeepLinkSearch();
+  const sig = deepLinkSignature();
+  return {
+    link,
+    blockHistory: Boolean(link) && !deepLinkAlreadyHandled(sig),
+  };
+}
+
 function syncPredictUrl(home, away, comp, neutral) {
   if (!home || !away || typeof window === "undefined") return;
   const next = buildPredictUrl(home, away, { comp, neutral });
@@ -2221,8 +2248,9 @@ export default function FootballMind() {
   const scroller = useRef(null);
   const sendRef = useRef(null);
   const deepLinkHandled = useRef(false);
-  const shareLinkAtLoad = useRef(parseDeepLinkSearch());
-  const historyBlockedRef = useRef(Boolean(shareLinkAtLoad.current));
+  const shareLinkState = useRef(null);
+  if (!shareLinkState.current) shareLinkState.current = initialShareLinkState();
+  const historyBlockedRef = useRef(shareLinkState.current.blockHistory);
 
   function handleCompChange(code) {
     if (code && COMP_LABELS[code]) setChatComp(code);
@@ -2279,7 +2307,7 @@ export default function FootballMind() {
     fetch(`${API_BASE}/api/history?session_id=${encodeURIComponent(sessionId)}`, { signal: ctrl.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (historyBlockedRef.current || shareLinkAtLoad.current) return;
+        if (historyBlockedRef.current) return;
         if (!data?.history?.length) return;
         const restored = [];
         for (const row of [...data.history].reverse()) {
@@ -2339,7 +2367,6 @@ export default function FootballMind() {
       sessionStorage.removeItem(PREDICTION_CACHE_KEY);
     } catch { /* ignore */ }
     clearDeepLinkParams();
-    shareLinkAtLoad.current = null;
     historyBlockedRef.current = false;
     deepLinkHandled.current = true;
   }
@@ -2432,7 +2459,10 @@ export default function FootballMind() {
 
     const sig = deepLinkSignature();
     if (deepLinkAlreadyHandled(sig)) {
+      const restored = restoreSharePredictionMessages(link);
+      if (restored) setMessages(restored);
       clearDeepLinkParams();
+      historyBlockedRef.current = false;
       return;
     }
 
