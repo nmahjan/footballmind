@@ -1015,7 +1015,7 @@ function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, ap
               if (!seen.has(day)) { seen.add(day); byDate.push({ day, games: [] }); }
               byDate[byDate.length - 1].games.push(f);
             });
-          const days = byDate.slice(0, 4);
+          const days = byDate.slice(0, 5);
           return days.map(({ day, games }) => {
             const label = dayHeaderLabel(day);
             return (

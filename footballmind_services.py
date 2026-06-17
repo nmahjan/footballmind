@@ -383,10 +383,8 @@ def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
             "JOIN teams th ON th.id = m.home_team_id "
             "JOIN teams ta ON ta.id = m.away_team_id "
             "WHERE c.code = %s "
-            "  AND m.match_date >= now() - interval '18 hours' "
-            "ORDER BY "
-            "  CASE WHEN m.home_goals IS NULL THEN 0 ELSE 1 END, "
-            "  m.match_date ASC "
+            "  AND m.match_date >= (CURRENT_DATE - INTERVAL '1 day') "
+            "ORDER BY m.match_date ASC "
             "LIMIT %s",
             (comp, limit))
         cols = [d[0] for d in cur.description]

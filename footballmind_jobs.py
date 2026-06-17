@@ -92,7 +92,7 @@ def cmd_sync_matchday(force=False):
     """
     bucket = TokenBucket(10)
     client = FootballDataClient(os.environ["FOOTBALL_DATA_API_KEY"], bucket)
-    since = (date.today() - timedelta(days=1)).isoformat()
+    since = (date.today() - timedelta(days=3)).isoformat()
     with _connect() as conn:
         active = _comps_with_activity(conn)
         if not active and not force:
