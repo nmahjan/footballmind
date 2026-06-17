@@ -874,6 +874,12 @@ function PredictionResultsView({ apiBase, onSummary }) {
 
   useEffect(() => { load(); }, [apiBase]);
 
+  useEffect(() => {
+    if (!apiBase) return;
+    const id = setInterval(load, 90000);
+    return () => clearInterval(id);
+  }, [apiBase]);
+
   if (rows === null) {
     return <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>Loading results…</div>;
   }
@@ -2233,7 +2239,7 @@ export default function FootballMind() {
     try {
       const [healthRes, wcRes, plRes, grpRes] = await Promise.all([
         fetch(`${API_BASE}/api/health`),
-        fetch(`${API_BASE}/api/fixtures?comp=WC&limit=16`),
+        fetch(`${API_BASE}/api/fixtures?comp=WC&limit=32`),
         fetch(`${API_BASE}/api/fixtures?comp=PL&limit=10`),
         fetch(`${API_BASE}/api/groups?comp=WC`),
       ]);
@@ -2270,7 +2276,12 @@ export default function FootballMind() {
     loadSidebarData();
     const t1 = setTimeout(loadSidebarData, 4000);
     const t2 = setTimeout(loadSidebarData, 12000);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
+    const poll = setInterval(() => {
+      loadSidebarData();
+      fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
+        .then((d) => setSummary(d.summary)).catch(() => {});
+    }, 90000);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearInterval(poll); };
   }, []);
 
   useEffect(() => {

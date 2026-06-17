@@ -191,6 +191,9 @@ def get_or_create_edition(cur, comp_code, comp_name, comp_type, season):
     return cur.fetchone()[0]
 
 
+FINISHED_STATUSES = frozenset({"FINISHED", "AWARDED"})
+
+
 def upsert_match(cur, edition_id, m, team_type):
     """Insert/update one match row. Does NOT touch ratings (that is staged
     separately so it happens in chronological order, exactly once).
@@ -202,6 +205,11 @@ def upsert_match(cur, edition_id, m, team_type):
     away_id = upsert_team(cur, m["awayTeam"]["name"], team_type, m["awayTeam"]["id"])
     stage = STAGE_MAP.get(m.get("stage", "REGULAR_SEASON"), "regular_season")
     ft = (m.get("score") or {}).get("fullTime") or {}
+    status = m.get("status") or ""
+    if status in FINISHED_STATUSES:
+        home_goals, away_goals = ft.get("home"), ft.get("away")
+    else:
+        home_goals, away_goals = None, None
     group_name = m.get("group")   # e.g. "GROUP_A" from football-data.org
     if group_name:
         # normalise "GROUP_A" -> "A"
@@ -211,10 +219,14 @@ def upsert_match(cur, edition_id, m, team_type):
         " away_team_id, home_goals, away_goals, external_id, group_name) "
         "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
         "ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET "
-        "  home_goals = EXCLUDED.home_goals, away_goals = EXCLUDED.away_goals, "
+        "  match_date = EXCLUDED.match_date, "
+        "  home_team_id = EXCLUDED.home_team_id, "
+        "  away_team_id = EXCLUDED.away_team_id, "
+        "  home_goals = COALESCE(EXCLUDED.home_goals, matches.home_goals), "
+        "  away_goals = COALESCE(EXCLUDED.away_goals, matches.away_goals), "
         "  stage = EXCLUDED.stage, group_name = EXCLUDED.group_name",
         (edition_id, stage, m["utcDate"], home_id, away_id,
-         ft.get("home"), ft.get("away"), str(m["id"]), group_name))
+         home_goals, away_goals, str(m["id"]), group_name))
 
 
 # ----------------------------------------------------------------------

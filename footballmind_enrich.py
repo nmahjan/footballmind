@@ -84,6 +84,13 @@ def _get_json(url: str, headers: dict | None = None, timeout: int = 25) -> dict 
 def _store_provider_id(cur, entity_type: str, entity_id: int,
                        provider: str, external_id: str) -> None:
     cur.execute(
+        "SELECT entity_id FROM provider_external_ids "
+        "WHERE provider = %s AND external_id = %s",
+        (provider, str(external_id)))
+    row = cur.fetchone()
+    if row and row[0] != entity_id:
+        return
+    cur.execute(
         "INSERT INTO provider_external_ids "
         "(entity_type, entity_id, provider, external_id) "
         "VALUES (%s,%s,%s,%s) "
@@ -429,6 +436,29 @@ def sync_enrichment(conn, comps: list[str] | None = None) -> dict[str, int]:
         except Exception:
             pass
     out["understat_xg"] = xg_total
+
+    fdio_key = os.environ.get("FOOTBALLDATA_IO_KEY", "").strip()
+    if fdio_key:
+        try:
+            from footballmind_footballdata_io import sync_footballdata_io_line_roles
+
+            # Free tier returns empty /teams/{id}/players — skip unless explicitly enabled.
+            if os.environ.get("FOOTBALLDATA_IO_SYNC_ROLES", "").lower() in ("1", "true", "yes"):
+                fdio = sync_footballdata_io_line_roles(
+                    conn, comps=["PL"], max_teams=5,
+                )
+                out["footballdata_io_teams"] = fdio.get("teams", 0)
+                out["footballdata_io_updated"] = fdio.get("updated", 0)
+            else:
+                out["footballdata_io_teams"] = 0
+                out["footballdata_io_updated"] = 0
+        except Exception:
+            out["footballdata_io_teams"] = 0
+            out["footballdata_io_updated"] = 0
+    else:
+        out["footballdata_io_teams"] = 0
+        out["footballdata_io_updated"] = 0
+
     return out
 
 

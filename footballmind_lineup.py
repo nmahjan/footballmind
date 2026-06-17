@@ -11,9 +11,9 @@ from footballmind_services import (
     _affil_kind_for_comp,
     _compute_standout_rating,
     _player_age,
-    classify_line_role,
     get_team_formations,
 )
+from footballmind_roles import resolve_player_line_role
 
 FORMATION_SLOTS: dict[str, list[str]] = {
     "4-3-3": ["GK", "LB", "CB", "CB", "RB", "CDM", "CM", "CM", "WING", "ST", "WING"],
@@ -179,7 +179,7 @@ def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
         comp_params = [comp, comp]
 
     cur.execute(
-        "SELECT p.id, p.name, p.position, p.birth_date, tr.rating, "
+        "SELECT p.id, p.name, p.position, p.line_role, p.birth_date, tr.rating, "
         "       COALESCE(comp_stats.goals, 0), "
         "       COALESCE(comp_stats.assists, 0), "
         "       COALESCE(comp_stats.appearances, 0), "
@@ -210,12 +210,18 @@ def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
         "ORDER BY p.name",
         (*comp_params, team_id, kind))
     squad = []
-    for (pid, name, pos, dob, rating, c_goals, c_ast, c_apps,
+    for (pid, name, pos, stored_role, dob, rating, c_goals, c_ast, c_apps,
          goals, ast, apps, career_apps, club, is_captain) in cur.fetchall():
         position = pos or "?"
         if c_apps > 0:
             goals, ast, apps = c_goals, c_ast, c_apps
-        line_role = classify_line_role(pos, goals, ast)
+        line_role = resolve_player_line_role(
+            name=name,
+            db_line_role=stored_role,
+            db_position=pos,
+            goals=goals,
+            assists=ast,
+        )
         if is_captain and line_role in ("CM", "CDM", "MID"):
             line_role = "CAM"
         base = _compute_standout_rating(rating, goals, ast, apps, position)
@@ -731,8 +737,13 @@ def _rows_from_confirmed_starters(
         pid = s["player_id"]
         r = roster.get(pid, {})
         pos = s.get("position") or r.get("position") or "?"
-        lr = r.get("line_role") or classify_line_role(
-            pos, r.get("goals"), r.get("assists"))
+        lr = resolve_player_line_role(
+            name=s.get("name") or r.get("name", "?"),
+            db_line_role=r.get("line_role"),
+            db_position=pos,
+            goals=r.get("goals") or 0,
+            assists=r.get("assists") or 0,
+        )
         bucket = _line_bucket(lr, pos)
         if bucket == "MID" and lr == "CM":
             bucket = "MID"
@@ -782,9 +793,13 @@ def _confirmed_from_starters(
     starters_out = []
     for s in active:
         r = roster.get(s["player_id"], {})
-        lr = r.get("line_role") or classify_line_role(
-            s.get("position") or r.get("position"),
-            r.get("goals"), r.get("assists"))
+        lr = resolve_player_line_role(
+            name=s.get("name") or r.get("name", "?"),
+            db_line_role=r.get("line_role"),
+            db_position=s.get("position") or r.get("position"),
+            goals=r.get("goals") or 0,
+            assists=r.get("assists") or 0,
+        )
         starters_out.append({
             "name": s.get("name") or r.get("name", "?"),
             "position": lr,

@@ -383,8 +383,11 @@ def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
             "JOIN teams th ON th.id = m.home_team_id "
             "JOIN teams ta ON ta.id = m.away_team_id "
             "WHERE c.code = %s "
-            "  AND m.match_date >= now() - interval '3 hours' "
-            "ORDER BY m.match_date ASC LIMIT %s",
+            "  AND m.match_date >= now() - interval '18 hours' "
+            "ORDER BY "
+            "  CASE WHEN m.home_goals IS NULL THEN 0 ELSE 1 END, "
+            "  m.match_date ASC "
+            "LIMIT %s",
             (comp, limit))
         cols = [d[0] for d in cur.description]
         fixtures = []
@@ -397,6 +400,17 @@ def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
                     kick_off = kick_off.replace(tzinfo=_dt.timezone.utc)
                 elapsed = (now - kick_off).total_seconds() / 60
                 f["live"] = 0 < elapsed < 115
+            elif f.get("home_goals") is not None and f.get("match_date"):
+                kick_off = f["match_date"]
+                if hasattr(kick_off, "tzinfo") and kick_off.tzinfo is None:
+                    kick_off = kick_off.replace(tzinfo=_dt.timezone.utc)
+                # Ignore premature scores on fixtures still in the future.
+                if kick_off > now + _dt.timedelta(minutes=30):
+                    f["home_goals"] = None
+                    f["away_goals"] = None
+                    f["live"] = False
+                else:
+                    f["live"] = False
             else:
                 f["live"] = False
             if f.get("match_date"):
@@ -650,7 +664,8 @@ def get_team_squad(conn, team_name: str, comp: str | None = None) -> dict:
         resolved_name = cur.fetchone()[0]
 
         sql = (
-            "SELECT p.id, p.name, p.position, pa.shirt_number, p.birth_date, co.name "
+            "SELECT p.id, p.name, p.position, p.line_role, pa.shirt_number, "
+            "       p.birth_date, co.name "
             "FROM player_affiliations pa "
             "JOIN players p ON p.id = pa.player_id "
             "LEFT JOIN countries co ON co.id = p.nationality "
@@ -677,15 +692,22 @@ def get_team_squad(conn, team_name: str, comp: str | None = None) -> dict:
         rating_row = cur.fetchone()
         team_rating = round(rating_row[0]) if rating_row else None
 
+    from footballmind_roles import resolve_player_line_role
     from footballmind_sofifa import get_eafc_attributes_bulk
     pids = [r[0] for r in rows]
     eafc_map = get_eafc_attributes_bulk(conn, pids)
 
     squad = []
-    for pid, name, pos, shirt, dob, nationality in rows:
+    for pid, name, pos, line_role, shirt, dob, nationality in rows:
+        tactical = resolve_player_line_role(
+            name=name,
+            db_line_role=line_role,
+            db_position=pos,
+        )
         entry = {
             "name": name,
             "position": pos or "?",
+            "line_role": tactical,
             "shirt_number": shirt,
             "age": _player_age(dob),
             "nationality": nationality,
@@ -1080,12 +1102,12 @@ def get_prediction_results(conn, limit: int = 30) -> list[dict]:
         cur.execute(
             "SELECT DISTINCT ON (COALESCE(p.match_id, p.id)) "
             "       p.id, "
-            "       COALESCE(thp.name, thm.name) AS home, "
-            "       COALESCE(tap.name, tam.name) AS away, "
+            "       COALESCE(thm.name, thp.name) AS home, "
+            "       COALESCE(tam.name, tap.name) AS away, "
             "       p.home_win_prob, p.draw_prob, p.away_win_prob, "
             "       p.confidence, "
-            "       COALESCE(p.actual_home_goals, m.home_goals) AS hg, "
-            "       COALESCE(p.actual_away_goals, m.away_goals) AS ag, "
+            "       m.home_goals AS hg, "
+            "       m.away_goals AS ag, "
             "       p.was_correct, m.match_date, p.match_id "
             "FROM predictions p "
             "LEFT JOIN matches m ON m.id = p.match_id "
@@ -1094,7 +1116,7 @@ def get_prediction_results(conn, limit: int = 30) -> list[dict]:
             "LEFT JOIN teams thm ON thm.id = m.home_team_id "
             "LEFT JOIN teams tam ON tam.id = m.away_team_id "
             "WHERE m.home_goals IS NOT NULL "
-            "  AND COALESCE(thp.name, thm.name) IS NOT NULL "
+            "  AND COALESCE(thm.name, thp.name) IS NOT NULL "
             "ORDER BY COALESCE(p.match_id, p.id), p.created_at DESC")
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -1114,7 +1136,7 @@ def get_prediction_results(conn, limit: int = 30) -> list[dict]:
         probs = [r["home_win_prob"] or 0, r["draw_prob"] or 0, r["away_win_prob"] or 0]
         pred_idx = probs.index(max(probs))
         act_idx = 0 if hg > ag else (1 if hg == ag else 2)
-        was = r["was_correct"] if r["was_correct"] is not None else (pred_idx == act_idx)
+        was = pred_idx == act_idx
         md = r["match_date"]
         out.append({
             "id": r["id"],

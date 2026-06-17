@@ -11,26 +11,39 @@ the backtest uses -- so dashboard accuracy and backtest RPS stay consistent.
 """
 
 
-def find_fixture(cur, home_id, away_id):
+def find_fixture(cur, home_id, away_id, *, edition_id: int | None = None):
     """Nearest unplayed match with this exact home/away orientation, or None.
     Orientation must match because the stored probabilities are home/away
     specific -- linking a flipped fixture would grade the wrong side."""
-    cur.execute(
+    sql = (
         "SELECT id FROM matches "
         "WHERE home_team_id = %s AND away_team_id = %s AND home_goals IS NULL "
-        "ORDER BY match_date ASC LIMIT 1", (home_id, away_id))
+    )
+    params: list = [home_id, away_id]
+    if edition_id is not None:
+        sql += "AND edition_id = %s "
+        params.append(edition_id)
+    sql += "ORDER BY match_date ASC LIMIT 1"
+    cur.execute(sql, params)
     row = cur.fetchone()
     return row[0] if row else None
 
 
 def grade_predictions(conn):
-    """Grade every linked, played, not-yet-graded prediction. Returns the count."""
+    """Grade linked predictions from match scores.
+
+    Re-grades when football-data.org later corrects a score so stale
+    actual_home_goals / actual_away_goals do not leak into the UI.
+    """
     with conn.cursor() as cur:
         cur.execute(
             "SELECT p.id, p.home_win_prob, p.draw_prob, p.away_win_prob, "
             "       m.home_goals, m.away_goals "
             "FROM predictions p JOIN matches m ON m.id = p.match_id "
-            "WHERE p.was_correct IS NULL AND m.home_goals IS NOT NULL")
+            "WHERE m.home_goals IS NOT NULL "
+            "  AND (p.was_correct IS NULL "
+            "       OR p.actual_home_goals IS DISTINCT FROM m.home_goals "
+            "       OR p.actual_away_goals IS DISTINCT FROM m.away_goals)")
         rows = cur.fetchall()
         for pid, hw, dw, aw, hg, ag in rows:
             probs = [hw or 0.0, dw or 0.0, aw or 0.0]
@@ -80,9 +93,11 @@ def link_orphan_predictions(conn):
                     (home_id, away_id, pid))
 
             cur.execute(
-                "SELECT id FROM matches "
-                "WHERE home_team_id = %s AND away_team_id = %s "
-                "ORDER BY abs(extract(epoch from (match_date - %s::timestamptz))) "
+                "SELECT m.id FROM matches m "
+                "JOIN competition_editions e ON e.id = m.edition_id "
+                "WHERE m.home_team_id = %s AND m.away_team_id = %s "
+                "ORDER BY e.start_date DESC NULLS LAST, "
+                "         abs(extract(epoch from (m.match_date - %s::timestamptz))) "
                 "LIMIT 1",
                 (home_id, away_id, created_at))
             match_row = cur.fetchone()

@@ -16,6 +16,7 @@ even while a free-tier web service is asleep.
 Env vars:
     DATABASE_URL            postgres URL (Neon, include ?sslmode=require)
     FOOTBALL_DATA_API_KEY   football-data.org key (sync only)
+    FOOTBALLDATA_IO_KEY     footballdata.io key (optional squad positions)
 """
 
 import os
@@ -70,7 +71,7 @@ def _connect():
     return get_connection()
 
 
-def _comps_with_activity(conn, hours_before=3, hours_ahead=24):
+def _comps_with_activity(conn, hours_before=12, hours_ahead=72):
     """Competition codes with a fixture in the live window (recent kickoffs + today)."""
     with conn.cursor() as cur:
         cur.execute(
@@ -164,6 +165,10 @@ def cmd_sync_enrich():
     """Free enrichment feeds: FPL injuries, API-Football ratings/injuries, Understat xG."""
     with _connect() as conn:
         stats = sync_enrichment(conn)
+        from footballmind_roles import apply_player_line_roles
+        n = apply_player_line_roles(conn)
+        if n:
+            print(f"[sync-enrich] applied {n} line_role overrides", flush=True)
         parts = ", ".join(f"{k}={v}" for k, v in sorted(stats.items()))
         print(f"[sync-enrich] {parts}", flush=True)
         if (
@@ -262,7 +267,9 @@ def cmd_sync_sofifa():
     leagues = None
     max_players = None
     version_id = None
+    all_clubs = False
     headless = os.environ.get("SOFIFA_VISIBLE", "").lower() not in ("1", "true", "yes")
+    cloudflare_wait_sec = 600
     import_cache = False
     cache_dir = None
     args = sys.argv[2:]
@@ -283,8 +290,14 @@ def cmd_sync_sofifa():
         elif args[i] == "--visible":
             headless = False
             i += 1
+        elif args[i] == "--cloudflare-wait" and i + 1 < len(args):
+            cloudflare_wait_sec = int(args[i + 1])
+            i += 2
         elif args[i] == "--import-cache":
             import_cache = True
+            i += 1
+        elif args[i] == "--all-clubs":
+            all_clubs = True
             i += 1
         elif args[i] == "--cache-dir" and i + 1 < len(args):
             cache_dir = args[i + 1]
@@ -292,25 +305,94 @@ def cmd_sync_sofifa():
             i += 2
         else:
             i += 1
-    with _connect() as conn:
-        if import_cache:
+    if not import_cache:
+        mode = "headless (no Chrome window)" if headless else "visible Chrome"
+        print(f"[sync-sofifa] browser={mode}", flush=True)
+        if not headless:
+            print(
+                f"[sync-sofifa] cloudflare_wait={cloudflare_wait_sec}s "
+                "(page will not reload while you click the checkbox)",
+                flush=True,
+            )
+        elif headless:
+            print(
+                "[sync-sofifa] tip: add --visible to open Chrome for Cloudflare",
+                flush=True,
+            )
+    teams_for_sync = teams
+    leagues_for_sync = leagues or list(SOFIFA_CLUB_LEAGUES)
+    if all_clubs and not import_cache:
+        with _connect() as conn:
+            from footballmind_sofifa import db_club_team_names
+            teams_for_sync = db_club_team_names(conn)
+        print(
+            f"[sync-sofifa] all-clubs: {len(teams_for_sync)} DB clubs, "
+            f"leagues={', '.join(leagues_for_sync)} (SoFIFA top-5 only)",
+            flush=True,
+        )
+    if import_cache:
+        with _connect() as conn:
             from footballmind_sofifa import sync_sofifa_from_cache
             stats = sync_sofifa_from_cache(conn, cache_dir, max_files=max_players)
+    else:
+        stats = sync_sofifa_attributes(
+            leagues=leagues_for_sync,
+            teams=teams_for_sync,
+            version_id=version_id,
+            max_players=max_players,
+            headless=headless,
+            cloudflare_wait_sec=cloudflare_wait_sec,
+        )
+    with _connect() as conn:
+        from footballmind_roles import apply_player_line_roles
+        n = apply_player_line_roles(conn)
+        if n:
+            print(f"[sync-sofifa] applied {n} manual line_role overrides", flush=True)
+    if stats.get("error"):
+        print(f"[sync-sofifa] {stats['error']}", file=sys.stderr, flush=True)
+    if stats.get("hint"):
+        print(f"[sync-sofifa] hint: {stats['hint']}", flush=True)
+    parts = ", ".join(f"{k}={v}" for k, v in sorted(stats.items()) if k != "hint")
+    print(f"[sync-sofifa] {parts}", flush=True)
+
+
+def cmd_sync_footballdata_io():
+    """Pull squad positions from Footballdata.io into players.line_role."""
+    teams = None
+    max_teams = None
+    args = sys.argv[2:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--teams" and i + 1 < len(args):
+            teams = [t.strip() for t in args[i + 1].split(",") if t.strip()]
+            i += 2
+        elif args[i] == "--max" and i + 1 < len(args):
+            max_teams = int(args[i + 1])
+            i += 2
+        elif args[i] == "--probe":
+            from footballmind_footballdata_io import probe_account
+            print(probe_account(), flush=True)
+            return
         else:
-            stats = sync_sofifa_attributes(
-                conn,
-                leagues=leagues or list(SOFIFA_CLUB_LEAGUES),
-                teams=teams,
-                version_id=version_id,
-                max_players=max_players,
-                headless=headless,
-            )
-        if stats.get("error"):
-            print(f"[sync-sofifa] {stats['error']}", file=sys.stderr, flush=True)
-        if stats.get("hint"):
-            print(f"[sync-sofifa] hint: {stats['hint']}", flush=True)
-        parts = ", ".join(f"{k}={v}" for k, v in sorted(stats.items()) if k != "hint")
-        print(f"[sync-sofifa] {parts}", flush=True)
+            i += 1
+    with _connect() as conn:
+        from footballmind_footballdata_io import sync_footballdata_io_line_roles
+        from footballmind_roles import apply_player_line_roles
+
+        stats = sync_footballdata_io_line_roles(
+            conn, teams=teams, max_teams=max_teams,
+        )
+        n = apply_player_line_roles(conn)
+        if n:
+            stats["manual_overrides"] = n
+    if stats.get("error"):
+        print(f"[sync-footballdata-io] {stats['error']}", file=sys.stderr, flush=True)
+    parts = ", ".join(
+        f"{k}={v}" for k, v in sorted(stats.items()) if k != "details"
+    )
+    print(f"[sync-footballdata-io] {parts}", flush=True)
+    for d in stats.get("details") or []:
+        print(f"  {d}", flush=True)
 
 
 def cmd_sync_espn_wc():
@@ -350,7 +432,10 @@ if __name__ == "__main__":
         cmd_sync_espn_wc()
     elif cmd == "sync-sofifa":
         cmd_sync_sofifa()
+    elif cmd == "sync-footballdata-io":
+        cmd_sync_footballdata_io()
     else:
         print("usage: footballmind_jobs.py "
-              "[sync|sync-matchday|sync-enrich|sync-espn-wc|sync-sofifa|backfill-scorers|retrain|seed-elo]")
+              "[sync|sync-matchday|sync-enrich|sync-espn-wc|sync-sofifa|"
+              "sync-footballdata-io|backfill-scorers|retrain|seed-elo]")
         sys.exit(1)
