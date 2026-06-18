@@ -859,22 +859,24 @@ function FixtureRow({ f, onClick }) {
   );
 }
 
-function PredictionResultsView({ apiBase, onSummary }) {
+function PredictionResultsView({ apiBase, comp = "WC", onSummary }) {
   const [rows, setRows] = useState(null);
 
   function load() {
     if (!apiBase) { setRows([]); return; }
     setRows(null);
-    fetch(`${apiBase}/api/predictions?finished=1&limit=40`)
-      .then((r) => r.json())
-      .then((d) => {
-        setRows(d.results ?? []);
-        if (d.summary && onSummary) onSummary(d.summary);
+    Promise.all([
+      fetch(`${apiBase}/api/results?comp=${comp}&limit=40`).then((r) => r.json()),
+      fetch(`${apiBase}/api/predictions?finished=1&limit=40`).then((r) => r.json()),
+    ])
+      .then(([resultsPayload, predsPayload]) => {
+        setRows(resultsPayload.results ?? []);
+        if (predsPayload.summary && onSummary) onSummary(predsPayload.summary);
       })
       .catch(() => setRows([]));
   }
 
-  useEffect(() => { load(); }, [apiBase]);
+  useEffect(() => { load(); }, [apiBase, comp]);
 
   useEffect(() => {
     if (!apiBase) return;
@@ -888,7 +890,7 @@ function PredictionResultsView({ apiBase, onSummary }) {
   if (rows.length === 0) {
     return (
       <div className="px-4 py-5 text-center text-xs leading-relaxed" style={{ color: C.mute }}>
-        No finished matches yet. Once a game you predicted is played and synced, it’ll show here with the score and whether we got it right.
+        No finished {COMP_LABELS[comp] ?? comp} matches in the last two weeks yet.
       </div>
     );
   }
@@ -896,40 +898,47 @@ function PredictionResultsView({ apiBase, onSummary }) {
   return (
     <div className="divide-y" style={{ borderColor: C.line }}>
       {rows.map((r) => {
-        const predColor = outcomeColor(r.predicted, r.home, r.away);
+        const predColor = r.predicted ? outcomeColor(r.predicted, r.home, r.away) : C.mute;
         const ok = r.was_correct;
+        const hasPred = r.predicted != null;
         return (
-          <div key={r.id} className="px-4 py-3 space-y-1.5">
+          <div key={r.match_id ?? r.id} className="px-4 py-3 space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: C.mute }}>
                 {r.match_date ? fmtDate(r.match_date) : "Final"}
               </span>
-              <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
-                style={{
-                  background: ok ? "rgba(52,211,153,0.15)" : "rgba(244,161,82,0.15)",
-                  color: ok ? C.home : C.away,
-                }}>
-                {ok ? "✓ Correct" : "✗ Miss"}
-              </span>
+              {hasPred && (
+                <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
+                  style={{
+                    background: ok ? "rgba(52,211,153,0.15)" : "rgba(244,161,82,0.15)",
+                    color: ok ? C.home : C.away,
+                  }}>
+                  {ok ? "✓ Correct" : "✗ Miss"}
+                </span>
+              )}
             </div>
             <div className="text-sm font-semibold" style={{ color: C.chalk }}>
               {flag(r.home)}{r.home} {r.score} {flag(r.away)}{r.away}
             </div>
-            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
-              <span style={{ color: C.mute }}>
-                Predicted:{" "}
-                <span className="font-semibold" style={{ color: predColor }}>
-                  {r.predicted === r.home ? `${flag(r.home)}${r.predicted}` : r.predicted === r.away ? `${flag(r.away)}${r.predicted}` : r.predicted}
-                  {" "}({pct(r.predicted_confidence)})
+            {hasPred ? (
+              <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+                <span style={{ color: C.mute }}>
+                  Predicted:{" "}
+                  <span className="font-semibold" style={{ color: predColor }}>
+                    {r.predicted === r.home ? `${flag(r.home)}${r.predicted}` : r.predicted === r.away ? `${flag(r.away)}${r.predicted}` : r.predicted}
+                    {" "}({pct(r.predicted_confidence)})
+                  </span>
                 </span>
-              </span>
-              <span style={{ color: C.mute }}>
-                Actual:{" "}
-                <span className="font-semibold" style={{ color: C.chalk }}>
-                  {r.actual === r.home ? `${flag(r.home)}${r.actual}` : r.actual === r.away ? `${flag(r.away)}${r.actual}` : r.actual}
+                <span style={{ color: C.mute }}>
+                  Actual:{" "}
+                  <span className="font-semibold" style={{ color: C.chalk }}>
+                    {r.actual === r.home ? `${flag(r.home)}${r.actual}` : r.actual === r.away ? `${flag(r.away)}${r.actual}` : r.actual}
+                  </span>
                 </span>
-              </span>
-            </div>
+              </div>
+            ) : (
+              <div className="text-[11px]" style={{ color: C.mute }}>Final score · no prediction logged</div>
+            )}
           </div>
         );
       })}
@@ -995,14 +1004,25 @@ function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, ap
           </>
         )}
         {view === "results" && (
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
-            Our Predictions vs Results
-          </div>
+          <>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+              Recent Results · {COMP_LABELS[tab] ?? tab}
+            </div>
+            <div className="flex gap-1 overflow-x-auto pb-2" style={{ scrollbarWidth: "none" }}>
+              {FIXTURE_TABS.map(({ code, label }) => (
+                <button key={code} onClick={() => switchTab(code)}
+                  className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                  style={{ background: code === tab ? C.home : C.line, color: code === tab ? "#08120F" : C.mute }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </>
         )}
       </div>
       <div>
         {view === "results" ? (
-          <PredictionResultsView apiBase={apiBase} onSummary={onSummary} />
+          <PredictionResultsView apiBase={apiBase} comp={tab} onSummary={onSummary} />
         ) : loading || waitingParent ? (
           <div className="px-4 py-4 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
         ) : rows.length === 0 ? (

@@ -23,6 +23,33 @@ COMP_PHRASES = (
 )
 _POS_WEIGHT = {"FWD": 1.0, "MID": 0.9, "DEF": 0.75, "GK": 0.65, "?": 0.8}
 _STANDOUT_TEAM_CAP = 2          # max players per team in one standouts list
+_LIVE_WINDOW_MINUTES = 115
+
+
+def _as_utc(dt: _dt.datetime | None) -> _dt.datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=_dt.timezone.utc)
+    return dt
+
+
+def is_finished_match(
+    home_goals: int | None,
+    away_goals: int | None,
+    match_date: _dt.datetime | None,
+    *,
+    now: _dt.datetime | None = None,
+) -> bool:
+    """True when a fixture has a final score and is past the live window."""
+    if home_goals is None or away_goals is None or match_date is None:
+        return False
+    kick_off = _as_utc(match_date)
+    if kick_off is None:
+        return False
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    elapsed = (now - kick_off).total_seconds() / 60
+    return elapsed >= _LIVE_WINDOW_MINUTES
 
 
 def normalize_position(raw: str | None) -> str | None:
@@ -386,22 +413,18 @@ def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
             "  AND m.match_date >= (CURRENT_DATE - INTERVAL '1 day') "
             "ORDER BY m.match_date ASC "
             "LIMIT %s",
-            (comp, limit))
+            (comp, limit * 3),
+        )
         cols = [d[0] for d in cur.description]
         fixtures = []
         now = _dt.datetime.now(_dt.timezone.utc)
         for row in cur.fetchall():
             f = dict(zip(cols, row))
+            kick_off = _as_utc(f.get("match_date"))
             if f.get("match_date") and f.get("home_goals") is None:
-                kick_off = f["match_date"]
-                if hasattr(kick_off, "tzinfo") and kick_off.tzinfo is None:
-                    kick_off = kick_off.replace(tzinfo=_dt.timezone.utc)
-                elapsed = (now - kick_off).total_seconds() / 60
-                f["live"] = 0 < elapsed < 115
-            elif f.get("home_goals") is not None and f.get("match_date"):
-                kick_off = f["match_date"]
-                if hasattr(kick_off, "tzinfo") and kick_off.tzinfo is None:
-                    kick_off = kick_off.replace(tzinfo=_dt.timezone.utc)
+                elapsed = (now - kick_off).total_seconds() / 60 if kick_off else 0
+                f["live"] = 0 < elapsed < _LIVE_WINDOW_MINUTES
+            elif f.get("home_goals") is not None and kick_off:
                 # Ignore premature scores on fixtures still in the future.
                 if kick_off > now + _dt.timedelta(minutes=30):
                     f["home_goals"] = None
@@ -411,10 +434,87 @@ def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
                     f["live"] = False
             else:
                 f["live"] = False
+            if is_finished_match(f.get("home_goals"), f.get("away_goals"), f.get("match_date"), now=now):
+                continue
             if f.get("match_date"):
                 f["match_date"] = f["match_date"].isoformat()
             fixtures.append(f)
+            if len(fixtures) >= limit:
+                break
     return fixtures
+
+
+def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[dict]:
+    """Recent finished matches for a competition, with optional prediction grading."""
+    from footballmind_grading import grade_predictions
+
+    grade_predictions(conn)
+    limit = min(limit, 100)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT m.id, th.name AS home, ta.name AS away, "
+            "       m.home_goals, m.away_goals, m.match_date, m.stage, "
+            "       p.id AS prediction_id, "
+            "       p.home_win_prob, p.draw_prob, p.away_win_prob, p.was_correct "
+            "FROM matches m "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "JOIN teams th ON th.id = m.home_team_id "
+            "JOIN teams ta ON ta.id = m.away_team_id "
+            "LEFT JOIN LATERAL ("
+            "  SELECT p2.id, p2.home_win_prob, p2.draw_prob, p2.away_win_prob, p2.was_correct "
+            "  FROM predictions p2 "
+            "  WHERE p2.match_id = m.id "
+            "  ORDER BY p2.created_at DESC "
+            "  LIMIT 1"
+            ") p ON TRUE "
+            "WHERE c.code = %s "
+            "  AND m.home_goals IS NOT NULL "
+            "  AND m.away_goals IS NOT NULL "
+            "  AND m.match_date >= (CURRENT_DATE - INTERVAL '14 days') "
+            "ORDER BY m.match_date DESC "
+            "LIMIT %s",
+            (comp, limit),
+        )
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    out = []
+    for r in rows:
+        home, away = r["home"], r["away"]
+        hg, ag = r["home_goals"], r["away_goals"]
+        md = r["match_date"]
+        item = {
+            "match_id": r["id"],
+            "home": home,
+            "away": away,
+            "score": f"{hg}–{ag}",
+            "home_goals": hg,
+            "away_goals": ag,
+            "stage": r.get("stage"),
+            "match_date": md.isoformat() if md else None,
+        }
+        if r.get("prediction_id"):
+            probs = [r["home_win_prob"] or 0, r["draw_prob"] or 0, r["away_win_prob"] or 0]
+            predicted = _outcome_label(home, away, r["home_win_prob"],
+                                       r["draw_prob"], r["away_win_prob"])
+            if hg > ag:
+                actual = home
+            elif hg == ag:
+                actual = "Draw"
+            else:
+                actual = away
+            pred_idx = probs.index(max(probs))
+            act_idx = 0 if hg > ag else (1 if hg == ag else 2)
+            item.update({
+                "id": r["prediction_id"],
+                "predicted": predicted,
+                "predicted_confidence": round(max(probs), 3),
+                "actual": actual,
+                "was_correct": pred_idx == act_idx,
+            })
+        out.append(item)
+    return out
 
 
 def get_groups(conn, comp: str = "WC") -> dict:

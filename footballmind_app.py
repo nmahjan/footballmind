@@ -32,6 +32,7 @@ from footballmind_services import (
     compare_players,
     get_bracket,
     get_fixtures,
+    get_recent_match_results,
     get_groups,
     get_match_lineup,
     get_player_profile,
@@ -730,6 +731,16 @@ def api_fixtures():
     limit = min(int(request.args.get("limit", 16)), 64)
     fixtures = get_fixtures(get_conn(), comp, limit)
     return jsonify({"fixtures": fixtures, "comp": comp})
+
+
+@app.get("/api/results")
+@limiter.exempt
+def api_results():
+    """Recent finished matches for a competition (newest first)."""
+    comp = request.args.get("comp", "WC")
+    limit = min(int(request.args.get("limit", 40)), 100)
+    results = get_recent_match_results(get_conn(), comp, limit)
+    return jsonify({"results": results, "comp": comp})
 
 
 @app.get("/api/rankings")
