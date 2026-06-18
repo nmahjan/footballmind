@@ -12,3 +12,8 @@ deps/
 downloaded_files/
 frontend/node_modules/
 frontend/dist/
+# Local MCP config (setup_cursor_mcp.py writes DATABASE_URL here)
+mcp.json
+# Scraper output (may contain squad data; never secrets, but keep out of repo)
+squads_output.csv
+squads_insert.sql

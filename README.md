@@ -102,7 +102,8 @@ football-data.org API
 footballmind_sync.py          ← rate-limited ingestion (10 req/min)
         │  upserts teams, matches, players, squads, scorers
         ▼
-PostgreSQL (Neon)
+PostgreSQL (Neon)  ◄── footballmind_wikipedia.py (quarterly + enrich)
+        │                    WC squads + PL club wikitext → line_role, shirts
         │
         ├── apply_pending_ratings       ← Elo, sequential, exactly once
         ├── footballmind_backtest.py    ← walk-forward RPS sweep
@@ -190,12 +191,16 @@ POST /api/chat
 ├── footballmind_app.py        # Flask REST API
 ├── footballmind_services.py   # Shared read/query helpers
 ├── footballmind_standings_zones.py  # UCL / UEL / relegation zone rules
-├── footballmind_enrich.py     # FPL + API-Football + Understat enrichment
+├── footballmind_enrich.py     # FPL + API-Football + Understat + Wikipedia enrichment
+├── footballmind_wikipedia.py  # WC + PL squad sync from Wikipedia (free)
+├── footballmind_roles.py      # Tactical line_role mapping + manual overrides
 ├── footballmind_sofifa.py     # EA FC / SoFIFA height, foot, overall (optional sync)
+├── footballmind_footballdata_io.py  # Optional footballdata.io squad positions
 ├── footballmind_lineup.py     # Predicted XI + availability logic
 ├── footballmind_mcp_predict.py
 ├── footballmind_sync.py       # football-data.org ingestion
-├── footballmind_jobs.py       # CLI: sync, sync-matchday, backfill-scorers, retrain, seed-elo
+├── footballmind_jobs.py       # CLI: sync, sync-matchday, sync-wikipedia, retrain, …
+├── scrape_squads.py           # Local CSV export for Wikipedia club squads (optional)
 ├── footballmind_elo.py
 ├── footballmind_dixoncoles.py
 ├── footballmind_predict.py
@@ -223,7 +228,7 @@ POST /api/chat
 
 Run a full backfill after adding a league: **GitHub Actions → footballmind-jobs → Run workflow → sync → check "Full season backfill".**
 
-Migrations (`006` player positions, `007` scorer stats / lineup schema, `008` prediction team links, `009` player availability, `010` prediction dedupe per session, `011` captain flags, `012` enrichment tables) run automatically at the start of each Actions job. To check locally:
+Migrations (`006` player positions, `007` scorer stats / lineup schema, `008` prediction team links, `009` player availability, `010` prediction dedupe per session, `011` captain flags, `012` enrichment tables, `013` EA FC attributes, `014` tactical `line_role`) run automatically at the start of each Actions job. To check locally:
 
 ```bash
 python footballmind_migrate.py --status
@@ -271,11 +276,42 @@ python footballmind_jobs.py sync          # includes sync-enrich at the end
 | **FPL API** | — | Premier League injury/doubt flags → `player_availability` (`source=fpl`) |
 | **Understat** | — | Match xG for PL, La Liga, Bundesliga, Serie A, Ligue 1 |
 | **API-Football** | `API_FOOTBALL_KEY` | Non-PL injuries + per-match player ratings (optional) |
+| **Footballdata.io** | `FOOTBALLDATA_IO_KEY` | Club squad positions when `FOOTBALLDATA_IO_SYNC_ROLES=1` (optional) |
+| **Wikipedia** | — | WC national squads (48 teams) + PL club wikitext → `line_role`, shirt numbers; creates missing NT players (free) |
 | **SoFIFA / EA FC** | — (optional) | Height, weight, preferred/weak foot, overall/potential → `player_eafc_attributes` |
+
+Set `WIKIPEDIA_SYNC=0` to skip Wikipedia during `sync-enrich`. For a full refresh:
+
+```bash
+python footballmind_jobs.py sync-wikipedia              # WC + PL clubs
+python footballmind_jobs.py sync-wikipedia --wc-only    # national teams only
+python footballmind_jobs.py sync-wikipedia --clubs-only # Premier League clubs only
+```
+
+GitHub Actions runs the same job **quarterly** (1 Jan / Apr / Jul / Oct) via `footballmind-wikipedia-sync.yml`. Expect ~10–15 minutes for a full WC pass.
+
+**Local CSV review** (no DB writes):
+
+```bash
+python scrape_squads.py   # writes squads_output.csv for manual sanity-check
+```
 
 **API-Football free tier:** the key validates, but the free plan does **not** include the current season (2025/26) or the `last N fixtures` shortcut used for ratings — expect **0 rows** until you upgrade (~$10/mo). **FPL still covers PL injuries** without a key.
 
 Manual availability (`source=manual`) is never overwritten by feed sync.
+
+### Wikipedia squad sync
+
+Primary source for **World Cup national-team rosters** and **tactical positions** when football-data.org only covers top-league club players.
+
+| Source | Method | What it adds |
+|--------|--------|--------------|
+| `2026_FIFA_World_Cup_squads` | HTML wikitable via MediaWiki API | All 48 NT squads: name, shirt, caps, goals, club, FIFA position → `line_role` |
+| PL club pages | Wikitext `{{fs player}}` templates | First-team squad only; maps to DB club names |
+
+**Players outside top leagues** (Saudi Pro League, MLS, J2, etc.) are created in the DB from the WC page when missing — they get a `national` affiliation, coarse position, and optional WC edition caps/goals. Club names from Wikipedia are stored on the squad row but obscure clubs are not auto-created in `teams`.
+
+Position mapping uses FIFA codes (GK / DF / MF / FW) → tactical roles (`GK`, `CB`, `CM`, `ST`, …). Manual overrides in `footballmind_roles.py` (e.g. Yamal → RW, Gyökeres → ST) take precedence.
 
 ### EA FC / SoFIFA attributes
 
@@ -458,7 +494,7 @@ The combined ASGI app serves MCP at `/mcp` alongside the existing REST API. **Th
 | Database | [Neon](https://neon.tech) (free tier) | Pooled connection string for `DATABASE_URL` |
 | Backend + MCP | [Render](https://render.com) (free web service) | `uvicorn footballmind_asgi:app` |
 | Frontend | GitHub Pages | Auto-deployed on push to `main` via `.github/workflows/pages.yml` |
-| Scheduled jobs | GitHub Actions | `footballmind-jobs` (sync 6h, retrain Mon), `footballmind-matchday-sync` (30m), `footballmind-tests` (pytest on push) |
+| Scheduled jobs | GitHub Actions | `footballmind-jobs` (sync 6h, retrain Mon), `footballmind-matchday-sync` (30m), `footballmind-wikipedia-sync` (quarterly), `footballmind-tests` (pytest on push) |
 
 ### Environment variables
 
@@ -468,12 +504,33 @@ The combined ASGI app serves MCP at `/mcp` alongside the existing REST API. **Th
 | `FOOTBALLMIND_ADMIN_KEY` | Render env var | Bearer token for `/api/admin/*` (optional; falls back to `MCP_API_KEY`) |
 | `MCP_API_KEY` | Render + local `.env` | Bearer token for remote MCP at `/mcp` (optional for website) |
 | `FOOTBALL_DATA_API_KEY` | Actions secret | football-data.org API key |
+| `FOOTBALLDATA_IO_KEY` | Actions secret (optional) | footballdata.io squad positions |
 | `API_FOOTBALL_KEY` | Actions secret (optional) | api-sports.io key for enrichment; free tier limited to older seasons |
 | `ANTHROPIC_API_KEY` | Render env var | Claude API (LLM chat + deep analysis) |
 | `FRONTEND_ORIGIN` | Render env var | GitHub Pages URL for CORS (or `*`) |
 | `VITE_API_BASE` | GitHub Pages repo variable | `https://football-mind.onrender.com` |
+| `WIKIPEDIA_SYNC` | Actions / local (optional) | Set `0` to disable Wikipedia during `sync-enrich` (default: on) |
 
 **Never commit `.env` or put secrets in `VITE_*` vars** — those are baked into the public frontend bundle.
+
+### Security checklist
+
+Audited for common leaks — current status:
+
+| Check | Status |
+|-------|--------|
+| `.env` gitignored; no `.env` in git history | OK |
+| No API keys / DB URLs in tracked source files | OK |
+| GitHub Actions use `secrets.*` (not inline values) | OK |
+| `VITE_API_BASE` is a public URL only (Pages workflow) | OK |
+| MCP `/mcp` requires `MCP_API_KEY` when set | OK |
+| Admin API requires Bearer token | OK |
+
+**Do not commit:** `.env`, `mcp.json` (local Cursor config with `DATABASE_URL`), `squads_output.csv` / `squads_insert.sql` (scraper artifacts).
+
+**Admin key UX:** the injury admin panel accepts `?admin_key=…` once; the key is stored in **browser localStorage**, not in the frontend bundle. Avoid sharing URLs that still contain the query param (browser history / referrers).
+
+**Rotate if exposed:** `FOOTBALL_DATA_API_KEY`, `API_FOOTBALL_KEY`, `FOOTBALLDATA_IO_KEY`, `ANTHROPIC_API_KEY`, `MCP_API_KEY` / `FOOTBALLMIND_ADMIN_KEY`, and Neon credentials via the Neon dashboard.
 
 ### Render checklist (existing service)
 
