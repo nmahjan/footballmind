@@ -48,6 +48,13 @@ STANDING_ZONE_CONFIG: dict[str, list[dict]] = {
         {"id": "kopo", "label": "Knockout play-offs", "short": "PO", "color": "#fbbf24", "from": 9, "to": 24},
         {"id": "out", "label": "Eliminated", "short": "OUT", "color": "#64748b", "from": 25, "to": 99},
     ],
+    # MLS has no relegation. Playoff bands are per conference (typically 15 teams).
+    # 1–7: Round One best-of-3; 8–9: Wild Card; 10+: miss playoffs.
+    "MLS": [
+        {"id": "r1", "label": "Round One (best-of-3)", "short": "R1", "color": "#34d399", "from": 1, "to": 7},
+        {"id": "wc", "label": "Wild Card", "short": "WC", "color": "#fbbf24", "from": 8, "to": 9},
+        {"id": "out", "label": "Missed playoffs", "short": "OUT", "color": "#64748b", "from": 10, "to": 99},
+    ],
 }
 
 WC_GROUP_ZONES = [
@@ -88,10 +95,49 @@ def annotate_standings(table: list[dict], comp_code: str) -> list[dict]:
     out = []
     for row in table:
         copy = dict(row)
-        z = zone_for_rank(comp_code, int(copy.get("rank", 0)), n)
+        team_count = int(copy.get("conference_team_count") or n)
+        z = zone_for_rank(comp_code, int(copy.get("rank", 0)), team_count)
         copy["zone"] = z
         out.append(copy)
     return out
+
+
+def finalize_mls_standings(conn, table: list[dict]) -> list[dict]:
+    """Rank MLS teams within Eastern/Western conferences and attach playoff zones."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT name, conference FROM teams "
+            "WHERE type = 'club' AND conference IS NOT NULL",
+        )
+        conf_by_name = {name: conf for name, conf in cur.fetchall()}
+
+    by_conf: dict[str, list[dict]] = {}
+    orphan: list[dict] = []
+    for row in table:
+        conf = conf_by_name.get(row["team"])
+        if conf:
+            by_conf.setdefault(conf, []).append(dict(row))
+        else:
+            orphan.append(dict(row))
+
+    out: list[dict] = []
+    for conf in sorted(by_conf):
+        rows = by_conf[conf]
+        rows.sort(key=lambda t: (t["Pts"], t["GD"], t["GF"]), reverse=True)
+        n = len(rows)
+        for i, row in enumerate(rows, 1):
+            row["rank"] = i
+            row["conference"] = conf
+            row["conference_team_count"] = n
+            out.append(row)
+
+    if orphan:
+        orphan.sort(key=lambda t: (t["Pts"], t["GD"], t["GF"]), reverse=True)
+        for i, row in enumerate(orphan, 1):
+            row["rank"] = i
+            row["conference"] = None
+            out.append(row)
+    return annotate_standings(out, "MLS")
 
 
 def zone_legend(comp_code: str) -> list[dict]:

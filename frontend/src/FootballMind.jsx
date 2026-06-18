@@ -52,6 +52,7 @@ const LEAGUES = [
   { code: "FL1", label: "Ligue 1",         short: "Ligue 1" },
   { code: "CL",  label: "Champions League", short: "CL"  },
   { code: "DED", label: "Eredivisie",      short: "Eredivisie" },
+  { code: "MLS", label: "MLS",             short: "MLS" },
 ];
 
 // Qualification / relegation zones (mirrors footballmind_standings_zones.py)
@@ -98,6 +99,11 @@ const STANDING_ZONES = {
     { id: "kopo", label: "Knockout play-offs", short: "PO", color: "#fbbf24", from: 9, to: 24 },
     { id: "out", label: "Eliminated", short: "OUT", color: "#64748b", from: 25, to: 99 },
   ],
+  MLS: [
+    { id: "r1", label: "Round One (best-of-3)", short: "R1", color: "#34d399", from: 1, to: 7 },
+    { id: "wc", label: "Wild Card", short: "WC", color: "#fbbf24", from: 8, to: 9 },
+    { id: "out", label: "Missed playoffs", short: "OUT", color: "#64748b", from: 10, to: 99 },
+  ],
 };
 
 const WC_GROUP_ZONES = [
@@ -132,7 +138,56 @@ function standingLegend(compCode) {
 }
 
 function rowZone(compCode, row, teamCount) {
-  return row.zone ?? zoneForRank(compCode, row.rank, teamCount);
+  if (row.zone) return row.zone;
+  const count = compCode === "MLS"
+    ? (row.conference_team_count ?? teamCount)
+    : teamCount;
+  return zoneForRank(compCode, row.rank, count);
+}
+
+function standingsSections(compCode, rows) {
+  if (compCode !== "MLS") return [{ key: "all", label: null, rows }];
+  const east = rows.filter((r) => r.conference === "East");
+  const west = rows.filter((r) => r.conference === "West");
+  const other = rows.filter((r) => !r.conference);
+  const sections = [];
+  if (east.length) sections.push({ key: "east", label: "Eastern Conference", rows: east });
+  if (west.length) sections.push({ key: "west", label: "Western Conference", rows: west });
+  if (other.length) sections.push({ key: "other", label: "Unassigned", rows: other });
+  return sections.length ? sections : [{ key: "all", label: null, rows }];
+}
+
+function StandingsTableBody({ compCode, rows, teamCount }) {
+  return rows.map((r) => {
+    const zone = rowZone(compCode, r, teamCount);
+    return (
+      <tr key={`${r.conference ?? "x"}-${r.rank}-${r.team}`} className="border-t" style={{
+        borderColor: C.line,
+        background: zone ? `${zone.color}12` : undefined,
+        boxShadow: zone ? `inset 3px 0 0 ${zone.color}` : undefined,
+      }}>
+        <td className="px-3 py-2 tabular-nums" style={{ color: zone?.color ?? C.mute }}>
+          {r.rank}
+        </td>
+        <td className="px-2 py-2 max-w-[120px] truncate text-xs" style={{ color: C.chalk }}>
+          {r.team}
+          {zone && (
+            <span className="ml-1.5 text-[10px] font-medium" style={{ color: zone.color }}>
+              {zone.short}
+            </span>
+          )}
+        </td>
+        <td className="px-1.5 py-2 text-center tabular-nums text-xs" style={{ color: C.mute }}>{r.P ?? "—"}</td>
+        <td className="px-1.5 py-2 text-center tabular-nums text-xs" style={{ color: C.chalk }}>{r.W ?? "—"}</td>
+        <td className="px-1.5 py-2 text-center tabular-nums text-xs" style={{ color: C.mute }}>{r.D ?? "—"}</td>
+        <td className="px-1.5 py-2 text-center tabular-nums text-xs" style={{ color: C.mute }}>{r.L ?? "—"}</td>
+        <td className="px-2 py-2 text-right tabular-nums text-xs" style={{ color: C.mute }}>
+          {r.GD > 0 ? `+${r.GD}` : r.GD ?? "—"}
+        </td>
+        <td className="px-3 py-2 text-right font-semibold tabular-nums text-xs" style={{ color: C.chalk }}>{r.Pts}</td>
+      </tr>
+    );
+  });
 }
 
 // ─── Suggestion chips ─────────────────────────────────────────────────────
@@ -439,11 +494,11 @@ const DEMO_FIXTURES = [
 ];
 
 const DEMO_STANDINGS = [
-  { rank: 1, team: "Arsenal FC",          GD: 44, Pts: 85 },
-  { rank: 2, team: "Manchester City FC",  GD: 42, Pts: 78 },
-  { rank: 3, team: "Manchester United FC",GD: 19, Pts: 71 },
-  { rank: 4, team: "Aston Villa FC",      GD:  7, Pts: 65 },
-  { rank: 5, team: "Liverpool FC",        GD: 10, Pts: 60 },
+  { rank: 1, team: "Arsenal FC",          P: 38, W: 26, D: 7, L: 5, GD: 44, Pts: 85 },
+  { rank: 2, team: "Manchester City FC",  P: 38, W: 24, D: 6, L: 8, GD: 42, Pts: 78 },
+  { rank: 3, team: "Manchester United FC",P: 38, W: 21, D: 8, L: 9, GD: 19, Pts: 71 },
+  { rank: 4, team: "Aston Villa FC",      P: 38, W: 19, D: 8, L: 11, GD:  7, Pts: 65 },
+  { rank: 5, team: "Liverpool FC",        P: 38, W: 17, D: 9, L: 12, GD: 10, Pts: 60 },
 ];
 
 function demoPredict(home, away) {
@@ -1994,6 +2049,7 @@ function GroupsPanel({ groups }) {
           <thead>
             <tr className="text-[10px] uppercase" style={{ color: C.mute }}>
               <th className="px-3 py-1 text-left font-medium">Team</th>
+              <th className="px-2 py-1 text-center font-medium">P</th>
               <th className="px-2 py-1 text-center font-medium">W</th>
               <th className="px-2 py-1 text-center font-medium">D</th>
               <th className="px-2 py-1 text-center font-medium">L</th>
@@ -2019,6 +2075,7 @@ function GroupsPanel({ groups }) {
                     <span className="ml-1 text-[10px] font-medium" style={{ color: zone.color }}>{zone.short}</span>
                   )}
                 </td>
+                <td className="px-2 py-1.5 text-center text-xs tabular-nums" style={{ color: C.mute }}>{r.P ?? "—"}</td>
                 <td className="px-2 py-1.5 text-center text-xs tabular-nums" style={{ color: C.chalk }}>{r.W}</td>
                 <td className="px-2 py-1.5 text-center text-xs tabular-nums" style={{ color: C.mute }}>{r.D}</td>
                 <td className="px-2 py-1.5 text-center text-xs tabular-nums" style={{ color: C.mute }}>{r.L}</td>
@@ -2109,44 +2166,38 @@ function StandingsPanel({ apiBase, offline, onCompChange }) {
         </div>
       ) : (
         <>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[11px] uppercase" style={{ color: C.mute }}>
-              <th className="px-3 py-1.5 text-left font-medium w-8">#</th>
-              <th className="px-2 py-1.5 text-left font-medium">Club</th>
-              <th className="px-2 py-1.5 text-right font-medium">GD</th>
-              <th className="px-3 py-1.5 text-right font-medium">Pts</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const zone = rowZone(activeComp, r, rows.length);
-              return (
-              <tr key={r.rank} className="border-t" style={{
-                borderColor: C.line,
-                background: zone ? `${zone.color}12` : undefined,
-                boxShadow: zone ? `inset 3px 0 0 ${zone.color}` : undefined,
-              }}>
-                <td className="px-3 py-2 tabular-nums" style={{ color: zone?.color ?? C.mute }}>
-                  {r.rank}
-                </td>
-                <td className="px-2 py-2 max-w-[140px] truncate" style={{ color: C.chalk }}>
-                  {r.team}
-                  {zone && (
-                    <span className="ml-1.5 text-[10px] font-medium" style={{ color: zone.color }}>
-                      {zone.short}
-                    </span>
-                  )}
-                </td>
-                <td className="px-2 py-2 text-right tabular-nums" style={{ color: C.mute }}>
-                  {r.GD > 0 ? `+${r.GD}` : r.GD}
-                </td>
-                <td className="px-3 py-2 text-right font-semibold tabular-nums" style={{ color: C.chalk }}>{r.Pts}</td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {standingsSections(activeComp, rows).map((section) => (
+          <div key={section.key}>
+            {section.label && (
+              <div className="border-t px-4 py-2 text-[11px] font-semibold uppercase tracking-wide"
+                style={{ borderColor: C.line, color: C.mute }}>
+                {section.label}
+              </div>
+            )}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[10px] uppercase" style={{ color: C.mute }}>
+                  <th className="px-3 py-1.5 text-left font-medium w-8">#</th>
+                  <th className="px-2 py-1.5 text-left font-medium">Club</th>
+                  <th className="px-1.5 py-1.5 text-center font-medium">P</th>
+                  <th className="px-1.5 py-1.5 text-center font-medium">W</th>
+                  <th className="px-1.5 py-1.5 text-center font-medium">D</th>
+                  <th className="px-1.5 py-1.5 text-center font-medium">L</th>
+                  <th className="px-1.5 py-1.5 text-right font-medium">GD</th>
+                  <th className="px-3 py-1.5 text-right font-medium">Pts</th>
+                </tr>
+              </thead>
+              <tbody>
+                <StandingsTableBody compCode={activeComp} rows={section.rows} teamCount={rows.length} />
+              </tbody>
+            </table>
+          </div>
+        ))}
+        {activeComp === "MLS" && (
+          <div className="border-t px-3 py-2 text-[10px]" style={{ borderColor: C.line, color: C.mute }}>
+            MLS has no relegation. Top 9 per conference reach the Audi MLS Cup Playoffs (seeds 1–7 Round One, 8–9 Wild Card).
+          </div>
+        )}
         <StandingsLegend compCode={activeComp} />
         </>
       )}

@@ -150,11 +150,19 @@ def cmd_sync(full=False):
                     api_key = os.environ.get("API_FOOTBALL_KEY", "").strip()
                     if api_key:
                         from footballmind_enrich import (
-                            ApiFootballClient, sync_api_football_competition,
+                            ApiFootballClient,
+                            sync_api_football_comp_metadata,
+                            sync_api_football_competition,
                         )
-                        nf = sync_api_football_competition(
-                            conn, ApiFootballClient(api_key), code)
-                        print(f"[sync] MLS fixtures via api-football: {nf}", flush=True)
+                        af_client = ApiFootballClient(api_key)
+                        nf = sync_api_football_competition(conn, af_client, code)
+                        meta = sync_api_football_comp_metadata(conn, af_client, code)
+                        print(
+                            f"[sync] MLS via api-football: {nf} fixtures, "
+                            f"{meta['conferences']} conference tags, "
+                            f"{meta['players']} players",
+                            flush=True,
+                        )
                     else:
                         print("[sync] MLS skipped — needs API_FOOTBALL_KEY "
                               "(not on football-data.org free tier)", flush=True)

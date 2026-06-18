@@ -211,6 +211,14 @@ class ApiFootballClient:
         data = self.get("/fixtures", {"league": league_id, "season": season})
         return data.get("response") or []
 
+    def standings(self, league_id: int, season: int) -> list:
+        data = self.get("/standings", {"league": league_id, "season": season})
+        return data.get("response") or []
+
+    def teams(self, league_id: int, season: int) -> list:
+        data = self.get("/teams", {"league": league_id, "season": season})
+        return data.get("response") or []
+
     def fixtures_last(self, league_id: int, season: int, last: int = 5) -> list:
         data = self.get("/fixtures", {
             "league": league_id, "season": season, "last": last,
@@ -451,6 +459,92 @@ def sync_api_football_competition(conn, client: ApiFootballClient,
     conn.commit()
     apply_pending_ratings(conn, comp_code)
     return n
+
+
+def _short_mls_conference(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    low = raw.lower()
+    if "east" in low:
+        return "East"
+    if "west" in low:
+        return "West"
+    return raw.strip()
+
+
+def sync_api_football_conferences(conn, client: ApiFootballClient,
+                                  comp_code: str) -> int:
+    """Set team.conference from API-Football standings groups (MLS East/West)."""
+    cfg = API_FOOTBALL_LEAGUES.get(comp_code)
+    if not cfg:
+        return 0
+    league_id, season = cfg
+    n = 0
+    with conn.cursor() as cur:
+        for block in client.standings(league_id, season):
+            for group_rows in block.get("league", {}).get("standings") or []:
+                if not group_rows:
+                    continue
+                conf = _short_mls_conference(group_rows[0].get("group"))
+                for row in group_rows:
+                    team = row.get("team") or {}
+                    name = team.get("name")
+                    if not name:
+                        continue
+                    from footballmind_sync import upsert_team
+                    tid = upsert_team(cur, name, "club", team.get("id"))
+                    group_label = _short_mls_conference(row.get("group")) or conf
+                    if group_label:
+                        cur.execute(
+                            "UPDATE teams SET conference = %s WHERE id = %s",
+                            (group_label, tid))
+                        n += 1
+    conn.commit()
+    return n
+
+
+def sync_api_football_squads(conn, client: ApiFootballClient,
+                             comp_code: str) -> int:
+    """Pull league squads + player affiliations via API-Football (e.g. MLS)."""
+    from footballmind_sync import upsert_player_row, upsert_team
+
+    cfg = API_FOOTBALL_LEAGUES.get(comp_code)
+    if not cfg:
+        return 0
+    league_id, season = cfg
+    n = 0
+    with conn.cursor() as cur:
+        for row in client.teams(league_id, season):
+            team_api = row.get("team") or {}
+            team_name = team_api.get("name")
+            if not team_name:
+                continue
+            team_id = upsert_team(cur, team_name, "club", team_api.get("id"))
+            for p in row.get("players") or []:
+                player_row = {
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "position": p.get("position"),
+                }
+                if upsert_player_row(cur, player_row, team_id, "club"):
+                    n += 1
+    conn.commit()
+    return n
+
+
+def sync_api_football_comp_metadata(conn, client: ApiFootballClient,
+                                    comp_code: str) -> dict[str, int]:
+    """Conference labels + squads for API-Football-only leagues."""
+    out = {"conferences": 0, "players": 0}
+    try:
+        out["conferences"] = sync_api_football_conferences(conn, client, comp_code)
+    except Exception:
+        pass
+    try:
+        out["players"] = sync_api_football_squads(conn, client, comp_code)
+    except Exception:
+        pass
+    return out
 
 
 def sync_enrichment(conn, comps: list[str] | None = None) -> dict[str, int]:

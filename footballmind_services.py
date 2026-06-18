@@ -492,7 +492,7 @@ def compute_standings(rows):
 
 
 def get_standings(conn, comp_code: str = "PL", season: str | None = None) -> list:
-    from footballmind_standings_zones import annotate_standings
+    from footballmind_standings_zones import annotate_standings, finalize_mls_standings
 
     with conn.cursor() as cur:
         cur.execute(
@@ -503,7 +503,10 @@ def get_standings(conn, comp_code: str = "PL", season: str | None = None) -> lis
             "JOIN teams ta ON ta.id = m.away_team_id "
             "WHERE c.code = %s AND m.home_goals IS NOT NULL "
             "  AND (%s::text IS NULL OR e.season = %s)", (comp_code, season, season))
-        return annotate_standings(compute_standings(cur.fetchall()), comp_code)
+        table = compute_standings(cur.fetchall())
+    if comp_code == "MLS":
+        return finalize_mls_standings(conn, table)
+    return annotate_standings(table, comp_code)
 
 
 def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
@@ -670,8 +673,9 @@ def get_groups(conn, comp: str = "WC") -> dict:
 
     groups = {}
     for g, team, W, D, L, GF, GA, Pts in rows:
+        w, d, lp = int(W), int(D), int(L)
         groups.setdefault(g, []).append({
-            "team": team, "W": W, "D": D, "L": L,
+            "team": team, "P": w + d + lp, "W": w, "D": d, "L": lp,
             "GD": GF - GA, "GF": GF, "GA": GA, "Pts": Pts,
         })
     return groups
