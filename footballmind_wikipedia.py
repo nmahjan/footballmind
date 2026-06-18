@@ -684,9 +684,8 @@ def _apply_wikipedia_player(
             "(player_id, edition_id, team_id, goals, appearances) "
             "VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT (player_id, edition_id) DO UPDATE SET "
-            "  goals = GREATEST(player_edition_stats.goals, EXCLUDED.goals), "
-            "  appearances = GREATEST("
-            "    player_edition_stats.appearances, EXCLUDED.appearances), "
+            "  goals = EXCLUDED.goals, "
+            "  appearances = EXCLUDED.appearances, "
             "  team_id = COALESCE(EXCLUDED.team_id, player_edition_stats.team_id)",
             (pid, edition_id, team_id, goals or 0, caps or 0),
         )

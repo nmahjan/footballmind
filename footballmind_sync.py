@@ -372,6 +372,10 @@ def upsert_player_row(cur, p, team_id, kind):
 def sync_scorers(conn, client, comp_code, season, team_type="club",
                  comp_name=None, comp_type=None):
     """Pull competition top scorers -> player_edition_stats."""
+    # football-data.org returns career international totals for WC scorers, not
+    # tournament stats — use match/ESPN aggregation for national competitions.
+    if team_type == "national":
+        return 0
     kind = "national" if team_type == "national" else "club"
     year = int(season.split("/")[0]) if "/" in season else int(season)
     rows = client.scorers(comp_code, season=year)

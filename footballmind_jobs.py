@@ -47,6 +47,7 @@ COMPETITIONS = [
     ("FL1", "Ligue 1",               "domestic_league",   "club",     "2025/26"),
     ("DED", "Eredivisie",            "domestic_league",   "club",     "2025/26"),
     ("WC",  "FIFA World Cup",        "international",     "national", "2026"),
+    ("MLS", "MLS",                   "domestic_league",   "club",     "2026"),
 ]
 
 # football-data.org v4 no longer exposes captain on squad/person — maintain manually.
@@ -145,6 +146,19 @@ def cmd_sync(full=False):
     with _connect() as conn:
         for code, name, ctype, team_type, season in COMPETITIONS:
             try:
+                if code == "MLS":
+                    api_key = os.environ.get("API_FOOTBALL_KEY", "").strip()
+                    if api_key:
+                        from footballmind_enrich import (
+                            ApiFootballClient, sync_api_football_competition,
+                        )
+                        nf = sync_api_football_competition(
+                            conn, ApiFootballClient(api_key), code)
+                        print(f"[sync] MLS fixtures via api-football: {nf}", flush=True)
+                    else:
+                        print("[sync] MLS skipped — needs API_FOOTBALL_KEY "
+                              "(not on football-data.org free tier)", flush=True)
+                    continue
                 print(f"[sync] {code} matches...", flush=True)
                 sync_competition(conn, client, code, name, ctype, season,
                                  team_type=team_type, since=since)

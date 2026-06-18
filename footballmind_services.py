@@ -8,18 +8,19 @@ from datetime import date
 KNOCKOUT_ORDER = ["final", "semi_final", "quarter_final", "round_of_16", "round_of_32"]
 POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3, "?": 9}
 
-SUPPORTED_COMP_CODES = frozenset({"PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC"})
+SUPPORTED_COMP_CODES = frozenset({"PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC", "MLS"})
 COMP_LABELS = {
     "PL": "Premier League", "PD": "La Liga", "BL1": "Bundesliga",
     "SA": "Serie A", "FL1": "Ligue 1", "CL": "Champions League",
-    "DED": "Eredivisie", "WC": "World Cup",
+    "DED": "Eredivisie", "WC": "World Cup", "MLS": "MLS",
 }
 # Longest phrases first so "champions league" beats "liga".
 COMP_PHRASES = (
     ("champions league", "CL"), ("premier league", "PL"), ("la liga", "PD"),
     ("laliga", "PD"), ("primera division", "PD"), ("primera división", "PD"),
     ("bundesliga", "BL1"), ("serie a", "SA"), ("ligue 1", "FL1"),
-    ("eredivisie", "DED"), ("world cup", "WC"),
+    ("eredivisie", "DED"), ("world cup", "WC"), ("mls", "MLS"),
+    ("major league soccer", "MLS"),
 )
 _POS_WEIGHT = {"FWD": 1.0, "MID": 0.9, "DEF": 0.75, "GK": 0.65, "?": 0.8}
 _STANDOUT_TEAM_CAP = 2          # max players per team in one standouts list
@@ -249,6 +250,113 @@ def _standout_sql_order() -> str:
     )
 
 
+def _prefer_match_derived_stats(conn, comp: str, edition_id: int | None) -> bool:
+    """Use goals/apps from finished matches in this edition (not career pes rows)."""
+    if not edition_id:
+        return False
+    if _affil_kind_for_comp(conn, comp) == "national":
+        return True
+    return _has_match_derived_stats(conn, edition_id)
+
+
+def _has_match_derived_stats(conn, edition_id: int) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM match_events me "
+            "JOIN matches m ON m.id = me.match_id "
+            "WHERE m.edition_id = %s AND me.event_type IN ('GOAL', 'PENALTY') "
+            "LIMIT 1",
+            (edition_id,))
+        if cur.fetchone():
+            return True
+        cur.execute(
+            "SELECT 1 FROM match_player_box_stats mpbs "
+            "JOIN matches m ON m.id = mpbs.match_id "
+            "WHERE m.edition_id = %s LIMIT 1",
+            (edition_id,))
+        if cur.fetchone():
+            return True
+        cur.execute(
+            "SELECT 1 FROM match_lineup_players mlp "
+            "JOIN matches m ON m.id = mlp.match_id "
+            "WHERE m.edition_id = %s AND m.home_goals IS NOT NULL LIMIT 1",
+            (edition_id,))
+        return cur.fetchone() is not None
+
+
+def _edition_player_stats_from_matches(conn, edition_id: int) -> dict[int, dict]:
+    """Aggregate tournament/season stats from synced match detail."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT me.player_id, COUNT(*)::int "
+            "FROM match_events me "
+            "JOIN matches m ON m.id = me.match_id "
+            "WHERE m.edition_id = %s AND me.player_id IS NOT NULL "
+            "  AND me.event_type IN ('GOAL', 'PENALTY') "
+            "GROUP BY me.player_id",
+            (edition_id,))
+        goals = {r[0]: r[1] for r in cur.fetchall()}
+
+        cur.execute(
+            "SELECT me.assist_player_id, COUNT(*)::int "
+            "FROM match_events me "
+            "JOIN matches m ON m.id = me.match_id "
+            "WHERE m.edition_id = %s AND me.assist_player_id IS NOT NULL "
+            "  AND me.event_type IN ('GOAL', 'PENALTY') "
+            "GROUP BY me.assist_player_id",
+            (edition_id,))
+        assists = {r[0]: r[1] for r in cur.fetchall()}
+
+        cur.execute(
+            "SELECT mlp.player_id, COUNT(DISTINCT mlp.match_id)::int, "
+            "       MIN(mlp.team_id) "
+            "FROM match_lineup_players mlp "
+            "JOIN matches m ON m.id = mlp.match_id "
+            "WHERE m.edition_id = %s AND m.home_goals IS NOT NULL "
+            "GROUP BY mlp.player_id",
+            (edition_id,))
+        apps = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+
+        cur.execute(
+            "SELECT mpbs.player_id, SUM(COALESCE(mpbs.saves, 0))::int "
+            "FROM match_player_box_stats mpbs "
+            "JOIN matches m ON m.id = mpbs.match_id "
+            "WHERE m.edition_id = %s "
+            "GROUP BY mpbs.player_id "
+            "HAVING SUM(COALESCE(mpbs.saves, 0)) > 0",
+            (edition_id,))
+        saves = {r[0]: r[1] for r in cur.fetchall()}
+
+    out: dict[int, dict] = {}
+    for pid in set(goals) | set(assists) | set(apps) | set(saves):
+        app_n, team_id = apps.get(pid, (0, None))
+        out[pid] = {
+            "goals": goals.get(pid, 0),
+            "assists": assists.get(pid, 0),
+            "appearances": app_n,
+            "team_id": team_id,
+            "saves": saves.get(pid),
+        }
+    return out
+
+
+def _position_matches(pos: str | None, pos_filter: str | None) -> bool:
+    if not pos_filter:
+        return True
+    coarse = normalize_position(pos) or (pos or "?").upper()
+    want = pos_filter.upper()
+    if want == "GK":
+        return coarse == "GK"
+    return coarse == want
+
+
+def _has_standout_signal(pos: str | None, goals: int, assists: int,
+                          apps: int, saves: int | None) -> bool:
+    if (goals or 0) > 0 or (assists or 0) > 0 or (saves or 0) > 0:
+        return True
+    return False
+
+
 def _has_comp_scorers(conn, edition_id: int | None) -> bool:
     if not edition_id:
         return False
@@ -279,7 +387,7 @@ def parse_comp_from_text(text: str) -> str | None:
     raw = (text or "").strip()
     if not raw:
         return None
-    m = re.search(r"\b(PL|PD|BL1|SA|FL1|CL|DED|WC)\b", raw, re.I)
+    m = re.search(r"\b(PL|PD|BL1|SA|FL1|CL|DED|WC|MLS)\b", raw, re.I)
     if m:
         code = m.group(1).upper()
         return code if code in SUPPORTED_COMP_CODES else None
@@ -605,17 +713,81 @@ def get_rankings(conn, comp: str = "WC", limit: int = 48) -> list:
 
 
 def _standout_from_row(name, team, pos, rating, dob, nat, goals, ast, apps,
-                       team_id, team_defense, club=None):
+                       team_id, team_defense, club=None, saves=None):
     td = team_defense.get(team_id, {}) if team_id else {}
     ga_pg = td.get("ga_per_game")
     cs = td.get("clean_sheets")
     gp = td.get("gp")
     sr = _compute_standout_rating(
         rating, goals, ast, apps, pos,
-        ga_per_game=ga_pg, clean_sheets=cs, team_gp=gp)
+        ga_per_game=ga_pg, clean_sheets=cs, team_gp=gp, saves=saves)
     return _row_player(
         name, team, pos, rating, dob, nat, goals, ast, apps, sr, club,
-        ga_per_game=ga_pg, clean_sheets=cs, team_gp=gp)
+        ga_per_game=ga_pg, clean_sheets=cs, team_gp=gp, saves=saves)
+
+
+def _get_standouts_from_match_stats(
+    conn, comp: str, edition_id: int, pos_filter: str | None,
+    team_defense: dict, limit: int,
+) -> list:
+    stats_by_player = _edition_player_stats_from_matches(conn, edition_id)
+    if not stats_by_player:
+        return []
+    kind = _affil_kind_for_comp(conn, comp)
+    pids = list(stats_by_player.keys())
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT p.id, p.name, t.name, p.position, tr.rating, p.birth_date, "
+            "       co.name, pa.team_id "
+            "FROM players p "
+            "JOIN player_affiliations pa ON pa.player_id = p.id AND pa.end_date IS NULL "
+            "  AND pa.kind = %s "
+            "JOIN teams t ON t.id = pa.team_id "
+            "LEFT JOIN team_ratings tr ON tr.team_id = t.id "
+            "LEFT JOIN countries co ON co.id = p.nationality "
+            "WHERE p.id = ANY(%s) "
+            "  AND EXISTS ("
+            "    SELECT 1 FROM matches m "
+            "    WHERE m.edition_id = %s "
+            "      AND (m.home_team_id = t.id OR m.away_team_id = t.id)"
+            "  )",
+            (kind, pids, edition_id))
+        rows = cur.fetchall()
+
+    standouts = []
+    for pid, name, team, pos, rating, dob, nat, aff_team_id in rows:
+        st = stats_by_player.get(pid, {})
+        goals = st.get("goals", 0)
+        ast = st.get("assists", 0)
+        apps = st.get("appearances", 0)
+        saves = st.get("saves")
+        team_id = st.get("team_id") or aff_team_id
+        pos_ok = _position_matches(pos, pos_filter)
+        if pos_filter == "GK" and not pos_ok and not saves:
+            continue
+        if pos_filter and pos_filter != "GK" and not pos_ok:
+            continue
+        if not pos_filter and _position_matches(pos, "GK"):
+            continue
+        if pos_filter == "GK":
+            if not (saves or _position_matches(pos, "GK")):
+                continue
+        elif pos_filter == "DEF":
+            if not _position_matches(pos, "DEF"):
+                continue
+        elif not _has_standout_signal(pos, goals, ast, apps, saves):
+            continue
+        if not pos_filter and not _has_standout_signal(pos, goals, ast, apps, saves):
+            continue
+        standouts.append(_standout_from_row(
+            name, team, normalize_position(pos) or (pos or "GK"), rating, dob, nat,
+            goals or None, ast or None, apps or None, team_id, team_defense,
+            saves=saves))
+    if pos_filter == "GK":
+        standouts.sort(key=lambda x: (-(x.get("saves") or 0), -(x.get("standout_rating") or 0), x["name"]))
+    else:
+        standouts.sort(key=lambda x: (-(x.get("standout_rating") or 0), x["name"]))
+    return _cap_players_per_team(standouts)[:limit]
 
 
 def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: int = 20) -> list:
@@ -629,6 +801,12 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
     edition_id = _edition_id_for_comp(conn, comp)
     kind = _affil_kind_for_comp(conn, comp)
     team_defense = _team_season_defense(conn, edition_id) if edition_id else {}
+
+    if edition_id and _prefer_match_derived_stats(conn, comp, edition_id):
+        match_standouts = _get_standouts_from_match_stats(
+            conn, comp, edition_id, pos_filter, team_defense, limit)
+        if match_standouts:
+            return match_standouts
 
     if edition_id and _has_comp_scorers(conn, edition_id):
         with conn.cursor() as cur:
@@ -675,7 +853,8 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
             "  FROM player_edition_stats pes "
             "  JOIN teams t2 ON t2.id = pes.team_id "
             "  WHERE pes.player_id = p.id "
-            "  ORDER BY (pes.goals + pes.assists * 0.6) DESC, pes.appearances DESC "
+            + ("  AND pes.edition_id = %s " if edition_id else "")
+            + "  ORDER BY (pes.goals + pes.assists * 0.6) DESC, pes.appearances DESC "
             "  LIMIT 1"
             ") cs ON true "
             "WHERE pa.end_date IS NULL AND pa.kind = %s "
@@ -687,7 +866,10 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
             "      AND (m.home_team_id = t.id OR m.away_team_id = t.id)"
             "  ) "
         )
-        params: list = [kind, comp]
+        params: list = []
+        if edition_id:
+            params.append(edition_id)
+        params.extend([kind, comp])
         if pos_filter:
             sql += " AND p.position = %s "
             params.append(pos_filter)
@@ -1018,6 +1200,48 @@ def get_top_scorers(conn, comp: str = "PL", limit: int = 20) -> list:
     edition_id = _edition_id_for_comp(conn, comp)
     if not edition_id:
         return []
+
+    if _prefer_match_derived_stats(conn, comp, edition_id):
+        stats_by_player = _edition_player_stats_from_matches(conn, edition_id)
+        if stats_by_player:
+            kind = _affil_kind_for_comp(conn, comp)
+            pids = list(stats_by_player.keys())
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT p.id, p.name, t.name, p.position, p.birth_date, co.name, "
+                    "       pa.team_id "
+                    "FROM players p "
+                    "JOIN player_affiliations pa ON pa.player_id = p.id "
+                    "  AND pa.end_date IS NULL AND pa.kind = %s "
+                    "JOIN teams t ON t.id = pa.team_id "
+                    "LEFT JOIN countries co ON co.id = p.nationality "
+                    "WHERE p.id = ANY(%s)",
+                    (kind, pids))
+                rows = cur.fetchall()
+            ranked = []
+            for pid, name, team, pos, dob, nat, _tid in rows:
+                st = stats_by_player.get(pid, {})
+                goals = st.get("goals", 0)
+                if goals <= 0:
+                    continue
+                ranked.append((goals, st.get("assists", 0), name, team, pos, dob, nat, st))
+            ranked.sort(key=lambda r: (-r[0], -r[1], r[2]))
+            scorers = []
+            for i, (goals, assists, name, team, pos, dob, nat, st) in enumerate(ranked[:limit], 1):
+                scorers.append({
+                    "rank": i,
+                    "name": name,
+                    "team": team,
+                    "position": pos or "?",
+                    "goals": goals,
+                    "assists": assists,
+                    "appearances": st.get("appearances", 0),
+                    "penalties": None,
+                    "age": _player_age(dob),
+                    "nationality": nat,
+                })
+            return scorers
+
     with conn.cursor() as cur:
         cur.execute(
             "SELECT p.name, t.name, p.position, pes.goals, pes.assists, "

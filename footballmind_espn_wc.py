@@ -16,6 +16,7 @@ import requests
 
 from footballmind_enrich import _resolve_player_on_team, _resolve_team_id, _store_provider_id
 from footballmind_lineup import normalize_formation
+from footballmind_services import normalize_position
 
 PROVIDER = "espn"
 WC_SLUG = "fifa.world"
@@ -98,17 +99,22 @@ def _find_match_by_provider(cur, espn_event_id: str) -> int | None:
     return row[0] if row else None
 
 
-def _find_match_by_teams_date(cur, home_id: int, away_id: int, match_day: date) -> int | None:
-    cur.execute(
-        "SELECT m.id FROM matches m "
-        "JOIN competition_editions e ON e.id = m.edition_id "
-        "JOIN competitions c ON c.id = e.competition_id "
-        "WHERE c.code = 'WC' AND m.home_team_id = %s AND m.away_team_id = %s "
-        "  AND m.match_date::date = %s "
-        "LIMIT 1",
-        (home_id, away_id, match_day))
-    row = cur.fetchone()
-    return row[0] if row else None
+def _find_match_by_teams_date(cur, home_id: int, away_id: int, match_day: date,
+                              slack_days: int = 1) -> int | None:
+    for delta in (0,) + tuple(d for d in range(-slack_days, slack_days + 1) if d != 0):
+        day = match_day + timedelta(days=delta)
+        cur.execute(
+            "SELECT m.id FROM matches m "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "WHERE c.code = 'WC' AND m.home_team_id = %s AND m.away_team_id = %s "
+            "  AND m.match_date::date = %s "
+            "LIMIT 1",
+            (home_id, away_id, day))
+        row = cur.fetchone()
+        if row:
+            return row[0]
+    return None
 
 
 def _resolve_or_create_player(cur, team_id: int, athlete: dict, espn_athlete_id: str | None) -> int | None:
@@ -147,6 +153,103 @@ def _resolve_or_create_player(cur, team_id: int, athlete: dict, espn_athlete_id:
     return pid
 
 
+def _stat_value(stats: list[dict], name: str) -> int | None:
+    for row in stats or []:
+        if row.get("name") == name:
+            try:
+                return int(float(row.get("value") or 0))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _sync_espn_key_events(cur, match_id: int, summary: dict,
+                          name_to_id: dict[str, int]) -> int:
+    """Insert goals/assists from ESPN keyEvents into match_events."""
+    cur.execute("DELETE FROM match_events WHERE match_id = %s", (match_id,))
+    n = 0
+    for event in summary.get("keyEvents") or []:
+        if not event.get("scoringPlay"):
+            continue
+        etype_raw = ((event.get("type") or {}).get("type") or "").lower()
+        if "own" in etype_raw and "goal" in etype_raw:
+            etype = "OWN_GOAL"
+        elif "penalty" in etype_raw:
+            etype = "PENALTY"
+        else:
+            etype = "GOAL"
+        team_name = _espn_team_name((event.get("team") or {}).get("displayName"))
+        team_id = name_to_id.get(team_name)
+        if not team_id and team_name:
+            team_id = _resolve_team_id(cur, team_name)
+        participants = event.get("participants") or []
+        scorer_id = assist_id = None
+        if participants:
+            scorer_ath = (participants[0].get("athlete") or {})
+            scorer_id = _resolve_or_create_player(
+                cur, team_id, scorer_ath,
+                str(scorer_ath["id"]) if scorer_ath.get("id") else None,
+            ) if team_id else None
+        if len(participants) > 1:
+            assist_ath = (participants[1].get("athlete") or {})
+            assist_id = _resolve_or_create_player(
+                cur, team_id, assist_ath,
+                str(assist_ath["id"]) if assist_ath.get("id") else None,
+            ) if team_id else None
+        minute = None
+        clock = event.get("clock") or {}
+        try:
+            minute = int((clock.get("value") or 0) // 60) or None
+        except (TypeError, ValueError):
+            minute = None
+        cur.execute(
+            "INSERT INTO match_events "
+            "(match_id, team_id, player_id, assist_player_id, event_type, minute) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (match_id, team_id, scorer_id, assist_id, etype, minute))
+        n += 1
+    return n
+
+
+def _sync_espn_box_stats(cur, match_id: int, rosters: list[dict],
+                         name_to_id: dict[str, int]) -> int:
+    """Persist per-match saves / goals conceded from ESPN roster stats."""
+    cur.execute(
+        "DELETE FROM match_player_box_stats WHERE match_id = %s",
+        (match_id,))
+    n = 0
+    for roster in rosters:
+        team_name = _espn_team_name((roster.get("team") or {}).get("displayName"))
+        team_id = name_to_id.get(team_name) or _resolve_team_id(cur, team_name)
+        if not team_id:
+            continue
+        for entry in roster.get("roster") or []:
+            athlete = entry.get("athlete") or {}
+            espn_aid = athlete.get("id")
+            pid = _resolve_or_create_player(
+                cur, team_id, athlete, str(espn_aid) if espn_aid else None)
+            if not pid:
+                continue
+            stats = entry.get("stats") or []
+            saves = _stat_value(stats, "saves")
+            gc = _stat_value(stats, "goalsConceded")
+            apps = _stat_value(stats, "appearances")
+            if not apps and not entry.get("starter"):
+                continue
+            if saves is None and gc is None:
+                continue
+            cur.execute(
+                "INSERT INTO match_player_box_stats "
+                "(match_id, player_id, saves, goals_conceded) "
+                "VALUES (%s,%s,%s,%s) "
+                "ON CONFLICT (match_id, player_id) DO UPDATE SET "
+                "  saves = EXCLUDED.saves, goals_conceded = EXCLUDED.goals_conceded, "
+                "  synced_at = now()",
+                (match_id, pid, saves, gc))
+            n += 1
+    return n
+
+
 def _upsert_team_lineup(cur, match_id: int, team_id: int, formation: str | None,
                         roster_entries: list[dict]) -> int:
     """Replace lineup rows for one team; return count of players written."""
@@ -169,6 +272,7 @@ def _upsert_team_lineup(cur, match_id: int, team_id: int, formation: str | None,
             continue
         role = "starter" if entry.get("starter") else "bench"
         pos = (entry.get("position") or {}).get("name") or (entry.get("position") or {}).get("abbreviation")
+        pos = normalize_position(pos) or pos
         jersey = entry.get("jersey")
         try:
             jersey = int(jersey) if jersey is not None else None
@@ -218,6 +322,7 @@ def ingest_summary(conn, espn_event_id: str, home_name: str, away_name: str,
             team_id = name_to_id.get(team_name) or _resolve_team_id(cur, team_name)
             if not team_id:
                 continue
+            name_to_id[team_name] = team_id
             players = roster.get("roster") or []
             if not players:
                 continue
@@ -226,6 +331,9 @@ def ingest_summary(conn, espn_event_id: str, home_name: str, away_name: str,
             if n:
                 stats["teams"] += 1
                 stats["players"] += n
+
+        stats["events"] = _sync_espn_key_events(cur, match_id, summary, name_to_id)
+        stats["box_stats"] = _sync_espn_box_stats(cur, match_id, rosters, name_to_id)
 
     conn.commit()
     return stats
@@ -240,9 +348,14 @@ def _pending_db_matches(cur, limit: int) -> list[tuple[int, date, str, str]]:
         "JOIN competition_editions e ON e.id = m.edition_id "
         "JOIN competitions c ON c.id = e.competition_id "
         "WHERE c.code = 'WC' AND m.home_goals IS NOT NULL "
-        "  AND NOT EXISTS ("
-        "    SELECT 1 FROM match_team_lineups mtl "
-        "    WHERE mtl.match_id = m.id AND mtl.formation IS NOT NULL"
+        "  AND ("
+        "    NOT EXISTS ("
+        "      SELECT 1 FROM match_team_lineups mtl "
+        "      WHERE mtl.match_id = m.id AND mtl.formation IS NOT NULL"
+        "    ) "
+        "    OR NOT EXISTS ("
+        "      SELECT 1 FROM match_events me WHERE me.match_id = m.id"
+        "    )"
         "  ) "
         "ORDER BY m.match_date DESC LIMIT %s",
         (limit,))
@@ -258,6 +371,22 @@ def _find_espn_event_for_match(events: list[dict], home: str, away: str) -> dict
         if eh == home and ea == away:
             return ev
     return None
+
+
+def _find_espn_event_near_date(
+    events_by_day: dict[date, list[dict]],
+    match_day: date,
+    home: str,
+    away: str,
+    slack_days: int = 1,
+) -> tuple[dict | None, date | None]:
+    """Match by teams; allow ±slack_days when FDO and ESPN kickoff dates differ."""
+    for delta in (0,) + tuple(d for d in range(-slack_days, slack_days + 1) if d != 0):
+        day = match_day + timedelta(days=delta)
+        ev = _find_espn_event_for_match(events_by_day.get(day) or [], home, away)
+        if ev:
+            return ev, day
+    return None, None
 
 
 def sync_espn_wc_lineups(conn, limit: int = 25, since_days: int = 21,
@@ -279,7 +408,10 @@ def sync_espn_wc_lineups(conn, limit: int = 25, since_days: int = 21,
 
     today = date.today()
     scan_days = {today - timedelta(days=d) for d in range(since_days + 1)}
-    scan_days.update(by_day.keys())
+    for match_day in by_day:
+        scan_days.add(match_day)
+        for delta in (-1, 1):
+            scan_days.add(match_day + timedelta(days=delta))
 
     events_by_day: dict[date, list[dict]] = {}
     for day in sorted(scan_days):
@@ -291,8 +423,7 @@ def sync_espn_wc_lineups(conn, limit: int = 25, since_days: int = 21,
 
     for match_id, match_day, home, away in pending:
         out["checked"] += 1
-        events = events_by_day.get(match_day) or []
-        ev = _find_espn_event_for_match(events, home, away)
+        ev, espn_day = _find_espn_event_near_date(events_by_day, match_day, home, away)
         if not ev:
             out["skipped"].append({"match_id": match_id, "reason": "no_espn_event", "date": str(match_day)})
             continue
@@ -301,7 +432,7 @@ def sync_espn_wc_lineups(conn, limit: int = 25, since_days: int = 21,
             continue
         eh, ea, eid = parsed
         try:
-            stats = ingest_summary(conn, eid, eh, ea, match_day)
+            stats = ingest_summary(conn, eid, eh, ea, espn_day or match_day)
             if stats.get("players"):
                 out["synced"] += 1
                 out["players"] += stats["players"]

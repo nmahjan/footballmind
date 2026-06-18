@@ -32,6 +32,12 @@ API_FOOTBALL_LEAGUES: dict[str, tuple[int, int]] = {
     "SA": (135, 2025),
     "FL1": (61, 2025),
     "CL": (2, 2025),
+    "MLS": (253, 2026),
+}
+
+API_FOOTBALL_COMP_META: dict[str, tuple[str, str, str]] = {
+    # comp_code -> (display_name, comp_type, season_label)
+    "MLS": ("MLS", "domestic_league", "2026"),
 }
 
 UNDERSTAT_LEAGUES: dict[str, tuple[str, int]] = {
@@ -199,6 +205,10 @@ class ApiFootballClient:
 
     def injuries(self, league_id: int, season: int) -> list:
         data = self.get("/injuries", {"league": league_id, "season": season})
+        return data.get("response") or []
+
+    def fixtures(self, league_id: int, season: int) -> list:
+        data = self.get("/fixtures", {"league": league_id, "season": season})
         return data.get("response") or []
 
     def fixtures_last(self, league_id: int, season: int, last: int = 5) -> list:
@@ -391,6 +401,55 @@ def sync_understat_xg(conn, comp_code: str) -> int:
                 _store_provider_id(cur, "match", match_id, "understat", str(m["id"]))
             n += 1
     conn.commit()
+    return n
+
+
+def sync_api_football_competition(conn, client: ApiFootballClient,
+                                  comp_code: str) -> int:
+    """Sync fixtures for comps not on football-data.org free tier (e.g. MLS)."""
+    from footballmind_sync import apply_pending_ratings, get_or_create_edition, upsert_team
+
+    cfg = API_FOOTBALL_LEAGUES.get(comp_code)
+    meta = API_FOOTBALL_COMP_META.get(comp_code)
+    if not cfg or not meta:
+        return 0
+    league_id, season = cfg
+    comp_name, comp_type, season_label = meta
+    fixtures = client.fixtures(league_id, season)
+    n = 0
+    with conn.cursor() as cur:
+        edition_id = get_or_create_edition(
+            cur, comp_code, comp_name, comp_type, season_label)
+        for row in fixtures:
+            fix = row.get("fixture") or {}
+            teams = row.get("teams") or {}
+            goals = row.get("goals") or {}
+            home = (teams.get("home") or {}).get("name")
+            away = (teams.get("away") or {}).get("name")
+            if not home or not away:
+                continue
+            home_id = upsert_team(cur, home, "club", (teams.get("home") or {}).get("id"))
+            away_id = upsert_team(cur, away, "club", (teams.get("away") or {}).get("id"))
+            status = ((fix.get("status") or {}).get("short") or "").upper()
+            if status in ("FT", "AET", "PEN"):
+                hg, ag = goals.get("home"), goals.get("away")
+            else:
+                hg, ag = None, None
+            ext = str(fix.get("id")) if fix.get("id") else None
+            cur.execute(
+                "INSERT INTO matches (edition_id, stage, match_date, home_team_id, "
+                " away_team_id, home_goals, away_goals, external_id) "
+                "VALUES (%s,'regular_season',%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET "
+                "  match_date = EXCLUDED.match_date, "
+                "  home_team_id = EXCLUDED.home_team_id, "
+                "  away_team_id = EXCLUDED.away_team_id, "
+                "  home_goals = COALESCE(EXCLUDED.home_goals, matches.home_goals), "
+                "  away_goals = COALESCE(EXCLUDED.away_goals, matches.away_goals)",
+                (edition_id, fix.get("date"), home_id, away_id, hg, ag, ext))
+            n += 1
+    conn.commit()
+    apply_pending_ratings(conn, comp_code)
     return n
 
 

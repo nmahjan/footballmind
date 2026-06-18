@@ -262,7 +262,8 @@ async function readApiError(res) {
 
 const COMP_OPTIONS = [
   ["WC", "🌍 World Cup"], ["PL", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL"], ["PD", "🇪🇸 La Liga"],
-  ["BL1", "🇩🇪 Bundesliga"], ["SA", "🇮🇹 Serie A"], ["FL1", "🇫🇷 Ligue 1"], ["CL", "⭐ CL"],
+  ["BL1", "🇩🇪 Bundesliga"], ["SA", "🇮🇹 Serie A"], ["FL1", "🇫🇷 Ligue 1"],
+  ["CL", "⭐ CL"], ["MLS", "🇺🇸 MLS"],
 ];
 
 // ─── Intent parser ────────────────────────────────────────────────────────
@@ -276,7 +277,7 @@ function parseVs(msg) {
   return { home: clean(m[1]), away: clean(m[2]) };
 }
 
-const VALID_COMPS = new Set(["WC", "PL", "PD", "BL1", "SA", "FL1", "CL", "DED"]);
+const VALID_COMPS = new Set(["WC", "PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "MLS"]);
 const DEEPLINK_STORAGE_KEY = "fm_deeplink_search";
 const PREDICTION_CACHE_KEY = "fm_prediction_cache";
 
@@ -829,12 +830,14 @@ const FIXTURE_TABS = [
   { code: "SA",  label: "🇮🇹 Serie A"   },
   { code: "FL1", label: "🇫🇷 Ligue 1"   },
   { code: "CL",  label: "⭐ CL"         },
+  { code: "MLS", label: "🇺🇸 MLS"      },
   { code: "DED", label: "🇳🇱 Eredivisie" },
 ];
 
 const COMP_LABELS = {
   WC: "World Cup", PL: "Premier League", PD: "La Liga", BL1: "Bundesliga",
   SA: "Serie A", FL1: "Ligue 1", CL: "Champions League", DED: "Eredivisie",
+  MLS: "MLS",
 };
 
 function FixtureRow({ f, onClick }) {
@@ -1645,7 +1648,7 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, adminKey }) {
           Players & Squads
         </div>
         <p className="mt-1 text-[10px]" style={{ color: C.mute }}>
-          Tap a player to ask the chat. Standouts: scorers/assists for attackers, clean sheets and low GA for defenders, saves and GA for keepers (max 2 per nation).
+          Tap a player to ask the chat. Standouts use stats from the selected competition only — goals/assists for attackers, clean sheets and low GA for defenders, saves for keepers (max 2 per nation).
         </p>
       </div>
 
