@@ -134,23 +134,33 @@ def test_fetch_sofifa_page_uses_reader_get_body():
 
 def test_build_sofifa_reader_respects_visible_mode(monkeypatch):
     """soccerdata SoFIFA drops headless=; we re-init the driver with the flag."""
-    from footballmind_sofifa import DEFAULT_SOFIFA_VERSION_R, _build_sofifa_reader, _patch_sofifa_versions
+    import sys
+    import types
+
+    from footballmind_sofifa import DEFAULT_SOFIFA_VERSION_R, _build_sofifa_reader
 
     seen: list[bool] = []
 
-    def fake_init(self):
-        seen.append(self.headless)
+    class FakeSoFIFA:
+        def __init__(self, leagues, versions, no_store, headless):  # noqa: ARG002
+            # Simulate soccerdata bug: accepts headless= but keeps self.headless True.
+            self.headless = True
+            self._driver = type("_D", (), {"quit": lambda self: None})()
 
-        class _Driver:
-            def quit(self):
-                return None
+        def _init_webdriver(self):
+            seen.append(self.headless)
 
-        return _Driver()
+            class _Driver:
+                def quit(self):
+                    return None
 
-    import soccerdata._common as common
+            return _Driver()
 
-    monkeypatch.setattr(common.BaseSeleniumReader, "_init_webdriver", fake_init)
-    _patch_sofifa_versions(DEFAULT_SOFIFA_VERSION_R)
+    fake_sd = types.ModuleType("soccerdata")
+    fake_sd.SoFIFA = FakeSoFIFA
+    monkeypatch.setitem(sys.modules, "soccerdata", fake_sd)
+    monkeypatch.setattr("footballmind_sofifa._patch_sofifa_versions", lambda _vid: None)
+
     reader = _build_sofifa_reader(
         leagues=["ENG-Premier League"],
         version_id=DEFAULT_SOFIFA_VERSION_R,
