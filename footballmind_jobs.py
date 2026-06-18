@@ -121,6 +121,14 @@ def cmd_sync_matchday(force=False):
         graded = grade_predictions(conn)
         print(f"[sync-matchday] predictions: {linked} linked, {graded} graded")
         try:
+            from footballmind_grading import ensure_result_predictions
+            fill = ensure_result_predictions(conn, "WC", backfill_limit=20)
+            if fill["backfilled"]:
+                print(f"[sync-matchday] WC result predictions backfilled: {fill['backfilled']}",
+                      flush=True)
+        except Exception as e:
+            print(f"[sync-matchday] result backfill FAILED: {e}", file=sys.stderr, flush=True)
+        try:
             espn = sync_espn_wc_lineups(conn, limit=30)
             print(f"[sync-matchday] espn-wc: checked={espn['checked']} "
                   f"synced={espn['synced']} players={espn['players']}", flush=True)

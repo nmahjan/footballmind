@@ -446,13 +446,14 @@ def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
 
 def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[dict]:
     """Recent finished matches for a competition, with optional prediction grading."""
-    from footballmind_grading import grade_predictions
+    from footballmind_grading import ensure_result_predictions, grade_predictions
 
+    ensure_result_predictions(conn, comp, backfill_limit=40)
     grade_predictions(conn)
     limit = min(limit, 100)
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT m.id, th.name AS home, ta.name AS away, "
+            "SELECT m.id, m.home_team_id, m.away_team_id, th.name AS home, ta.name AS away, "
             "       m.home_goals, m.away_goals, m.match_date, m.stage, "
             "       p.id AS prediction_id, "
             "       p.home_win_prob, p.draw_prob, p.away_win_prob, p.was_correct "
@@ -465,7 +466,12 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             "  SELECT p2.id, p2.home_win_prob, p2.draw_prob, p2.away_win_prob, p2.was_correct "
             "  FROM predictions p2 "
             "  WHERE p2.match_id = m.id "
-            "  ORDER BY p2.created_at DESC "
+            "     OR (p2.match_id IS NULL "
+            "         AND p2.home_team_id = m.home_team_id "
+            "         AND p2.away_team_id = m.away_team_id) "
+            "  ORDER BY "
+            "    CASE WHEN p2.match_id = m.id THEN 0 ELSE 1 END, "
+            "    p2.created_at DESC "
             "  LIMIT 1"
             ") p ON TRUE "
             "WHERE c.code = %s "

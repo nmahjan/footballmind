@@ -937,7 +937,7 @@ function PredictionResultsView({ apiBase, comp = "WC", onSummary }) {
                 </span>
               </div>
             ) : (
-              <div className="text-[11px]" style={{ color: C.mute }}>Final score · no prediction logged</div>
+              <div className="text-[11px]" style={{ color: C.mute }}>Model pick pending sync</div>
             )}
           </div>
         );

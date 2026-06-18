@@ -215,7 +215,7 @@ def _head_to_head(cur, home_id: int, away_id: int, n: int = 5) -> dict:
 def _save_prediction(cur, session_id, match_id, home_id, away_id,
                      lam_h, lam_a, out, knockout, confidence, reasoning):
     """Insert or refresh an open prediction for this session + fixture."""
-    sid = session_id or "anon"
+    sid = session_id or None
     hw, dw, aw = out["home_win_prob"], out["draw_prob"], out["away_win_prob"]
     ha = out["progression"]["home_advance"] if knockout else None
     cols = (
@@ -347,7 +347,7 @@ def _predict_match(conn, home_team, away_team, match_date,
         key_factors.extend(stakes.get("labels") or [])
 
         from footballmind_grading import find_fixture
-        match_id = find_fixture(cur, home_id, away_id)
+        match_id = find_fixture(cur, home_id, away_id, comp_code=comp)
 
         _save_prediction(cur, session_id, match_id, home_id, away_id,
                          lam_h, lam_a, out, knockout, confidence, reasoning)
