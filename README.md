@@ -39,6 +39,7 @@ A football intelligence app: ask about Premier League, La Liga, Bundesliga, Seri
 
 - Hybrid **Elo + Dixon-Coles** model with weekly retrain (RPS backtest)
 - football-data.org sync every 6 hours (GitHub Actions) — matches, squads, **top scorers** (500/comp)
+- **Wikipedia squad sync** every 3 months — WC national squads (all 48 teams) + PL club wikitext; creates missing NT players and refreshes `line_role` / shirt numbers (free, no API key)
 - **Free enrichment feeds** (`sync-enrich`) — FPL injury flags for the Premier League, Understat xG for top-5 leagues; optional API-Football key for non-PL injuries + match ratings (see [Data enrichment](#data-enrichment))
 - Match-day sync every 30 min when fixtures are in the live window — results + grading only
 - **Historical scorer backfill** — `backfill-scorers` pulls past seasons into `player_edition_stats` (additive; never wipes current season)

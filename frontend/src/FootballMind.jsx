@@ -182,15 +182,17 @@ function createNewSessionId() {
   return id;
 }
 
-function formatEafc(eafc) {
-  if (!eafc) return null;
+function formatPlayerMeta(p) {
   const parts = [];
-  if (eafc.height_cm) parts.push(`${eafc.height_cm}cm`);
-  if (eafc.weight_kg) parts.push(`${eafc.weight_kg}kg`);
-  if (eafc.preferred_foot) parts.push(eafc.preferred_foot);
-  if (eafc.weak_foot) parts.push(`WF ${eafc.weak_foot}`);
-  if (eafc.overall_rating) parts.push(`OVR ${eafc.overall_rating}`);
+  if (p.line_role) parts.push(p.line_role);
+  const eafc = p.eafc;
+  if (eafc?.preferred_foot) parts.push(eafc.preferred_foot);
+  if (eafc?.overall_rating) parts.push(`OVR ${eafc.overall_rating}`);
   return parts.length ? parts.join(" · ") : null;
+}
+
+function formatEafc(eafc) {
+  return formatPlayerMeta({ eafc });
 }
 
 const LOAD_MESSAGES = {
@@ -1896,9 +1898,9 @@ function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, adminKey }) {
                             style={{ borderColor: C.line, background: C.panel2 }}>
                             <div className="min-w-0">
                               <div className="text-xs font-medium truncate" style={{ color: C.chalk }}>{p.name}</div>
-                              {formatEafc(p.eafc) && (
+                              {formatPlayerMeta(p) && (
                                 <div className="text-[9px] truncate mt-0.5" style={{ color: C.mute }}>
-                                  {formatEafc(p.eafc)}
+                                  {formatPlayerMeta(p)}
                                 </div>
                               )}
                             </div>

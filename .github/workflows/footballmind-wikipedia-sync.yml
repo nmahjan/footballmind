@@ -1,0 +1,43 @@
+# Wikipedia squad sync — WC national squads + Premier League club wikitext.
+# Refreshes player roles, shirt numbers, and creates missing NT players.
+# Secrets: DATABASE_URL (same as footballmind-jobs.yml).
+name: footballmind-wikipedia-sync
+
+on:
+  schedule:
+    - cron: "0 6 1 1,4,7,10 *"   # 06:00 UTC on 1 Jan, Apr, Jul, Oct (~every 3 months)
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "What to sync"
+        type: choice
+        options: [all, wc-only, clubs-only]
+        default: all
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python footballmind_migrate.py
+
+      - name: Run Wikipedia squad sync
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.scope }}" = "wc-only" ]; then
+            ARGS="--wc-only"
+          elif [ "${{ github.event.inputs.scope }}" = "clubs-only" ]; then
+            ARGS="--clubs-only"
+          fi
+          python -u footballmind_jobs.py sync-wikipedia $ARGS

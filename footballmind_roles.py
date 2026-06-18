@@ -107,11 +107,11 @@ def resolve_player_line_role(
     """Pick the best tactical role for lineup placement."""
     from footballmind_services import classify_line_role
 
-    if db_line_role and db_line_role.upper() in LINE_ROLES:
-        return db_line_role.upper()
     for key, role in PLAYER_LINE_ROLE_OVERRIDES.items():
         if key.lower() == name.lower():
             return role
+    if db_line_role and db_line_role.upper() in LINE_ROLES:
+        return db_line_role.upper()
     if db_position and db_position.upper() in LINE_ROLES:
         return db_position.upper()
     return classify_line_role(db_position, goals, assists)

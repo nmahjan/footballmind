@@ -1,13 +1,13 @@
 """
 FootballMind -- scheduled jobs entrypoint.
 
-Two commands, triggered by GitHub Actions cron (see
-.github/workflows/footballmind-jobs.yml):
+Scheduled via GitHub Actions (see .github/workflows/):
 
-    python footballmind_jobs.py sync           # every ~6h: pull results, update Elo
-    python footballmind_jobs.py sync-matchday  # every ~30m on match days: fixtures only
-    python footballmind_jobs.py sync-espn-wc   # ESPN WC lineups (batch / backfill)
-    python footballmind_jobs.py sync-sofifa    # EA FC attrs via SoFIFA (optional, needs Chrome)
+    python footballmind_jobs.py sync              # every ~6h: pull results, update Elo
+    python footballmind_jobs.py sync-matchday     # every ~30m on match days: fixtures only
+    python footballmind_jobs.py sync-wikipedia    # quarterly: WC + PL squads from Wikipedia
+    python footballmind_jobs.py sync-espn-wc      # ESPN WC lineups (batch / backfill)
+    python footballmind_jobs.py sync-sofifa       # EA FC attrs via SoFIFA (optional, needs Chrome)
     python footballmind_jobs.py backfill-scorers  # past season top scorers (optional)
 
 Running these from GitHub Actions (not in-process) means they fire on schedule
@@ -356,6 +356,36 @@ def cmd_sync_sofifa():
     print(f"[sync-sofifa] {parts}", flush=True)
 
 
+def cmd_sync_wikipedia():
+    """WC + club squad positions from Wikipedia (free, no Chrome)."""
+    wc_only = "--wc-only" in sys.argv
+    clubs_only = "--clubs-only" in sys.argv
+    with _connect() as conn:
+        from footballmind_wikipedia import sync_wikipedia_all
+        from footballmind_roles import apply_player_line_roles
+
+        stats = sync_wikipedia_all(
+            conn,
+            wc=not clubs_only,
+            clubs=not wc_only,
+        )
+        n = apply_player_line_roles(conn)
+        if n:
+            print(f"[sync-wikipedia] applied {n} manual line_role overrides", flush=True)
+        for label, block in stats.items():
+            parts = ", ".join(
+                f"{k}={v}" for k, v in sorted(block.items())
+                if k not in ("skipped_teams", "skipped_clubs", "missing_names", "errors")
+            )
+            print(f"[sync-wikipedia:{label}] {parts}", flush=True)
+            skipped = block.get("skipped_teams") or block.get("skipped_clubs") or []
+            if skipped:
+                print(f"[sync-wikipedia:{label}] skipped: {', '.join(skipped[:8])}", flush=True)
+            errors = block.get("errors") or []
+            for err in errors[:5]:
+                print(f"[sync-wikipedia:{label}] error: {err}", flush=True)
+
+
 def cmd_sync_footballdata_io():
     """Pull squad positions from Footballdata.io into players.line_role."""
     teams = None
@@ -434,8 +464,10 @@ if __name__ == "__main__":
         cmd_sync_sofifa()
     elif cmd == "sync-footballdata-io":
         cmd_sync_footballdata_io()
+    elif cmd == "sync-wikipedia":
+        cmd_sync_wikipedia()
     else:
         print("usage: footballmind_jobs.py "
               "[sync|sync-matchday|sync-enrich|sync-espn-wc|sync-sofifa|"
-              "sync-footballdata-io|backfill-scorers|retrain|seed-elo]")
+              "sync-footballdata-io|sync-wikipedia|backfill-scorers|retrain|seed-elo]")
         sys.exit(1)

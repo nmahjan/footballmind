@@ -459,6 +459,42 @@ def sync_enrichment(conn, comps: list[str] | None = None) -> dict[str, int]:
         out["footballdata_io_teams"] = 0
         out["footballdata_io_updated"] = 0
 
+    if os.environ.get("WIKIPEDIA_SYNC", "1").lower() not in ("0", "false", "no"):
+        try:
+            from footballmind_wikipedia import sync_wikipedia_all
+            from footballmind_roles import apply_player_line_roles
+
+            wiki = sync_wikipedia_all(conn)
+            wc = wiki.get("wc") or {}
+            clubs = wiki.get("clubs") or {}
+            out["wikipedia_wc_teams"] = wc.get("teams", 0)
+            out["wikipedia_wc_matched"] = wc.get("matched", 0)
+            out["wikipedia_wc_created"] = wc.get("created", 0)
+            out["wikipedia_wc_updated_roles"] = wc.get("updated_roles", 0)
+            out["wikipedia_wc_missing"] = wc.get("missing", 0)
+            out["wikipedia_club_clubs"] = clubs.get("clubs", 0)
+            out["wikipedia_club_matched"] = clubs.get("matched", 0)
+            out["wikipedia_club_created"] = clubs.get("created", 0)
+            apply_player_line_roles(conn)
+        except Exception:
+            out["wikipedia_wc_teams"] = 0
+            out["wikipedia_wc_matched"] = 0
+            out["wikipedia_wc_created"] = 0
+            out["wikipedia_wc_updated_roles"] = 0
+            out["wikipedia_wc_missing"] = 0
+            out["wikipedia_club_clubs"] = 0
+            out["wikipedia_club_matched"] = 0
+            out["wikipedia_club_created"] = 0
+    else:
+        out["wikipedia_wc_teams"] = 0
+        out["wikipedia_wc_matched"] = 0
+        out["wikipedia_wc_created"] = 0
+        out["wikipedia_wc_updated_roles"] = 0
+        out["wikipedia_wc_missing"] = 0
+        out["wikipedia_club_clubs"] = 0
+        out["wikipedia_club_matched"] = 0
+        out["wikipedia_club_created"] = 0
+
     return out
 
 
