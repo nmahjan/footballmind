@@ -174,7 +174,7 @@ def map_fifa_squad_position(raw: str | None) -> str | None:
     if not raw:
         return None
     text = raw.strip().upper()
-    m = re.search(r"\b(GK|DF|MF|FW)\b", text)
+    m = re.search(r"(GK|DF|MF|FW)", text)
     if not m:
         return None
     role = _FIFA_POS_MAP.get(m.group(1))
@@ -193,11 +193,40 @@ def _country_from_fifa(code: str | None) -> str | None:
     return FIFA_NAT_NAMES.get(code.strip().upper(), code.strip().upper())
 
 
+def is_wikipedia_dob_name(name: str | None) -> bool:
+    """True when a squad row was misparsed and DOB text landed in the name field."""
+    if not name:
+        return False
+    text = name.strip()
+    return bool(re.match(r"^\(\d{4}-\d{2}-\d{2}\)", text)) or " (aged " in text
+
+
 def _clean_player_name(raw: str) -> str:
     text = re.sub(r"\(captain\)", "", raw, flags=re.I)
     text = re.sub(r"\[[^\]]+\]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _map_wc_squad_columns(header: list[str]) -> dict[str, int]:
+    cols: dict[str, int] = {}
+    for i, raw in enumerate(header):
+        h = raw.lower().strip()
+        if h.startswith("no") or h == "#":
+            cols["no"] = i
+        elif "pos" in h:
+            cols["pos"] = i
+        elif "player" in h:
+            cols["player"] = i
+        elif "birth" in h or "date of birth" in h:
+            cols["dob"] = i
+        elif "cap" in h:
+            cols["caps"] = i
+        elif "goal" in h:
+            cols["goals"] = i
+        elif "club" in h:
+            cols["club"] = i
+    return cols
 
 
 def _player_name_from_cell(cell) -> tuple[str, str | None]:
@@ -370,27 +399,35 @@ def parse_wc_squads_html(page_html: str) -> list[dict[str, Any]]:
         rows = elem.xpath(".//tr")
         if len(rows) < 2:
             continue
-        header = [c.text_content().strip().lower() for c in rows[0].xpath("th|td")]
-        header_text = " ".join(header)
+        header = [c.text_content().strip() for c in rows[0].xpath("th|td")]
+        header_text = " ".join(h.lower() for h in header)
         if "player" not in header_text or "pos" not in header_text:
             continue
+        cols = _map_wc_squad_columns(header)
+
+        def _cell_text(cells, key: str, default: int) -> str:
+            idx = cols.get(key, default)
+            if idx >= len(cells):
+                return ""
+            return cells[idx].text_content().strip()
 
         players: list[dict[str, Any]] = []
         for row in rows[1:]:
-            cells = row.xpath("td")
+            # Live Wikipedia uses <th scope="row"> for the player name column.
+            cells = row.xpath("./td|./th")
             if len(cells) < 4:
                 continue
-            texts = [c.text_content().strip() for c in cells]
             try:
-                pos_raw = texts[1]
-                name, wiki_title = _player_name_from_cell(cells[2])
-                caps = int(re.sub(r"[^\d]", "", texts[4] or "0") or 0)
-                goals = int(re.sub(r"[^\d]", "", texts[5] or "0") or 0)
-                club = texts[6] if len(texts) > 6 else None
-                shirt = int(re.sub(r"[^\d]", "", texts[0] or "0") or 0)
+                player_idx = cols.get("player", 2)
+                name, wiki_title = _player_name_from_cell(cells[player_idx])
+                pos_raw = _cell_text(cells, "pos", 1)
+                caps = int(re.sub(r"[^\d]", "", _cell_text(cells, "caps", 4) or "0") or 0)
+                goals = int(re.sub(r"[^\d]", "", _cell_text(cells, "goals", 5) or "0") or 0)
+                club = _cell_text(cells, "club", 6) or None
+                shirt = int(re.sub(r"[^\d]", "", _cell_text(cells, "no", 0) or "0") or 0)
             except (ValueError, IndexError):
                 continue
-            if not name:
+            if not name or is_wikipedia_dob_name(name):
                 continue
             pos_code = None
             m = re.search(r"\b(GK|DF|MF|FW)\b", (pos_raw or "").upper())
@@ -431,6 +468,38 @@ def _resolve_player_on_team(cur, team_id: int, name: str) -> int | None:
 
     found = _resolve_player_on_team(cur, name, team_id)
     return found[0] if found else None
+
+
+def _resolve_wikipedia_player_on_team(
+    cur,
+    team_id: int,
+    name: str,
+    shirt_number: int | None,
+    stats: dict[str, Any],
+) -> int | None:
+    """Match by name; repair rows where an old parse stored DOB text as the name."""
+    pid = _resolve_player_on_team(cur, team_id, name)
+    if pid:
+        return pid
+
+    if shirt_number:
+        cur.execute(
+            "SELECT p.id FROM players p "
+            "JOIN player_affiliations pa ON pa.player_id = p.id "
+            "WHERE pa.team_id = %s AND pa.end_date IS NULL AND pa.kind = 'national' "
+            "  AND pa.shirt_number = %s "
+            "  AND (p.name ~ '^\\([0-9]{4}-[0-9]{2}-[0-9]{2}\\)' "
+            "       OR p.name LIKE '%%(aged %%') "
+            "LIMIT 1",
+            (team_id, shirt_number),
+        )
+        row = cur.fetchone()
+        if row:
+            pid = row[0]
+            cur.execute("UPDATE players SET name = %s WHERE id = %s", (name, pid))
+            stats["repaired_names"] = stats.get("repaired_names", 0) + 1
+            return pid
+    return None
 
 
 def _ensure_affiliation(
@@ -498,8 +567,12 @@ def _find_or_create_player(
     line_role: str | None,
     create_missing: bool,
     stats: dict[str, Any],
+    shirt_number: int | None = None,
 ) -> int | None:
-    pid = _resolve_player_on_team(cur, team_id, name)
+    if is_wikipedia_dob_name(name):
+        return None
+
+    pid = _resolve_wikipedia_player_on_team(cur, team_id, name, shirt_number, stats)
     if pid:
         return pid
 
@@ -558,6 +631,7 @@ def _apply_wikipedia_player(
         line_role=p.get("line_role"),
         create_missing=create_missing,
         stats=stats,
+        shirt_number=p.get("shirt_number"),
     )
     if not pid:
         stats["missing"] = stats.get("missing", 0) + 1
@@ -649,6 +723,7 @@ def sync_wikipedia_wc_squads(
         "created": 0,
         "updated_roles": 0,
         "updated_shirts": 0,
+        "repaired_names": 0,
         "missing": 0,
         "missing_names": [],
         "skipped_teams": [],
