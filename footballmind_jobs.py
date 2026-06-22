@@ -269,27 +269,34 @@ def cmd_retrain():
     separately-fit hybrids stored under different names."""
     test_start = date.today() - timedelta(days=120)
     domains = [
-        ([c[0] for c in COMPETITIONS if c[3] == "club"],     "production_club",          "league"),
-        ([c[0] for c in COMPETITIONS if c[3] == "national"], "production_international",  "world_cup"),
+        ([c[0] for c in COMPETITIONS if c[3] == "club"], "production_club",
+         "league", 60, 180, 10),
+        ([c[0] for c in COMPETITIONS if c[3] == "national"], "production_international",
+         "world_cup", 12, 180, 5),
     ]
     with _connect() as conn:
-        for codes, name, importance in domains:
+        for (codes, name, importance, min_history,
+             default_hl, default_cred) in domains:
             editions = _editions_for(conn, codes)
             release_transaction(conn)
             if not editions:
                 print(f"[retrain] {name}: no editions yet, skipping")
                 continue
             try:
-                best = select_and_deploy(conn, editions, test_start,
-                                         importance=importance, name=name)["best"]
+                out = select_and_deploy(
+                    conn, editions, test_start, importance=importance, name=name,
+                    min_history=min_history, default_half_life=default_hl,
+                    default_credibility=default_cred)
+                best = out["best"]
             except ValueError as e:
-                # e.g. a tournament that hasn't started: edition exists but no
-                # finished matches. predict_match falls back to pure Elo until
-                # enough results land for a fit.
+                # Edition exists but no finished matches to fit on yet.
                 print(f"[retrain] {name}: skipped ({e})")
                 continue
+            rps = best["mean_rps"]
+            rps_s = f"{rps:.4f}" if rps is not None else "n/a (defaults)"
+            note = " [backtest skipped]" if out.get("backtest_skipped") else ""
             print(f"[retrain] {name}: half_life={best['half_life_days']}d "
-                  f"cred={best['full_credibility']} RPS={best['mean_rps']:.4f}")
+                  f"cred={best['full_credibility']} RPS={rps_s}{note}")
 
 
 def cmd_sync_sofifa():
