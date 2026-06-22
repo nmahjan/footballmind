@@ -23,7 +23,7 @@ import os
 import sys
 from datetime import date, timedelta
 
-from footballmind_db import get_connection
+from footballmind_db import get_connection, release_transaction
 from footballmind_sync import (TokenBucket, FootballDataClient,
                                sync_competition, sync_teams_and_squads,
                                sync_scorers, sync_match_details,
@@ -275,6 +275,7 @@ def cmd_retrain():
     with _connect() as conn:
         for codes, name, importance in domains:
             editions = _editions_for(conn, codes)
+            release_transaction(conn)
             if not editions:
                 print(f"[retrain] {name}: no editions yet, skipping")
                 continue

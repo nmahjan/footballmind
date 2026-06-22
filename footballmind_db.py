@@ -24,3 +24,15 @@ def get_connection():
             "DATABASE_URL is not set. Copy .env.example to .env and fill it in, "
             "or export DATABASE_URL (use Neon's pooled connection string).")
     return psycopg.connect(url)
+
+
+def release_transaction(conn) -> None:
+    """Close the current transaction after read-only queries.
+
+    Neon kills connections that sit idle *inside* an open transaction (used by
+    retrain/backtest while scipy runs for several minutes).
+    """
+    try:
+        conn.commit()
+    except Exception:
+        conn.rollback()

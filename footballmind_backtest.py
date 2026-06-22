@@ -194,6 +194,8 @@ def sweep(matches, test_start, half_lives=(90, 180, 365),
 
 
 def _load_matches(conn, edition_ids):
+    from footballmind_db import release_transaction
+
     with conn.cursor() as cur:
         cur.execute(
             "SELECT home_team_id, away_team_id, home_goals, away_goals, "
@@ -201,6 +203,7 @@ def _load_matches(conn, edition_ids):
             "WHERE edition_id = ANY(%s) AND home_goals IS NOT NULL "
             "ORDER BY match_date", (list(edition_ids),))
         rows = cur.fetchall()
+    release_transaction(conn)
     return [{"home": r[0], "away": r[1], "hg": r[2], "ag": r[3],
              "date": r[4].date(), "neutral": r[5] != "regular_season"}
             for r in rows]
