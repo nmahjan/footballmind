@@ -58,7 +58,9 @@ def normalize_position(raw: str | None) -> str | None:
     if not raw:
         return None
     s = raw.lower().strip()
-    if s in ("gk", "goalkeeper"):
+    if s in ("gk", "goalkeeper", "goal keeper", "goal-keeper"):
+        return "GK"
+    if "goalkeeper" in s or "goal keeper" in s or "goal-keeper" in s:
         return "GK"
     if s in ("def", "defence", "defense"):
         return "DEF"
@@ -66,8 +68,6 @@ def normalize_position(raw: str | None) -> str | None:
         return "MID"
     if s in ("fwd", "forward", "offence", "offense"):
         return "FWD"
-    if "goal" in s:
-        return "GK"
     if "mid" in s:
         return "MID"
     if "def" in s or "back" in s:
@@ -75,6 +75,24 @@ def normalize_position(raw: str | None) -> str | None:
     if "off" in s or "forward" in s or "attack" in s or "wing" in s:
         return "FWD"
     return None
+
+
+def _coerce_standout_position(
+    pos: str | None,
+    goals: int | None = None,
+    assists: int | None = None,
+    saves: int | None = None,
+) -> str:
+    """Normalize DB/lineup position; never default unknown outfielders to GK."""
+    norm = normalize_position(pos)
+    if norm:
+        return norm
+    g, a, sv = goals or 0, assists or 0, saves or 0
+    if sv and not g and not a:
+        return "GK"
+    if g or a:
+        return "FWD" if g >= max(a, 1) else "MID"
+    return "?"
 
 
 def classify_line_role(raw: str | None, goals: int = 0, assists: int = 0) -> str:
@@ -718,6 +736,7 @@ def get_rankings(conn, comp: str = "WC", limit: int = 48) -> list:
 
 def _standout_from_row(name, team, pos, rating, dob, nat, goals, ast, apps,
                        team_id, team_defense, club=None, saves=None):
+    pos = _coerce_standout_position(pos, goals, ast, saves)
     td = team_defense.get(team_id, {}) if team_id else {}
     ga_pg = td.get("ga_per_game")
     cs = td.get("clean_sheets")
@@ -741,7 +760,9 @@ def _get_standouts_from_match_stats(
     pids = list(stats_by_player.keys())
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT p.id, p.name, t.name, p.position, tr.rating, p.birth_date, "
+            "SELECT p.id, p.name, t.name, "
+            "       COALESCE(NULLIF(TRIM(p.position), ''), lp.pos) AS position, "
+            "       tr.rating, p.birth_date, "
             "       co.name, pa.team_id "
             "FROM players p "
             "JOIN player_affiliations pa ON pa.player_id = p.id AND pa.end_date IS NULL "
@@ -749,13 +770,21 @@ def _get_standouts_from_match_stats(
             "JOIN teams t ON t.id = pa.team_id "
             "LEFT JOIN team_ratings tr ON tr.team_id = t.id "
             "LEFT JOIN countries co ON co.id = p.nationality "
+            "LEFT JOIN LATERAL ("
+            "  SELECT mlp.position AS pos "
+            "  FROM match_lineup_players mlp "
+            "  JOIN matches m ON m.id = mlp.match_id "
+            "  WHERE mlp.player_id = p.id AND m.edition_id = %s "
+            "  ORDER BY m.match_date DESC "
+            "  LIMIT 1"
+            ") lp ON true "
             "WHERE p.id = ANY(%s) "
             "  AND EXISTS ("
             "    SELECT 1 FROM matches m "
             "    WHERE m.edition_id = %s "
             "      AND (m.home_team_id = t.id OR m.away_team_id = t.id)"
             "  )",
-            (kind, pids, edition_id))
+            (kind, edition_id, pids, edition_id))
         rows = cur.fetchall()
 
     standouts = []
@@ -784,7 +813,7 @@ def _get_standouts_from_match_stats(
         if not pos_filter and not _has_standout_signal(pos, goals, ast, apps, saves):
             continue
         standouts.append(_standout_from_row(
-            name, team, normalize_position(pos) or (pos or "GK"), rating, dob, nat,
+            name, team, pos, rating, dob, nat,
             goals or None, ast or None, apps or None, team_id, team_defense,
             saves=saves))
     if pos_filter == "GK":
