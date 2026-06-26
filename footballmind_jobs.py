@@ -112,7 +112,8 @@ def cmd_sync_matchday(force=False):
                 print(f"[sync-matchday] {code} matches...", flush=True)
                 sync_competition(conn, client, code, name, ctype, season,
                                  team_type=team_type, since=since)
-            except Exception as e:
+            except Exception as e:        # one bad competition shouldn't kill the run
+                conn.rollback()
                 print(f"[sync-matchday] {code} FAILED: {e}", file=sys.stderr,
                       flush=True)
         print("[sync-matchday] match details...", flush=True)
@@ -176,6 +177,7 @@ def cmd_sync(full=False):
                 ns = sync_scorers(conn, client, code, season, team_type=team_type)
                 print(f"[sync] {code} ok ({n} squads, {ns} scorers)", flush=True)
             except Exception as e:        # one bad competition shouldn't kill the run
+                conn.rollback()
                 print(f"[sync] {code} FAILED: {e}", file=sys.stderr, flush=True)
         print("[sync] match details...", flush=True)
         detail_n = sync_match_details(conn, client, limit=50 if full else 15)

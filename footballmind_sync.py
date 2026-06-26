@@ -14,6 +14,7 @@ from datetime import date
 from threading import Lock
 
 import requests
+from psycopg.errors import DeadlockDetected
 
 from footballmind_elo import apply_match_result
 from footballmind_services import normalize_position
@@ -268,15 +269,24 @@ def sync_teams_and_squads(conn, client, comp_code, team_type="club"):
     its full squad (players + club/national affiliations)."""
     kind = "national" if team_type == "national" else "club"
     teams = client.teams(comp_code)
-    with conn.cursor() as cur:
-        for t in teams:
-            area = t.get("area") or {}
-            country_id = upsert_country(cur, area.get("name"),
-                                        t.get("tla") if kind == "national" else None)
-            team_id = upsert_team(cur, t["name"], team_type, t["id"], country_id)
-            sync_squad(cur, t.get("squad") or [], team_id, kind)
-    conn.commit()
-    return len(teams)
+    for attempt in range(3):
+        try:
+            with conn.cursor() as cur:
+                for t in teams:
+                    area = t.get("area") or {}
+                    country_id = upsert_country(cur, area.get("name"),
+                                                t.get("tla") if kind == "national" else None)
+                    team_id = upsert_team(cur, t["name"], team_type, t["id"], country_id)
+                    sync_squad(cur, t.get("squad") or [], team_id, kind)
+            conn.commit()
+            return len(teams)
+        except Exception as e:
+            conn.rollback()
+            # Concurrent matchday sync can deadlock on teams; retry briefly.
+            if attempt < 2 and isinstance(e, DeadlockDetected):
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            raise
 
 
 # ----------------------------------------------------------------------
