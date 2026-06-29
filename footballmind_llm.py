@@ -296,6 +296,22 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
 
     stakes_block = "\n".join(stakes_lines) if stakes_lines else "- No specific table-pressure context"
 
+    prog = prediction.get("progression") or {}
+    knockout = prediction.get("is_knockout") or bool(prog)
+    if knockout and prog:
+        outcome_line = (
+            f"- Advance probabilities: {home} "
+            f"{round(prog.get('home_advance', 0) * 100)}% · "
+            f"{away} {round(prog.get('away_advance', 0) * 100)}% "
+            f"(knockout — extra time/penalties if level after 90)"
+        )
+    else:
+        outcome_line = (
+            f"- Win probabilities: {home} {round(prediction['home_win_prob']*100)}% · "
+            f"Draw {round(prediction['draw_prob']*100)}% · "
+            f"{away} {round(prediction['away_win_prob']*100)}%"
+        )
+
     prompt = (
         f"You are a sharp football analyst writing for a match preview. "
         f"Write exactly 3–4 sentences in broadcast style explaining why "
@@ -309,9 +325,7 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
         f"{away} {prediction.get('away_elo', '?')}\n"
         f"- Expected goals: {home} {prediction.get('home_xg', '?')} – "
         f"{away} {prediction.get('away_xg', '?')}\n"
-        f"- Win probabilities: {home} {round(prediction['home_win_prob']*100)}% · "
-        f"Draw {round(prediction['draw_prob']*100)}% · "
-        f"{away} {round(prediction['away_win_prob']*100)}%\n"
+        f"{outcome_line}\n"
         f"- {home} last 5: {form_str(prediction.get('home_form'))}\n"
         f"- {away} last 5: {form_str(prediction.get('away_form'))}\n"
         f"- Head to head: {h2h_line}\n"
@@ -327,7 +341,7 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
     return (resp.choices[0].message.content or "").strip()
 
 
-def _run_tool(conn, name, args, session_id):
+def _run_tool(conn, name, args, session_id, default_comp=None):
     from footballmind_mcp_predict import _predict_match
     from footballmind_services import (
         compare_players,
@@ -344,7 +358,7 @@ def _run_tool(conn, name, args, session_id):
         return _predict_match(conn, args["home_team"], args["away_team"], None,
                               args.get("stage", "regular_season"),
                               session_id=session_id,
-                              comp=args.get("comp"))
+                              comp=args.get("comp") or default_comp)
     if name == "get_standings":
         return get_standings(conn, args.get("comp", "PL"), args.get("season"))
     if name == "search_players":
@@ -438,7 +452,8 @@ def answer(conn, message, session_id=None, history=None, comp=None):
         for call in msg.tool_calls:
             args = json.loads(call.function.arguments or "{}")
             try:
-                result = _run_tool(conn, call.function.name, args, session_id)
+                result = _run_tool(conn, call.function.name, args, session_id,
+                                   default_comp=comp)
                 if call.function.name == "predict_match":
                     prediction = result
             except ValueError as e:           # e.g. unknown team -> let Claude rephrase

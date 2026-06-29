@@ -257,27 +257,84 @@ def apply_stakes_to_lambdas(
     return max(lh, MIN_LAMBDA), max(la, MIN_LAMBDA), meta
 
 
-def infer_comp_for_fixture(cur, home_id: int, away_id: int) -> tuple[str | None, str | None]:
+def infer_comp_for_fixture(cur, home_id: int, away_id: int,
+                           comp_code: str | None = None) -> tuple[str | None, str | None]:
     """Best-effort comp + stage from the next fixture between these teams."""
+    comp_filter = " AND c.code = %s " if comp_code else ""
+    params = [home_id, away_id]
+    if comp_code:
+        params.append(comp_code)
     cur.execute(
         "SELECT c.code, m.stage FROM matches m "
         "JOIN competition_editions e ON e.id = m.edition_id "
         "JOIN competitions c ON c.id = e.competition_id "
         "WHERE m.home_team_id = %s AND m.away_team_id = %s "
         "  AND m.home_goals IS NULL "
+        + comp_filter +
         "ORDER BY m.match_date ASC NULLS LAST LIMIT 1",
-        (home_id, away_id))
+        params)
     row = cur.fetchone()
     if row:
         return row[0], row[1]
+    params = [home_id, away_id, away_id, home_id]
+    if comp_code:
+        params.append(comp_code)
     cur.execute(
         "SELECT c.code, m.stage FROM matches m "
         "JOIN competition_editions e ON e.id = m.edition_id "
         "JOIN competitions c ON c.id = e.competition_id "
         "WHERE ((m.home_team_id = %s AND m.away_team_id = %s) "
         "    OR (m.home_team_id = %s AND m.away_team_id = %s)) "
+        "  AND m.home_goals IS NULL "
+        + comp_filter +
+        "ORDER BY m.match_date ASC NULLS LAST LIMIT 1",
+        params)
+    row = cur.fetchone()
+    if row:
+        return row[0], row[1]
+    params = [home_id, away_id, away_id, home_id]
+    if comp_code:
+        params.append(comp_code)
+    cur.execute(
+        "SELECT c.code, m.stage FROM matches m "
+        "JOIN competition_editions e ON e.id = m.edition_id "
+        "JOIN competitions c ON c.id = e.competition_id "
+        "WHERE ((m.home_team_id = %s AND m.away_team_id = %s) "
+        "    OR (m.home_team_id = %s AND m.away_team_id = %s)) "
+        + comp_filter +
         "ORDER BY CASE WHEN m.home_goals IS NULL THEN 0 ELSE 1 END, "
         "         m.match_date DESC NULLS LAST LIMIT 1",
-        (home_id, away_id, away_id, home_id))
+        params)
     row = cur.fetchone()
     return (row[0], row[1]) if row else (None, None)
+
+
+def infer_knockout_stage_in_comp(cur, comp_code: str,
+                                 home_id: int, away_id: int) -> str | None:
+    """When a tournament comp is selected, pick a knockout stage for predictions."""
+    if comp_code not in KNOCKOUT_STAGES and comp_code not in ("WC", "CL"):
+        return None
+    cur.execute(
+        "SELECT m.stage FROM matches m "
+        "JOIN competition_editions e ON e.id = m.edition_id "
+        "JOIN competitions c ON c.id = e.competition_id "
+        "WHERE c.code = %s "
+        "  AND m.stage NOT IN ('regular_season', 'group') "
+        "  AND m.home_goals IS NULL "
+        "  AND (m.home_team_id IN (%s, %s) OR m.away_team_id IN (%s, %s)) "
+        "ORDER BY m.match_date ASC NULLS LAST LIMIT 1",
+        (comp_code, home_id, away_id, home_id, away_id))
+    row = cur.fetchone()
+    if row:
+        return row[0]
+    cur.execute(
+        "SELECT 1 FROM matches m "
+        "JOIN competition_editions e ON e.id = m.edition_id "
+        "JOIN competitions c ON c.id = e.competition_id "
+        "WHERE c.code = %s "
+        "  AND m.stage NOT IN ('regular_season', 'group') "
+        "LIMIT 1",
+        (comp_code,))
+    if cur.fetchone():
+        return "round_of_32"
+    return None

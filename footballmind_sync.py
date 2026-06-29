@@ -22,10 +22,16 @@ from footballmind_services import normalize_position
 # football-data.org stage strings -> our match_stage enum
 STAGE_MAP = {
     "REGULAR_SEASON": "regular_season", "GROUP_STAGE": "group",
-    "LAST_32": "round_of_32", "LAST_16": "round_of_16",
-    "QUARTER_FINALS": "quarter_final", "SEMI_FINALS": "semi_final",
+    "LAST_32": "round_of_32", "ROUND_OF_32": "round_of_32",
+    "LAST_16": "round_of_16", "ROUND_OF_16": "round_of_16",
+    "QUARTER_FINALS": "quarter_final", "QUARTER_FINAL": "quarter_final",
+    "SEMI_FINALS": "semi_final", "SEMI_FINAL": "semi_final",
     "THIRD_PLACE": "third_place", "FINAL": "final",
 }
+KNOCKOUT_STAGES = frozenset({
+    "round_of_32", "round_of_16", "quarter_final", "semi_final", "final",
+    "third_place",
+})
 # competition code -> Elo importance weight
 IMPORTANCE_BY_COMP = {"PL": "league", "CL": "continental", "WC": "world_cup"}
 
@@ -195,16 +201,31 @@ def get_or_create_edition(cur, comp_code, comp_name, comp_type, season):
 FINISHED_STATUSES = frozenset({"FINISHED", "AWARDED"})
 
 
+def _team_from_api(cur, team_api, team_type, match_ext_id, side, is_knockout):
+    """Resolve API team payload to a teams.id (placeholder row for TBD knockouts)."""
+    api = team_api or {}
+    name = api.get("name") or api.get("shortName")
+    ext = api.get("id")
+    if name:
+        return upsert_team(cur, name, team_type, ext)
+    if not is_knockout:
+        return None
+    slot_name = f"TBD ({match_ext_id}-{side})"
+    return upsert_team(cur, slot_name, team_type, ext or f"tbd-{match_ext_id}-{side}")
+
+
 def upsert_match(cur, edition_id, m, team_type):
     """Insert/update one match row. Does NOT touch ratings (that is staged
     separately so it happens in chronological order, exactly once).
-    Knockout fixtures whose participants are not yet decided (TBD slots with
-    null team names) are skipped; later syncs pick them up once known."""
-    if not m["homeTeam"].get("name") or not m["awayTeam"].get("name"):
-        return
-    home_id = upsert_team(cur, m["homeTeam"]["name"], team_type, m["homeTeam"]["id"])
-    away_id = upsert_team(cur, m["awayTeam"]["name"], team_type, m["awayTeam"]["id"])
+    Knockout fixtures with undecided participants get placeholder TBD teams
+    so the bracket can show dates and fill in names on later syncs."""
     stage = STAGE_MAP.get(m.get("stage", "REGULAR_SEASON"), "regular_season")
+    is_knockout = stage in KNOCKOUT_STAGES
+    match_ext = str(m["id"])
+    home_id = _team_from_api(cur, m.get("homeTeam"), team_type, match_ext, "h", is_knockout)
+    away_id = _team_from_api(cur, m.get("awayTeam"), team_type, match_ext, "a", is_knockout)
+    if home_id is None or away_id is None:
+        return
     ft = (m.get("score") or {}).get("fullTime") or {}
     status = m.get("status") or ""
     if status in FINISHED_STATUSES:

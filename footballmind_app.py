@@ -503,8 +503,27 @@ def _format_player_compare(result: dict) -> str:
     return "\n\n".join(parts)
 
 
+def _parse_knockout_stage(message: str) -> str | None:
+    """Map natural language to a knockout stage for predictions."""
+    low = message.lower()
+    if any(x in low for x in ("round of 32", "last 32", " r32")):
+        return "round_of_32"
+    if any(x in low for x in ("round of 16", "last 16", " r16")):
+        return "round_of_16"
+    if any(x in low for x in ("quarter-final", "quarter final", " qf")):
+        return "quarter_final"
+    if any(x in low for x in ("semi-final", "semi final", " sf")):
+        return "semi_final"
+    if " final" in low and "semi" not in low and "quarter" not in low:
+        return "final"
+    return None
+
+
 def parse_intent(message):
     low = message.lower()
+    if ("bracket" in low or "knockout tree" in low
+            or ("knockout" in low and any(x in low for x in ("show", "draw", "tree", "round")))):
+        return {"type": "bracket"}
     if "standing" in low or "table" in low or "league position" in low:
         return {"type": "standings"}
     players = _parse_player_compare(message)
@@ -520,7 +539,8 @@ def parse_intent(message):
             return {"type": "predict",
                     "home": _clean_team(m.group(1)),
                     "away": _clean_team(m.group(2)),
-                    "venue": venue}
+                    "venue": venue,
+                    "stage": _parse_knockout_stage(message)}
     return {"type": "unknown"}
 
 
@@ -571,7 +591,7 @@ def api_chat():
     if not history:
         history = _load_chat_history(conn, session_id)
     intent = parse_intent(message)
-    entities, prediction = {"comp": chat_comp}, None
+    entities, prediction, bracket_payload = {"comp": chat_comp}, None, None
 
     switch_comp = _comp_switch_compare(message, history)
     if switch_comp:
@@ -594,6 +614,12 @@ def api_chat():
                      "Ask your full question in one message, e.g. "
                      "\"Explain why Messi rates higher than Ronaldo for Argentina.\"")
             intent = {"type": "followup"}
+    elif intent["type"] == "bracket":
+        bracket_comp = chat_comp if chat_comp in ("WC", "CL") else "WC"
+        bracket_payload = get_bracket(conn, bracket_comp)
+        entities = {"competition": bracket_comp, "comp": bracket_comp}
+        comp_label = _COMP_LABELS.get(bracket_comp, bracket_comp)
+        reply = f"{comp_label} knockout bracket — scroll the tree below."
     elif intent["type"] == "predict":
         explicit_neutral = data.get("neutral")
         if explicit_neutral is not None:
@@ -606,7 +632,9 @@ def api_chat():
             entities["venue"] = venue_label
         try:
             prediction = _predict_match(conn, home, away,
-                                        None, "regular_season", session_id=session_id,
+                                        None,
+                                        intent.get("stage") or "regular_season",
+                                        session_id=session_id,
                                         neutral=neutral, comp=chat_comp)
             note = _venue_note(neutral if neutral is not None else prediction.get("neutral"),
                                venue_label, home)
@@ -654,7 +682,11 @@ def api_chat():
 
     ms = int((time.time() - t0) * 1000)
     log_query(conn, session_id, message, reply, intent["type"], entities, ms)
-    return jsonify({"reply": reply, "intent": intent["type"], "prediction": prediction})
+    out = {"reply": reply, "intent": intent["type"], "prediction": prediction}
+    if bracket_payload is not None:
+        out["bracket"] = bracket_payload
+        out["bracket_comp"] = entities.get("comp", "WC")
+    return jsonify(out)
 
 
 @app.get("/api/standings")

@@ -295,14 +295,20 @@ def _predict_match(conn, home_team, away_team, match_date,
             apply_stakes_to_lambdas,
             compute_match_stakes,
             infer_comp_for_fixture,
+            infer_knockout_stage_in_comp,
         )
-        eff_comp = comp
+        inf_comp, inf_stage = infer_comp_for_fixture(
+            cur, home_id, away_id, comp_code=comp)
+        eff_comp = comp or inf_comp
         eff_stage = stage
-        if not eff_comp:
-            inf_comp, inf_stage = infer_comp_for_fixture(cur, home_id, away_id)
-            eff_comp = inf_comp or comp
-            if inf_stage and stage == "regular_season":
+        if inf_stage and eff_stage in ("regular_season", "group"):
+            if not comp or inf_comp == comp:
                 eff_stage = inf_stage
+        elif eff_stage == "regular_season" and eff_comp in ("WC", "CL"):
+            fallback = infer_knockout_stage_in_comp(
+                cur, eff_comp, home_id, away_id)
+            if fallback:
+                eff_stage = fallback
         stakes = compute_match_stakes(
             conn, eff_comp, home_id, away_id, home_team, away_team, eff_stage)
 
@@ -360,6 +366,7 @@ def _predict_match(conn, home_team, away_team, match_date,
         "draw_prob":     round(out["draw_prob"], 3),
         "away_win_prob": round(out["away_win_prob"], 3),
         "progression":   out.get("progression"),
+        "is_knockout":   knockout,
         "reasoning":     reasoning,
         "key_factors":   key_factors,
         "home_form":     home_form,

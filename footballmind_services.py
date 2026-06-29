@@ -6,6 +6,16 @@ import datetime as _dt
 from datetime import date
 
 KNOCKOUT_ORDER = ["final", "semi_final", "quarter_final", "round_of_16", "round_of_32"]
+BRACKET_DISPLAY_ORDER = ["round_of_32", "round_of_16", "quarter_final", "semi_final", "final"]
+BRACKET_SIZES_BY_COMP = {
+    "WC": {
+        "round_of_32": 16, "round_of_16": 8, "quarter_final": 4,
+        "semi_final": 2, "final": 1,
+    },
+    "CL": {
+        "round_of_16": 8, "quarter_final": 4, "semi_final": 2, "final": 1,
+    },
+}
 POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3, "?": 9}
 
 SUPPORTED_COMP_CODES = frozenset({"PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC", "MLS"})
@@ -1412,6 +1422,14 @@ def get_team_formations(conn, team_name: str, comp: str | None = None, limit: in
     return out
 
 
+def _bracket_team_label(name: str | None) -> str:
+    if not name:
+        return "TBD"
+    if name.startswith("TBD"):
+        return "TBD"
+    return name
+
+
 def get_bracket(conn, comp: str = "WC") -> list:
     with conn.cursor() as cur:
         cur.execute(
@@ -1429,15 +1447,32 @@ def get_bracket(conn, comp: str = "WC") -> list:
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
 
-    rounds = {s: [] for s in KNOCKOUT_ORDER}
+    rounds = {s: [] for s in BRACKET_DISPLAY_ORDER}
     for row in rows:
         f = dict(zip(cols, row))
         if f.get("match_date"):
             f["match_date"] = f["match_date"].isoformat()
+        f["home"] = _bracket_team_label(f.get("home"))
+        f["away"] = _bracket_team_label(f.get("away"))
         stage = f["stage"]
         if stage in rounds:
             rounds[stage].append(f)
-    return [{"round": s, "matches": rounds[s]} for s in KNOCKOUT_ORDER if rounds[s]]
+
+    sizes = BRACKET_SIZES_BY_COMP.get(comp, BRACKET_SIZES_BY_COMP["WC"])
+    out = []
+    for stage in BRACKET_DISPLAY_ORDER:
+        if stage not in sizes:
+            continue
+        matches = rounds.get(stage) or []
+        target = max(sizes[stage], len(matches))
+        padded = list(matches)
+        while len(padded) < target:
+            padded.append({
+                "home": "TBD", "away": "TBD",
+                "match_date": None, "home_goals": None, "away_goals": None,
+            })
+        out.append({"round": stage, "matches": padded})
+    return out
 
 
 def _outcome_label(home: str, away: str, hw, dw, aw) -> str:

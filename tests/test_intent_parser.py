@@ -44,6 +44,14 @@ class TestParseIntent:
         assert r["away"] == "USA"
         assert r["venue"] == "Mexico City"
 
+    def test_predict_knockout_stage(self):
+        r = parse_intent("Predict Netherlands vs Morocco in the round of 32")
+        assert r["type"] == "predict"
+        assert r["stage"] == "round_of_32"
+
+    def test_bracket_intent(self):
+        assert parse_intent("Show World Cup knockout bracket") == {"type": "bracket"}
+
     def test_compare_players(self):
         r = parse_intent("Compare Messi vs Ronaldo")
         assert r == {"type": "compare", "player_a": "Messi", "player_b": "Ronaldo"}

@@ -192,9 +192,9 @@ function StandingsTableBody({ compCode, rows, teamCount }) {
 
 // ─── Suggestion chips ─────────────────────────────────────────────────────
 const CHIPS = [
-  "Predict Mexico vs USA",
+  "Predict Netherlands vs Morocco",
+  "Show World Cup knockout bracket",
   "Predict Spain vs Germany",
-  "Predict Arsenal vs Chelsea",
   "Predict Brazil vs Argentina",
 ];
 
@@ -545,6 +545,40 @@ function ProbBar({ home, draw, away, homeName, awayName }) {
   );
 }
 
+function AdvanceBar({ prog, homeName, awayName }) {
+  const ha = prog?.home_advance ?? 0.5;
+  const aa = prog?.away_advance ?? 0.5;
+  const seg = [
+    { k: homeName, v: ha, c: C.home },
+    { k: awayName, v: aa, c: C.away },
+  ];
+  return (
+    <div>
+      <div className="flex h-7 w-full overflow-hidden rounded-md" style={{ background: C.panel2 }}>
+        {seg.map((s, i) => (
+          <div key={i} className="flex items-center justify-center"
+            style={{ width: pct(s.v), background: s.c, minWidth: s.v > 0.06 ? undefined : 0 }}>
+            <span className="px-1 text-[11px] font-semibold tabular-nums" style={{ color: "#08120F" }}>
+              {s.v > 0.12 ? pct(s.v) : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 flex justify-between text-[11px]" style={{ color: C.mute }}>
+        {seg.map((s, i) => (
+          <span key={i} className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-sm" style={{ background: s.c }} />
+            {s.k} advance <span className="tabular-nums" style={{ color: C.chalk }}>{pct(s.v)}</span>
+          </span>
+        ))}
+      </div>
+      <p className="mt-1 text-[10px]" style={{ color: C.mute }}>
+        Knockout — extra time &amp; penalties if level after 90
+      </p>
+    </div>
+  );
+}
+
 const FORM_COLOR = { W: C.home, D: C.draw, L: C.away };
 
 function inlineFormat(text) {
@@ -656,8 +690,26 @@ function FormDots({ results, label }) {
   );
 }
 
+const KO_STAGES = new Set([
+  "round_of_32", "round_of_16", "quarter_final", "semi_final", "final", "third_place",
+]);
+
+function knockoutProgression(p, comp) {
+  if (p?.progression) return p.progression;
+  const stage = p?.stage;
+  const knockoutStage = stage && KO_STAGES.has(stage);
+  const tournamentCtx = (comp === "WC" || comp === "CL") && stage !== "group";
+  if (!knockoutStage && !(tournamentCtx && p?.is_knockout)) return null;
+  const d = p.draw_prob ?? 0;
+  const hw = p.home_win_prob ?? 0;
+  const ha = hw + d * 0.5;
+  return { home_advance: ha, away_advance: 1 - ha };
+}
+
 function PredictionCard({ p, home, away, comp = "WC", neutral = null }) {
   const color = outcomeColor(p.prediction, home, away);
+  const prog = knockoutProgression(p, comp);
+  const isKnockout = Boolean(p.is_knockout || prog);
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [analysis, setAnalysis] = useState(null);
@@ -666,7 +718,10 @@ function PredictionCard({ p, home, away, comp = "WC", neutral = null }) {
 
   function share() {
     const url = buildPredictUrl(home, away, { comp, neutral });
-    const txt = `${flag(home)}${home} ${pct(p.home_win_prob)} · Draw ${pct(p.draw_prob)} · ${flag(away)}${away} ${pct(p.away_win_prob)}\nPrediction: ${p.prediction} (${pct(p.confidence)} confidence)\n${url}\nvia FootballMind`;
+    const probs = isKnockout && prog
+      ? `${flag(home)}${home} ${pct(prog.home_advance)} · ${flag(away)}${away} ${pct(prog.away_advance)} (advance)`
+      : `${flag(home)}${home} ${pct(p.home_win_prob)} · Draw ${pct(p.draw_prob)} · ${flag(away)}${away} ${pct(p.away_win_prob)}`;
+    const txt = `${probs}\nPrediction: ${p.prediction} (${pct(p.confidence)} confidence)\n${url}\nvia FootballMind`;
     navigator.clipboard?.writeText(txt).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -761,7 +816,9 @@ function PredictionCard({ p, home, away, comp = "WC", neutral = null }) {
       )}
 
       <div className="mt-3">
-        <ProbBar home={p.home_win_prob} draw={p.draw_prob} away={p.away_win_prob} homeName={home} awayName={away} />
+        {isKnockout && prog
+          ? <AdvanceBar prog={prog} homeName={home} awayName={away} />
+          : <ProbBar home={p.home_win_prob} draw={p.draw_prob} away={p.away_win_prob} homeName={home} awayName={away} />}
       </div>
 
       {/* Head-to-head */}
@@ -1118,26 +1175,173 @@ function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, ap
   );
 }
 
+function fmtBracketTime(iso) {
+  if (!iso) return "TBD";
+  const d = new Date(iso);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((target - today) / 86400000);
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (diff === 0) return `Today, ${time}`;
+  if (diff === 1) return `Tomorrow, ${time}`;
+  const date = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  return `${date}, ${time}`;
+}
+
 const ROUND_LABEL = {
   round_of_32: "Round of 32", round_of_16: "Round of 16",
-  quarter_final: "Quarter-Finals", semi_final: "Semi-Finals",
+  quarter_final: "Quarter-finals", semi_final: "Semi-finals",
   final: "Final",
 };
-const BRACKET_ORDER = ["final", "semi_final", "quarter_final", "round_of_16", "round_of_32"];
+const BRACKET_ORDER = ["round_of_32", "round_of_16", "quarter_final", "semi_final", "final"];
+
+const BRACKET_MATCH_H = 76;
+const BRACKET_GAP = 10;
+
+function bracketMatchTop(roundIndex, matchIndex) {
+  const stride = BRACKET_MATCH_H + BRACKET_GAP;
+  return matchIndex * stride * (2 ** roundIndex)
+    + ((2 ** roundIndex) - 1) * stride / 2;
+}
+
+function BracketTeamRow({ name, goals, winner }) {
+  const tbd = !name || name === "TBD";
+  return (
+    <div className="flex items-center gap-2 px-2.5 py-1.5"
+      style={{ background: winner ? "rgba(52,211,153,0.08)" : "transparent" }}>
+      <span className="flex h-4 w-5 shrink-0 items-center justify-center text-[10px] rounded-sm"
+        style={{ background: tbd ? C.line : "transparent" }}>
+        {tbd ? "🛡" : flag(name).trim()}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-xs font-medium"
+        style={{ color: tbd ? C.mute : C.chalk }}>
+        {tbd ? "TBD" : name}
+      </span>
+      {goals != null && (
+        <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: C.chalk }}>{goals}</span>
+      )}
+    </div>
+  );
+}
+
+function BracketMatchCard({ f }) {
+  const finished = f.home_goals != null && f.away_goals != null;
+  const homeWin = finished && f.home_goals > f.away_goals;
+  const awayWin = finished && f.away_goals > f.home_goals;
+  return (
+    <div className="w-[168px] shrink-0 overflow-hidden rounded-lg border"
+      style={{ borderColor: C.line, background: C.panel2 }}>
+      <div className="px-2.5 py-1 text-[10px] font-medium truncate" style={{ color: C.mute }}>
+        {finished ? "Full time" : fmtBracketTime(f.match_date)}
+      </div>
+      <div style={{ borderTop: `1px solid ${C.line}` }}>
+        <BracketTeamRow name={f.home} goals={finished ? f.home_goals : null} winner={homeWin} />
+        <div style={{ borderTop: `1px solid ${C.line}` }} />
+        <BracketTeamRow name={f.away} goals={finished ? f.away_goals : null} winner={awayWin} />
+      </div>
+    </div>
+  );
+}
+
+function BracketConnectors({ roundIndex, matchCount, colHeight }) {
+  if (roundIndex === 0) return null;
+  const stride = (BRACKET_MATCH_H + BRACKET_GAP) * (2 ** roundIndex);
+  const arm = stride / 4;
+  const lines = [];
+  for (let i = 0; i < matchCount; i++) {
+    const cy = bracketMatchTop(roundIndex, i) + BRACKET_MATCH_H / 2;
+    lines.push(
+      <div key={i} className="absolute left-0 pointer-events-none"
+        style={{ top: cy, width: 20, height: 1, background: C.line }} />,
+      <div key={`v-${i}`} className="absolute pointer-events-none"
+        style={{
+          left: 0, top: cy - arm, width: 1, height: arm * 2,
+          background: C.line,
+        }} />
+    );
+  }
+  return (
+    <div className="relative shrink-0" style={{ width: 20, height: colHeight }}>
+      {lines}
+    </div>
+  );
+}
 
 /** Normalise API bracket to ordered [{round, matches}] (array or legacy object). */
 function normaliseBracket(data) {
   if (Array.isArray(data)) {
-    return data.filter((r) => r.round !== "third_place" && r.matches?.length);
+    const byRound = Object.fromEntries(data.map((r) => [r.round, r]));
+    return BRACKET_ORDER
+      .filter((k) => byRound[k]?.matches?.length)
+      .map((k) => ({ round: k, matches: byRound[k].matches }));
   }
   const b = data || {};
   return BRACKET_ORDER.filter((k) => b[k]?.length).map((k) => ({ round: k, matches: b[k] }));
 }
 
-function BracketPanel({ apiBase, offline }) {
+function BracketTree({ rounds, scrollRef: externalRef }) {
+  const internalRef = useRef(null);
+  const scrollRef = externalRef || internalRef;
+  const firstCount = rounds[0]?.matches?.length ?? 0;
+  const colHeight = firstCount > 0
+    ? firstCount * (BRACKET_MATCH_H + BRACKET_GAP) - BRACKET_GAP
+    : 0;
+
+  if (!rounds.length) {
+    return (
+      <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>
+        No knockout matches yet — check back once the group stage finishes.
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative px-2 pb-3 pt-1">
+      <button type="button" aria-label="Scroll bracket right"
+        onClick={() => scrollRef.current?.scrollBy({ left: 220, behavior: "smooth" })}
+        className="absolute right-3 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border text-sm"
+        style={{ borderColor: C.line, background: C.panel2, color: C.chalk }}>
+        ›
+      </button>
+      <div ref={scrollRef} className="overflow-x-auto pb-1" style={{ scrollbarWidth: "thin" }}>
+        <div className="flex min-w-max items-start gap-0 pr-10">
+          {rounds.map(({ round, matches }, ri) => (
+            <div key={round} className="flex shrink-0 items-start">
+              {ri > 0 && (
+                <BracketConnectors
+                  roundIndex={ri}
+                  matchCount={matches.length}
+                  colHeight={colHeight}
+                />
+              )}
+              <div className="shrink-0 px-2">
+                <div className="mb-2 text-center text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ color: C.mute }}>
+                  {ROUND_LABEL[round] ?? round}
+                </div>
+                <div className="relative" style={{ height: colHeight, width: 168 }}>
+                  {matches.map((f, mi) => (
+                    <div key={mi} className="absolute left-0 right-0"
+                      style={{ top: bracketMatchTop(ri, mi) }}>
+                      <BracketMatchCard f={f} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BracketPanel({ apiBase, offline, defaultComp = "WC" }) {
   const [bracket, setBracket] = useState(null);
-  const [open, setOpen] = useState(false);
-  const [comp, setComp] = useState("WC");
+  const [open, setOpen] = useState(true);
+  const [comp, setComp] = useState(defaultComp);
+  const scrollRef = useRef(null);
 
   function load(c) {
     if (!apiBase || offline) return;
@@ -1147,10 +1351,16 @@ function BracketPanel({ apiBase, offline }) {
       .catch(() => setBracket([]));
   }
 
+  useEffect(() => {
+    setComp(defaultComp);
+  }, [defaultComp]);
+
+  useEffect(() => {
+    if (open && apiBase && !offline) load(comp);
+  }, [open, apiBase, offline, comp]);
+
   function toggle() {
-    const next = !open;
-    setOpen(next);
-    if (next && bracket === null) load(comp);
+    setOpen((v) => !v);
   }
 
   const rounds = bracket ?? [];
@@ -1168,7 +1378,6 @@ function BracketPanel({ apiBase, offline }) {
 
       {open && (
         <div>
-          {/* Comp selector */}
           <div className="flex gap-1 overflow-x-auto px-3 pt-2 pb-1" style={{ scrollbarWidth: "none" }}>
             {[["WC", "🌍 World Cup"], ["CL", "⭐ Champions League"]].map(([c, lbl]) => (
               <button key={c} onClick={() => { setComp(c); setBracket(null); load(c); }}
@@ -1181,37 +1390,9 @@ function BracketPanel({ apiBase, offline }) {
 
           {bracket === null ? (
             <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
-          ) : rounds.length === 0 ? (
-            <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>
-              No knockout matches yet — check back once the group stage finishes.
-            </div>
-          ) : rounds.map(({ round, matches }) => (
-            <div key={round}>
-              <div className="border-t px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
-                style={{ borderColor: C.line, color: C.mute, background: C.panel2 }}>
-                {ROUND_LABEL[round] ?? round}
-              </div>
-              {matches.map((f, i) => (
-                <div key={i} style={{ borderTop: `1px solid ${C.line}` }}>
-                  <div className="flex items-center gap-3 px-4 py-2.5">
-                    <span className="flex min-w-0 flex-1 items-center gap-1 text-xs" style={{ color: C.chalk }}>
-                      <span className="truncate font-medium">{flag(f.home)}{f.home}</span>
-                      <span className="shrink-0" style={{ color: C.mute }}>vs</span>
-                      <span className="truncate font-medium">{flag(f.away)}{f.away}</span>
-                    </span>
-                    {f.home_goals != null
-                      ? <span className="shrink-0 text-xs font-bold tabular-nums"
-                          style={{ color: C.home }}>{f.home_goals}–{f.away_goals}</span>
-                      : f.match_date
-                        ? <span className="shrink-0 text-[10px] whitespace-nowrap" style={{ color: C.mute }}>
-                            {fmtDate(f.match_date)}
-                          </span>
-                        : <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>TBD</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
+          ) : (
+            <BracketTree rounds={rounds} scrollRef={scrollRef} />
+          )}
         </div>
       )}
     </div>
@@ -2477,6 +2658,7 @@ export default function FootballMind() {
       setMessages((m) => [...m, {
         role: "bot", text: data.reply, prediction: data.prediction, teams,
         comp: effectiveComp, neutral: effectiveNeutral,
+        bracket: data.bracket, bracketComp: data.bracket_comp,
       }]);
       if (data.prediction && teams) {
         savePredictionCache(text, {
@@ -2610,6 +2792,12 @@ export default function FootballMind() {
                       neutral={m.neutral ?? null}
                     />
                   )}
+                  {m.bracket && (
+                    <div className="mt-2 max-w-full overflow-hidden rounded-xl border p-1"
+                      style={{ borderColor: C.line, background: C.panel }}>
+                      <BracketTree rounds={normaliseBracket(m.bracket)} />
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -2676,7 +2864,7 @@ export default function FootballMind() {
               <CalibrationPanel summary={summary} apiBase={API_BASE} offline={offline} />
               <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} onSummary={setSummary} onCompChange={handleCompChange} />
               {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
-              <BracketPanel apiBase={API_BASE} offline={offline} />
+              <BracketPanel apiBase={API_BASE} offline={offline} defaultComp={chatComp === "CL" ? "CL" : "WC"} />
               <RankingsPanel apiBase={API_BASE} offline={offline} />
               <StandingsPanel apiBase={API_BASE} offline={offline} onCompChange={handleCompChange} />
             </>
