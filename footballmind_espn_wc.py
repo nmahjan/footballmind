@@ -163,14 +163,23 @@ def _stat_value(stats: list[dict], name: str) -> int | None:
     return None
 
 
+def _espn_scoring_events(summary: dict) -> list[dict]:
+    """Scoring keyEvents from an ESPN summary, if any."""
+    return [
+        event for event in (summary.get("keyEvents") or [])
+        if event.get("scoringPlay")
+    ]
+
+
 def _sync_espn_key_events(cur, match_id: int, summary: dict,
                           name_to_id: dict[str, int]) -> int:
     """Insert goals/assists from ESPN keyEvents into match_events."""
+    scoring_events = _espn_scoring_events(summary)
+    if not scoring_events:
+        return 0
     cur.execute("DELETE FROM match_events WHERE match_id = %s", (match_id,))
     n = 0
-    for event in summary.get("keyEvents") or []:
-        if not event.get("scoringPlay"):
-            continue
+    for event in scoring_events:
         etype_raw = ((event.get("type") or {}).get("type") or "").lower()
         if "own" in etype_raw and "goal" in etype_raw:
             etype = "OWN_GOAL"
