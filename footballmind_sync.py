@@ -210,25 +210,98 @@ def _score_side(node: dict | None, *, home: bool) -> int | None:
     return v if v is not None else node.get("awayTeam")
 
 
+def _playing_time_score(score: dict) -> tuple[int | None, int | None]:
+    """Goals after 90'+ET (before any penalty shootout)."""
+    rt = score.get("regularTime") or {}
+    et = score.get("extraTime")
+    rh, ra = _score_side(rt, home=True), _score_side(rt, home=False)
+    if rh is None or ra is None:
+        return None, None
+    if et:
+        eh = _score_side(et, home=True)
+        ea = _score_side(et, home=False)
+        rh += eh if eh is not None else 0
+        ra += ea if ea is not None else 0
+    return rh, ra
+
+
+def _pen_scores_from_kicks(m: dict) -> tuple[int | None, int | None]:
+    """Count scored kicks from the match penalties[] list."""
+    kicks = m.get("penalties")
+    if not isinstance(kicks, list) or not kicks:
+        return None, None
+    home_api = (m.get("homeTeam") or {}).get("id")
+    away_api = (m.get("awayTeam") or {}).get("id")
+    home = away = 0
+    for kick in kicks:
+        if not kick.get("scored"):
+            continue
+        tid = (kick.get("team") or {}).get("id")
+        if tid == home_api:
+            home += 1
+        elif tid == away_api:
+            away += 1
+    return (home, away) if (home or away) else (None, None)
+
+
+def _derive_pen_score(score: dict) -> tuple[int | None, int | None]:
+    """FDO fullTime aggregates reg + ET + shootout; derive pens when needed."""
+    ft = score.get("fullTime") or {}
+    rt = score.get("regularTime") or {}
+    et = score.get("extraTime") or {}
+    fh, fa = _score_side(ft, home=True), _score_side(ft, home=False)
+    rh, ra = _score_side(rt, home=True), _score_side(rt, home=False)
+    if None in (fh, fa, rh, ra):
+        return None, None
+    eh = _score_side(et, home=True) or 0 if et else 0
+    ea = _score_side(et, home=False) or 0 if et else 0
+    ph, pa = fh - rh - eh, fa - ra - ea
+    if ph >= 0 and pa >= 0 and ph != pa:
+        return ph, pa
+    return None, None
+
+
+def _resolve_pen_shootout_scores(m: dict, score: dict) -> tuple[int | None, int | None]:
+    """Best available penalty-shootout tally (must not be tied for a finished match)."""
+    pens = score.get("penalties") or {}
+    api_h, api_a = _score_side(pens, home=True), _score_side(pens, home=False)
+    if api_h is not None and api_a is not None and api_h != api_a:
+        return api_h, api_a
+    derived = _derive_pen_score(score)
+    if derived[0] is not None:
+        return derived
+    return _pen_scores_from_kicks(m)
+
+
 def _parse_fdo_scores(m: dict) -> dict:
     """Extract display scores and knockout metadata from an FDO match payload."""
     score = m.get("score") or {}
     ft = score.get("fullTime") or {}
     rt = score.get("regularTime") or {}
-    pens = score.get("penalties") or {}
     duration = score.get("duration") or "REGULAR"
-    home_goals = _score_side(ft, home=True)
-    away_goals = _score_side(ft, home=False)
     reg_home = _score_side(rt, home=True)
     reg_away = _score_side(rt, home=False)
-    # Prefer goal-by-goal running score when present (more reliable than live fullTime).
-    goals = m.get("goals") or []
-    if goals:
-        last = (goals[-1].get("score") or {})
-        gh = _score_side(last, home=True)
-        ga = _score_side(last, home=False)
-        if gh is not None and ga is not None:
-            home_goals, away_goals = gh, ga
+
+    if duration == "PENALTY_SHOOTOUT":
+        pt_h, pt_a = _playing_time_score(score)
+        home_goals, away_goals = pt_h, pt_a
+        if home_goals is None:
+            home_goals = _score_side(ft, home=True)
+            away_goals = _score_side(ft, home=False)
+        home_pens, away_pens = _resolve_pen_shootout_scores(m, score)
+    else:
+        home_goals = _score_side(ft, home=True)
+        away_goals = _score_side(ft, home=False)
+        # Prefer goal-by-goal running score when present (more reliable than live fullTime).
+        goals = m.get("goals") or []
+        if goals:
+            last = (goals[-1].get("score") or {})
+            gh = _score_side(last, home=True)
+            ga = _score_side(last, home=False)
+            if gh is not None and ga is not None:
+                home_goals, away_goals = gh, ga
+        home_pens, away_pens = None, None
+
     return {
         "home_goals": home_goals,
         "away_goals": away_goals,
@@ -238,8 +311,8 @@ def _parse_fdo_scores(m: dict) -> dict:
         "winner": score.get("winner"),
         "went_to_et": duration in ("EXTRA_TIME", "PENALTY_SHOOTOUT"),
         "went_to_pens": duration == "PENALTY_SHOOTOUT",
-        "home_pens": _score_side(pens, home=True),
-        "away_pens": _score_side(pens, home=False),
+        "home_pens": home_pens,
+        "away_pens": away_pens,
     }
 
 
