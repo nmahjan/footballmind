@@ -12,7 +12,8 @@ class _FakeCursor:
         self.executed.append((sql.strip(), params))
         if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
             self._fetch = [
-                (1, 0.2, 0.6, 0.2, 1, 1),  # predicted draw, actual draw
+                # pid, hw, dw, aw, hg, ag, stage, adv_id, home_tid
+                (1, 0.2, 0.6, 0.2, 1, 1, "regular_season", None, 10),
             ]
         else:
             self._fetch = []
