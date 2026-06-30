@@ -27,7 +27,7 @@ from footballmind_db import get_connection, release_transaction
 from footballmind_sync import (TokenBucket, FootballDataClient,
                                sync_competition, sync_teams_and_squads,
                                sync_scorers, sync_match_details,
-                               apply_team_captains)
+                               refresh_knockout_scores, apply_team_captains)
 from footballmind_production import select_and_deploy
 from footballmind_seed_elo import seed_national_elo
 from footballmind_grading import grade_predictions, link_orphan_predictions
