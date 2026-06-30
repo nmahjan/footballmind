@@ -21,10 +21,13 @@ BRACKET_SIZES_BY_COMP = {
 
 
 def _format_match_score(hg, ag, *, went_to_et=False, went_to_pens=False,
-                        home_pens=None, away_pens=None) -> str:
-    label = f"{hg}–{ag}"
+                        home_pens=None, away_pens=None,
+                        reg_home=None, reg_away=None) -> str:
     if went_to_pens and home_pens is not None and away_pens is not None:
-        return f"{label} ({home_pens}–{away_pens} pens)"
+        rh = reg_home if reg_home is not None else hg
+        ra = reg_away if reg_away is not None else ag
+        return f"{rh}–{ra} Pens ({home_pens}–{away_pens})"
+    label = f"{hg}–{ag}"
     if went_to_et:
         return f"{label} (aet)"
     return label
@@ -620,6 +623,7 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             "SELECT m.id, m.home_team_id, m.away_team_id, th.name AS home, ta.name AS away, "
             "       m.home_goals, m.away_goals, m.match_date, m.stage, "
             "       m.went_to_et, m.went_to_pens, m.home_pens, m.away_pens, "
+            "       m.reg_home_goals, m.reg_away_goals, "
             "       tw.name AS advances, "
             "       p.id AS prediction_id, "
             "       p.home_win_prob, p.draw_prob, p.away_win_prob, p.was_correct "
@@ -669,6 +673,8 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
                 went_to_pens=bool(r.get("went_to_pens")),
                 home_pens=r.get("home_pens"),
                 away_pens=r.get("away_pens"),
+                reg_home=r.get("reg_home_goals"),
+                reg_away=r.get("reg_away_goals"),
             ),
             "home_goals": hg,
             "away_goals": ag,

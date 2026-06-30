@@ -363,8 +363,9 @@ def upsert_match(cur, edition_id, m, team_type):
     cur.execute(
         "INSERT INTO matches (edition_id, stage, match_date, home_team_id, "
         " away_team_id, home_goals, away_goals, external_id, group_name, matchday, "
-        " went_to_et, went_to_pens, home_pens, away_pens, advancing_team_id) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        " went_to_et, went_to_pens, home_pens, away_pens, advancing_team_id, "
+        " reg_home_goals, reg_away_goals) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
         "ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET "
         "  match_date = EXCLUDED.match_date, "
         "  home_team_id = EXCLUDED.home_team_id, "
@@ -378,11 +379,14 @@ def upsert_match(cur, edition_id, m, team_type):
         "  home_pens = COALESCE(EXCLUDED.home_pens, matches.home_pens), "
         "  away_pens = COALESCE(EXCLUDED.away_pens, matches.away_pens), "
         "  advancing_team_id = COALESCE(EXCLUDED.advancing_team_id, "
-        "                                matches.advancing_team_id)",
+        "                                matches.advancing_team_id), "
+        "  reg_home_goals = COALESCE(EXCLUDED.reg_home_goals, matches.reg_home_goals), "
+        "  reg_away_goals = COALESCE(EXCLUDED.reg_away_goals, matches.reg_away_goals)",
         (edition_id, stage, m["utcDate"], home_id, away_id,
          home_goals, away_goals, str(m["id"]), group_name, m.get("matchday"),
          parsed["went_to_et"], parsed["went_to_pens"],
-         parsed["home_pens"], parsed["away_pens"], adv_id))
+         parsed["home_pens"], parsed["away_pens"], adv_id,
+         parsed["reg_home"], parsed["reg_away"]))
 
 
 # ----------------------------------------------------------------------
@@ -706,11 +710,13 @@ def refresh_knockout_scores(conn, client, comp_code: str = "WC", limit: int = 24
                 "  home_goals = %s, away_goals = %s, "
                 "  went_to_et = %s, went_to_pens = %s, "
                 "  home_pens = %s, away_pens = %s, "
+                "  reg_home_goals = %s, reg_away_goals = %s, "
                 "  advancing_team_id = COALESCE(%s, advancing_team_id) "
                 "WHERE id = %s",
                 (parsed["home_goals"], parsed["away_goals"],
                  parsed["went_to_et"], parsed["went_to_pens"],
                  parsed["home_pens"], parsed["away_pens"],
+                 parsed["reg_home"], parsed["reg_away"],
                  adv_id, match_id))
         conn.commit()
         updated += 1
@@ -761,11 +767,13 @@ def sync_match_details(conn, client, limit=20):
                         "  home_goals = %s, away_goals = %s, "
                         "  went_to_et = %s, went_to_pens = %s, "
                         "  home_pens = %s, away_pens = %s, "
+                        "  reg_home_goals = %s, reg_away_goals = %s, "
                         "  advancing_team_id = COALESCE(%s, advancing_team_id) "
                         "WHERE id = %s",
                         (parsed["home_goals"], parsed["away_goals"],
                          parsed["went_to_et"], parsed["went_to_pens"],
                          parsed["home_pens"], parsed["away_pens"],
+                         parsed["reg_home"], parsed["reg_away"],
                          adv_id, match_id))
             cur.execute("UPDATE matches SET details_synced = TRUE WHERE id = %s",
                         (match_id,))
