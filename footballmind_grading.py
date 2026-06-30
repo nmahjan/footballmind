@@ -66,7 +66,9 @@ def grade_predictions(conn):
             "WHERE m.home_goals IS NOT NULL "
             "  AND (p.was_correct IS NULL "
             "       OR p.actual_home_goals IS DISTINCT FROM m.home_goals "
-            "       OR p.actual_away_goals IS DISTINCT FROM m.away_goals)")
+            "       OR p.actual_away_goals IS DISTINCT FROM m.away_goals "
+            "       OR (m.went_to_pens AND m.home_pens IS NOT NULL "
+            "           AND m.away_pens IS NOT NULL AND m.home_pens != m.away_pens))")
         rows = cur.fetchall()
         knockout = {
             "round_of_32", "round_of_16", "quarter_final", "semi_final", "final",
