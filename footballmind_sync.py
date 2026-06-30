@@ -346,6 +346,15 @@ def _advancing_team_id(winner: str | None, home_id: int, away_id: int) -> int | 
     return None
 
 
+def _advancing_from_pen_scores(
+    home_pens: int | None, away_pens: int | None,
+    home_id: int, away_id: int,
+) -> int | None:
+    if home_pens is None or away_pens is None or home_pens == away_pens:
+        return None
+    return home_id if home_pens > away_pens else away_id
+
+
 def _team_from_api(cur, team_api, team_type, match_ext_id, side, is_knockout):
     """Resolve API team payload to a teams.id (placeholder row for TBD knockouts)."""
     api = team_api or {}
@@ -384,6 +393,8 @@ def upsert_match(cur, edition_id, m, team_type):
             m, m.get("score") or {}, adv_is_home=adv_home)
         if hp is not None:
             parsed["home_pens"], parsed["away_pens"] = hp, ap
+        if adv_id is None:
+            adv_id = _advancing_from_pen_scores(hp, ap, home_id, away_id)
     group_name = m.get("group")   # e.g. "GROUP_A" from football-data.org
     if group_name:
         # normalise "GROUP_A" -> "A"
@@ -737,6 +748,9 @@ def refresh_knockout_scores(conn, client, comp_code: str = "WC", limit: int = 24
             adv_home = True if adv_id == row[0] else False if adv_id == row[1] else None
             home_pens, away_pens = _resolve_pen_shootout_scores(
                 m, m.get("score") or {}, adv_is_home=adv_home)
+            if adv_id is None:
+                adv_id = _advancing_from_pen_scores(
+                    home_pens, away_pens, row[0], row[1])
             cur.execute(
                 "UPDATE matches SET "
                 "  home_goals = %s, away_goals = %s, "
@@ -800,6 +814,9 @@ def sync_match_details(conn, client, limit=20):
                         else False if adv_id == row[1] else None)
                     home_pens, away_pens = _resolve_pen_shootout_scores(
                         m, m.get("score") or {}, adv_is_home=adv_home)
+                    if adv_id is None:
+                        adv_id = _advancing_from_pen_scores(
+                            home_pens, away_pens, row[0], row[1])
                     cur.execute(
                         "UPDATE matches SET "
                         "  home_goals = %s, away_goals = %s, "

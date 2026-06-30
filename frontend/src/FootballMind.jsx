@@ -957,6 +957,31 @@ function displayTeam(name) {
   return name;
 }
 
+function ResultScoreLine({ r }) {
+  if (r.went_to_pens) {
+    const rh = r.reg_home_goals ?? r.home_goals;
+    const ra = r.reg_away_goals ?? r.away_goals;
+    const reg = rh != null && ra != null ? `${rh}–${ra}` : r.score;
+    const pens =
+      r.home_pens != null && r.away_pens != null
+        ? ` (${r.home_pens}–${r.away_pens} pens)`
+        : " (pens)";
+    return (
+      <>
+        {flag(r.home)}{r.home}{" "}
+        <span className="tabular-nums">{reg}</span>{" "}
+        {flag(r.away)}{r.away}
+        <span className="font-normal text-xs" style={{ color: C.mute }}>{pens}</span>
+      </>
+    );
+  }
+  return (
+    <>
+      {flag(r.home)}{r.home} {r.score} {flag(r.away)}{r.away}
+    </>
+  );
+}
+
 function FixtureRow({ f, onClick }) {
   const home = displayTeam(f.home);
   const away = displayTeam(f.away);
@@ -1040,7 +1065,7 @@ function PredictionResultsView({ apiBase, comp = "WC", onSummary }) {
               )}
             </div>
             <div className="text-sm font-semibold" style={{ color: C.chalk }}>
-              {flag(r.home)}{r.home} {r.score} {flag(r.away)}{r.away}
+              <ResultScoreLine r={r} />
             </div>
             {hasPred ? (
               <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">

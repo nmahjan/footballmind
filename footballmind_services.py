@@ -27,17 +27,21 @@ def _format_match_score(hg, ag, *, went_to_et=False, went_to_pens=False,
         rh = reg_home if reg_home is not None else hg
         ra = reg_away if reg_away is not None else ag
         if home_pens is not None and away_pens is not None:
-            return f"{rh}–{ra} Pens ({home_pens}–{away_pens})"
-        return f"{rh}–{ra} Pens"
+            return f"{rh}–{ra} ({home_pens}–{away_pens} pens)"
+        return f"{rh}–{ra} (pens)"
     label = f"{hg}–{ag}"
     if went_to_et:
         return f"{label} (aet)"
     return label
 
 
-def _match_actual_outcome(home, away, hg, ag, stage, advances=None) -> str:
+def _match_actual_outcome(home, away, hg, ag, stage, advances=None, *,
+                          went_to_pens=False, home_pens=None, away_pens=None) -> str:
     if stage in KNOCKOUT_STAGES and advances and advances != "TBD":
         return advances
+    if (went_to_pens and home_pens is not None and away_pens is not None
+            and home_pens != away_pens):
+        return home if home_pens > away_pens else away
     if hg > ag:
         return home
     if hg == ag:
@@ -680,6 +684,12 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             ),
             "home_goals": hg,
             "away_goals": ag,
+            "went_to_et": bool(r.get("went_to_et")),
+            "went_to_pens": bool(r.get("went_to_pens")),
+            "home_pens": r.get("home_pens"),
+            "away_pens": r.get("away_pens"),
+            "reg_home_goals": r.get("reg_home_goals"),
+            "reg_away_goals": r.get("reg_away_goals"),
             "stage": stage,
             "match_date": md.isoformat() if md else None,
         }
@@ -689,9 +699,17 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             predicted = _outcome_label(home, away, r["home_win_prob"],
                                        r["draw_prob"], r["away_win_prob"])
             actual = _match_actual_outcome(
-                home, away, hg, ag, stage, advances=advances)
+                home, away, hg, ag, stage, advances=advances,
+                went_to_pens=bool(r.get("went_to_pens")),
+                home_pens=r.get("home_pens"),
+                away_pens=r.get("away_pens"),
+            )
             if stage in KNOCKOUT_STAGES and advances and advances != "TBD":
                 act_idx = 0 if advances == home else 2
+            elif (r.get("went_to_pens") and r.get("home_pens") is not None
+                  and r.get("away_pens") is not None
+                  and r["home_pens"] != r["away_pens"]):
+                act_idx = 0 if r["home_pens"] > r["away_pens"] else 2
             else:
                 act_idx = 0 if hg > ag else (1 if hg == ag else 2)
             pred_idx = probs.index(max(probs))
