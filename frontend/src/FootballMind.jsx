@@ -1347,15 +1347,24 @@ function BracketTree({ rounds, scrollRef: externalRef }) {
   }
 
   return (
-    <div className="relative px-2 pb-3 pt-1">
+    <div className="relative min-w-0 max-w-full px-2 pb-3 pt-1">
+      <button type="button" aria-label="Scroll bracket left"
+        onClick={() => scrollRef.current?.scrollBy({ left: -220, behavior: "smooth" })}
+        className="absolute left-1 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border text-sm"
+        style={{ borderColor: C.line, background: C.panel2, color: C.chalk }}>
+        ‹
+      </button>
       <button type="button" aria-label="Scroll bracket right"
         onClick={() => scrollRef.current?.scrollBy({ left: 220, behavior: "smooth" })}
-        className="absolute right-3 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border text-sm"
+        className="absolute right-1 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border text-sm"
         style={{ borderColor: C.line, background: C.panel2, color: C.chalk }}>
         ›
       </button>
-      <div ref={scrollRef} className="overflow-x-auto pb-1" style={{ scrollbarWidth: "thin" }}>
-        <div className="flex min-w-max items-start gap-0 pr-10">
+      <div
+        ref={scrollRef}
+        className="max-w-full overflow-x-auto overflow-y-hidden overscroll-x-contain px-8 pb-1"
+        style={{ scrollbarWidth: "thin", WebkitOverflowScrolling: "touch" }}>
+        <div className="inline-flex min-w-max items-start gap-0">
           {rounds.map(({ round, matches }, ri) => (
             <div key={round} className="flex shrink-0 items-start">
               {ri > 0 && (
@@ -1416,7 +1425,7 @@ function BracketPanel({ apiBase, offline, defaultComp = "WC" }) {
   const rounds = bracket ?? [];
 
   return (
-    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+    <div className="min-w-0 overflow-hidden rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
       <button onClick={toggle}
         className="flex w-full items-center justify-between px-4 py-2.5 text-left transition-opacity hover:opacity-70"
         style={{ borderBottom: open ? `1px solid ${C.line}` : "none" }}>
@@ -1427,7 +1436,7 @@ function BracketPanel({ apiBase, offline, defaultComp = "WC" }) {
       </button>
 
       {open && (
-        <div>
+        <div className="min-w-0 overflow-hidden">
           <div className="flex gap-1 overflow-x-auto px-3 pt-2 pb-1" style={{ scrollbarWidth: "none" }}>
             {[["WC", "🌍 World Cup"], ["CL", "⭐ Champions League"]].map(([c, lbl]) => (
               <button key={c} onClick={() => { setComp(c); setBracket(null); load(c); }}
@@ -2795,9 +2804,9 @@ export default function FootballMind() {
         )}
       </header>
 
-      <div className="flex flex-1 flex-col gap-4 p-4 md:flex-row">
+      <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 md:flex-row">
         {/* ── Chat panel ── */}
-        <section className="flex min-h-[60vh] flex-1 flex-col rounded-xl border md:basis-[60%]"
+        <section className="flex min-h-[60vh] min-w-0 flex-1 flex-col rounded-xl border md:min-w-0 md:basis-[60%]"
           style={{ borderColor: C.line, background: C.panel2 }}>
           <div className="flex items-center justify-between border-b px-4 py-2" style={{ borderColor: C.line }}>
             <span className="text-[10px] font-medium" style={{ color: C.mute }}>Chat</span>
@@ -2843,7 +2852,7 @@ export default function FootballMind() {
                     />
                   )}
                   {m.bracket && (
-                    <div className="mt-2 max-w-full overflow-hidden rounded-xl border p-1"
+                    <div className="mt-2 w-full min-w-0 max-w-full overflow-hidden rounded-xl border p-1"
                       style={{ borderColor: C.line, background: C.panel }}>
                       <BracketTree rounds={normaliseBracket(m.bracket)} />
                     </div>
@@ -2907,7 +2916,7 @@ export default function FootballMind() {
         </section>
 
         {/* ── Sidebar ── */}
-        <aside className="flex flex-col gap-4 md:basis-[40%]">
+        <aside className="flex min-w-0 flex-col gap-4 md:max-w-[40%] md:basis-[40%] md:shrink-0">
           <SidebarModeToggle mode={sidebarMode} setMode={setSidebarMode} />
           {sidebarMode === "matches" ? (
             <>
