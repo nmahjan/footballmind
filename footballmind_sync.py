@@ -199,6 +199,58 @@ def get_or_create_edition(cur, comp_code, comp_name, comp_type, season):
 FINISHED_STATUSES = frozenset({"FINISHED", "AWARDED"})
 
 
+def _score_side(node: dict | None, *, home: bool) -> int | None:
+    """Read home/away from an FDO score sub-node (v4 uses homeTeam/awayTeam)."""
+    if not node:
+        return None
+    if home:
+        v = node.get("home")
+        return v if v is not None else node.get("homeTeam")
+    v = node.get("away")
+    return v if v is not None else node.get("awayTeam")
+
+
+def _parse_fdo_scores(m: dict) -> dict:
+    """Extract display scores and knockout metadata from an FDO match payload."""
+    score = m.get("score") or {}
+    ft = score.get("fullTime") or {}
+    rt = score.get("regularTime") or {}
+    pens = score.get("penalties") or {}
+    duration = score.get("duration") or "REGULAR"
+    home_goals = _score_side(ft, home=True)
+    away_goals = _score_side(ft, home=False)
+    reg_home = _score_side(rt, home=True)
+    reg_away = _score_side(rt, home=False)
+    # Prefer goal-by-goal running score when present (more reliable than live fullTime).
+    goals = m.get("goals") or []
+    if goals:
+        last = (goals[-1].get("score") or {})
+        gh = _score_side(last, home=True)
+        ga = _score_side(last, home=False)
+        if gh is not None and ga is not None:
+            home_goals, away_goals = gh, ga
+    return {
+        "home_goals": home_goals,
+        "away_goals": away_goals,
+        "reg_home": reg_home,
+        "reg_away": reg_away,
+        "duration": duration,
+        "winner": score.get("winner"),
+        "went_to_et": duration in ("EXTRA_TIME", "PENALTY_SHOOTOUT"),
+        "went_to_pens": duration == "PENALTY_SHOOTOUT",
+        "home_pens": _score_side(pens, home=True),
+        "away_pens": _score_side(pens, home=False),
+    }
+
+
+def _advancing_team_id(winner: str | None, home_id: int, away_id: int) -> int | None:
+    if winner == "HOME_TEAM":
+        return home_id
+    if winner == "AWAY_TEAM":
+        return away_id
+    return None
+
+
 def _team_from_api(cur, team_api, team_type, match_ext_id, side, is_knockout):
     """Resolve API team payload to a teams.id (placeholder row for TBD knockouts)."""
     api = team_api or {}
@@ -224,20 +276,22 @@ def upsert_match(cur, edition_id, m, team_type):
     away_id = _team_from_api(cur, m.get("awayTeam"), team_type, match_ext, "a", is_knockout)
     if home_id is None or away_id is None:
         return
-    ft = (m.get("score") or {}).get("fullTime") or {}
     status = m.get("status") or ""
+    parsed = _parse_fdo_scores(m)
     if status in FINISHED_STATUSES:
-        home_goals, away_goals = ft.get("home"), ft.get("away")
+        home_goals, away_goals = parsed["home_goals"], parsed["away_goals"]
     else:
         home_goals, away_goals = None, None
+    adv_id = _advancing_team_id(parsed["winner"], home_id, away_id) if status in FINISHED_STATUSES else None
     group_name = m.get("group")   # e.g. "GROUP_A" from football-data.org
     if group_name:
         # normalise "GROUP_A" -> "A"
         group_name = group_name.replace("GROUP_", "").replace("Group ", "").strip()
     cur.execute(
         "INSERT INTO matches (edition_id, stage, match_date, home_team_id, "
-        " away_team_id, home_goals, away_goals, external_id, group_name, matchday) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        " away_team_id, home_goals, away_goals, external_id, group_name, matchday, "
+        " went_to_et, went_to_pens, home_pens, away_pens, advancing_team_id) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
         "ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET "
         "  match_date = EXCLUDED.match_date, "
         "  home_team_id = EXCLUDED.home_team_id, "
@@ -245,9 +299,17 @@ def upsert_match(cur, edition_id, m, team_type):
         "  home_goals = COALESCE(EXCLUDED.home_goals, matches.home_goals), "
         "  away_goals = COALESCE(EXCLUDED.away_goals, matches.away_goals), "
         "  stage = EXCLUDED.stage, group_name = EXCLUDED.group_name, "
-        "  matchday = COALESCE(EXCLUDED.matchday, matches.matchday)",
+        "  matchday = COALESCE(EXCLUDED.matchday, matches.matchday), "
+        "  went_to_et = EXCLUDED.went_to_et, "
+        "  went_to_pens = EXCLUDED.went_to_pens, "
+        "  home_pens = COALESCE(EXCLUDED.home_pens, matches.home_pens), "
+        "  away_pens = COALESCE(EXCLUDED.away_pens, matches.away_pens), "
+        "  advancing_team_id = COALESCE(EXCLUDED.advancing_team_id, "
+        "                                matches.advancing_team_id)",
         (edition_id, stage, m["utcDate"], home_id, away_id,
-         home_goals, away_goals, str(m["id"]), group_name, m.get("matchday")))
+         home_goals, away_goals, str(m["id"]), group_name, m.get("matchday"),
+         parsed["went_to_et"], parsed["went_to_pens"],
+         parsed["home_pens"], parsed["away_pens"], adv_id))
 
 
 # ----------------------------------------------------------------------
@@ -533,6 +595,55 @@ def _sync_match_events(cur, match_id, m, team_type, kind):
              (sub.get("playerIn") or {}).get("name")))
 
 
+def refresh_knockout_scores(conn, client, comp_code: str = "WC", limit: int = 24) -> int:
+    """Re-fetch finished knockout matches to correct scores from goal timelines."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT m.id, m.external_id, t.type "
+            "FROM matches m "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "JOIN teams t ON t.id = m.home_team_id "
+            "WHERE c.code = %s "
+            "  AND m.stage NOT IN ('regular_season', 'group', 'third_place') "
+            "  AND m.home_goals IS NOT NULL "
+            "  AND m.external_id IS NOT NULL "
+            "ORDER BY m.match_date DESC LIMIT %s",
+            (comp_code, limit))
+        rows = cur.fetchall()
+    updated = 0
+    for match_id, external_id, team_type in rows:
+        try:
+            m = client.match(external_id)
+        except Exception:
+            continue
+        if (m.get("status") or "") not in FINISHED_STATUSES:
+            continue
+        parsed = _parse_fdo_scores(m)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT home_team_id, away_team_id FROM matches WHERE id = %s",
+                (match_id,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            adv_id = _advancing_team_id(parsed["winner"], row[0], row[1])
+            cur.execute(
+                "UPDATE matches SET "
+                "  home_goals = %s, away_goals = %s, "
+                "  went_to_et = %s, went_to_pens = %s, "
+                "  home_pens = %s, away_pens = %s, "
+                "  advancing_team_id = COALESCE(%s, advancing_team_id) "
+                "WHERE id = %s",
+                (parsed["home_goals"], parsed["away_goals"],
+                 parsed["went_to_et"], parsed["went_to_pens"],
+                 parsed["home_pens"], parsed["away_pens"],
+                 adv_id, match_id))
+        conn.commit()
+        updated += 1
+    return updated
+
+
 def sync_match_details(conn, client, limit=20):
     """Fetch /matches/{id} for finished games missing detail sync.
 
@@ -563,6 +674,26 @@ def sync_match_details(conn, client, limit=20):
         with conn.cursor() as cur:
             if has_detail:
                 _sync_match_events(cur, match_id, m, team_type, kind)
+            if (m.get("status") or "") in FINISHED_STATUSES:
+                cur.execute(
+                    "SELECT home_team_id, away_team_id FROM matches WHERE id = %s",
+                    (match_id,))
+                row = cur.fetchone()
+                if row:
+                    parsed = _parse_fdo_scores(m)
+                    adv_id = _advancing_team_id(
+                        parsed["winner"], row[0], row[1])
+                    cur.execute(
+                        "UPDATE matches SET "
+                        "  home_goals = %s, away_goals = %s, "
+                        "  went_to_et = %s, went_to_pens = %s, "
+                        "  home_pens = %s, away_pens = %s, "
+                        "  advancing_team_id = COALESCE(%s, advancing_team_id) "
+                        "WHERE id = %s",
+                        (parsed["home_goals"], parsed["away_goals"],
+                         parsed["went_to_et"], parsed["went_to_pens"],
+                         parsed["home_pens"], parsed["away_pens"],
+                         adv_id, match_id))
             cur.execute("UPDATE matches SET details_synced = TRUE WHERE id = %s",
                         (match_id,))
         conn.commit()

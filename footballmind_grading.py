@@ -59,17 +59,24 @@ def grade_predictions(conn):
     with conn.cursor() as cur:
         cur.execute(
             "SELECT p.id, p.home_win_prob, p.draw_prob, p.away_win_prob, "
-            "       m.home_goals, m.away_goals "
+            "       m.home_goals, m.away_goals, m.stage, "
+            "       m.advancing_team_id, m.home_team_id "
             "FROM predictions p JOIN matches m ON m.id = p.match_id "
             "WHERE m.home_goals IS NOT NULL "
             "  AND (p.was_correct IS NULL "
             "       OR p.actual_home_goals IS DISTINCT FROM m.home_goals "
             "       OR p.actual_away_goals IS DISTINCT FROM m.away_goals)")
         rows = cur.fetchall()
-        for pid, hw, dw, aw, hg, ag in rows:
+        knockout = {
+            "round_of_32", "round_of_16", "quarter_final", "semi_final", "final",
+        }
+        for pid, hw, dw, aw, hg, ag, stage, adv_id, home_tid in rows:
             probs = [hw or 0.0, dw or 0.0, aw or 0.0]
             predicted = probs.index(max(probs))                 # 0 home, 1 draw, 2 away
-            actual = 0 if hg > ag else (1 if hg == ag else 2)
+            if stage in knockout and adv_id:
+                actual = 0 if adv_id == home_tid else 2
+            else:
+                actual = 0 if hg > ag else (1 if hg == ag else 2)
             cur.execute(
                 "UPDATE predictions SET actual_home_goals = %s, "
                 " actual_away_goals = %s, was_correct = %s WHERE id = %s",

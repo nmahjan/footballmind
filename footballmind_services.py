@@ -5,7 +5,9 @@ from __future__ import annotations
 import datetime as _dt
 from datetime import date
 
-KNOCKOUT_ORDER = ["final", "semi_final", "quarter_final", "round_of_16", "round_of_32"]
+KNOCKOUT_STAGES = frozenset({
+    "round_of_32", "round_of_16", "quarter_final", "semi_final", "final", "third_place",
+})
 BRACKET_DISPLAY_ORDER = ["round_of_32", "round_of_16", "quarter_final", "semi_final", "final"]
 BRACKET_SIZES_BY_COMP = {
     "WC": {
@@ -16,6 +18,26 @@ BRACKET_SIZES_BY_COMP = {
         "round_of_16": 8, "quarter_final": 4, "semi_final": 2, "final": 1,
     },
 }
+
+
+def _format_match_score(hg, ag, *, went_to_et=False, went_to_pens=False,
+                        home_pens=None, away_pens=None) -> str:
+    label = f"{hg}–{ag}"
+    if went_to_pens and home_pens is not None and away_pens is not None:
+        return f"{label} ({home_pens}–{away_pens} pens)"
+    if went_to_et:
+        return f"{label} (aet)"
+    return label
+
+
+def _match_actual_outcome(home, away, hg, ag, stage, advances=None) -> str:
+    if stage in KNOCKOUT_STAGES and advances and advances != "TBD":
+        return advances
+    if hg > ag:
+        return home
+    if hg == ag:
+        return "Draw"
+    return away
 POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3, "?": 9}
 
 SUPPORTED_COMP_CODES = frozenset({"PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC", "MLS"})
@@ -597,6 +619,8 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
         cur.execute(
             "SELECT m.id, m.home_team_id, m.away_team_id, th.name AS home, ta.name AS away, "
             "       m.home_goals, m.away_goals, m.match_date, m.stage, "
+            "       m.went_to_et, m.went_to_pens, m.home_pens, m.away_pens, "
+            "       tw.name AS advances, "
             "       p.id AS prediction_id, "
             "       p.home_win_prob, p.draw_prob, p.away_win_prob, p.was_correct "
             "FROM matches m "
@@ -604,6 +628,7 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             "JOIN competitions c ON c.id = e.competition_id "
             "JOIN teams th ON th.id = m.home_team_id "
             "JOIN teams ta ON ta.id = m.away_team_id "
+            "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
             "LEFT JOIN LATERAL ("
             "  SELECT p2.id, p2.home_win_prob, p2.draw_prob, p2.away_win_prob, p2.was_correct "
             "  FROM predictions p2 "
@@ -632,14 +657,22 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
         home, away = r["home"], r["away"]
         hg, ag = r["home_goals"], r["away_goals"]
         md = r["match_date"]
+        stage = r.get("stage")
+        advances = _bracket_team_label(r.get("advances"))
         item = {
             "match_id": r["id"],
             "home": home,
             "away": away,
-            "score": f"{hg}–{ag}",
+            "score": _format_match_score(
+                hg, ag,
+                went_to_et=bool(r.get("went_to_et")),
+                went_to_pens=bool(r.get("went_to_pens")),
+                home_pens=r.get("home_pens"),
+                away_pens=r.get("away_pens"),
+            ),
             "home_goals": hg,
             "away_goals": ag,
-            "stage": r.get("stage"),
+            "stage": stage,
             "match_date": md.isoformat() if md else None,
         }
         _enrich_fixture_display(item, labels)
@@ -647,14 +680,13 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             probs = [r["home_win_prob"] or 0, r["draw_prob"] or 0, r["away_win_prob"] or 0]
             predicted = _outcome_label(home, away, r["home_win_prob"],
                                        r["draw_prob"], r["away_win_prob"])
-            if hg > ag:
-                actual = home
-            elif hg == ag:
-                actual = "Draw"
+            actual = _match_actual_outcome(
+                home, away, hg, ag, stage, advances=advances)
+            if stage in KNOCKOUT_STAGES and advances and advances != "TBD":
+                act_idx = 0 if advances == home else 2
             else:
-                actual = away
+                act_idx = 0 if hg > ag else (1 if hg == ag else 2)
             pred_idx = probs.index(max(probs))
-            act_idx = 0 if hg > ag else (1 if hg == ag else 2)
             item.update({
                 "id": r["prediction_id"],
                 "predicted": predicted,
@@ -1464,11 +1496,11 @@ def _enrich_fixture_display(f: dict, labels: dict[tuple[str, str], tuple[str, st
 
 def _bracket_winner(f: dict) -> str | None:
     hg, ag = f.get("home_goals"), f.get("away_goals")
-    if hg is not None and ag is not None and hg != ag:
-        return f["home"] if hg > ag else f["away"]
     adv = f.get("advances")
     if adv and adv != "TBD":
         return adv
+    if hg is not None and ag is not None and hg != ag:
+        return f["home"] if hg > ag else f["away"]
     return None
 
 

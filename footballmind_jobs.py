@@ -120,6 +120,15 @@ def cmd_sync_matchday(force=False):
         print("[sync-matchday] match details...", flush=True)
         detail_n = sync_match_details(conn, client, limit=40)
         print(f"[sync-matchday] match details: {detail_n} checked", flush=True)
+        if "WC" in active:
+            try:
+                n = refresh_knockout_scores(conn, client, "WC", limit=32)
+                if n:
+                    print(f"[sync-matchday] WC knockout scores refreshed: {n}",
+                          flush=True)
+            except Exception as e:
+                print(f"[sync-matchday] WC score refresh FAILED: {e}",
+                      file=sys.stderr, flush=True)
         linked = link_orphan_predictions(conn)
         graded = grade_predictions(conn)
         print(f"[sync-matchday] predictions: {linked} linked, {graded} graded")
