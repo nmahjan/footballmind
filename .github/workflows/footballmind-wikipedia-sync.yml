@@ -28,7 +28,13 @@ jobs:
       - name: Run migrations
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python footballmind_migrate.py
+        run: |
+          for attempt in 1 2 3; do
+            python footballmind_migrate.py && exit 0
+            echo "Migration attempt ${attempt} failed — retrying in $((attempt * 5))s..."
+            sleep $((attempt * 5))
+          done
+          exit 1
 
       - name: Run Wikipedia squad sync
         env:
