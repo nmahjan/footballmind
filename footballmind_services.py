@@ -23,10 +23,12 @@ BRACKET_SIZES_BY_COMP = {
 def _format_match_score(hg, ag, *, went_to_et=False, went_to_pens=False,
                         home_pens=None, away_pens=None,
                         reg_home=None, reg_away=None) -> str:
-    if went_to_pens and home_pens is not None and away_pens is not None:
+    if went_to_pens:
         rh = reg_home if reg_home is not None else hg
         ra = reg_away if reg_away is not None else ag
-        return f"{rh}–{ra} Pens ({home_pens}–{away_pens})"
+        if home_pens is not None and away_pens is not None:
+            return f"{rh}–{ra} Pens ({home_pens}–{away_pens})"
+        return f"{rh}–{ra} Pens"
     label = f"{hg}–{ag}"
     if went_to_et:
         return f"{label} (aet)"

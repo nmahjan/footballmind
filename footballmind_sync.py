@@ -261,7 +261,23 @@ def _derive_pen_score(score: dict) -> tuple[int | None, int | None]:
     return None, None
 
 
-def _resolve_pen_shootout_scores(m: dict, score: dict) -> tuple[int | None, int | None]:
+def _infer_tied_pen_shootout(
+    home: int, away: int, *, winner: str | None = None,
+    adv_is_home: bool | None = None,
+) -> tuple[int | None, int | None]:
+    """FDO often reports a tied pens tally before sudden-death; bump the winner."""
+    if home != away:
+        return None, None
+    if winner == "HOME_TEAM" or adv_is_home is True:
+        return home + 1, away
+    if winner == "AWAY_TEAM" or adv_is_home is False:
+        return home, away + 1
+    return None, None
+
+
+def _resolve_pen_shootout_scores(
+    m: dict, score: dict, *, adv_is_home: bool | None = None,
+) -> tuple[int | None, int | None]:
     """Best available penalty-shootout tally (must not be tied for a finished match)."""
     pens = score.get("penalties") or {}
     api_h, api_a = _score_side(pens, home=True), _score_side(pens, home=False)
@@ -270,7 +286,13 @@ def _resolve_pen_shootout_scores(m: dict, score: dict) -> tuple[int | None, int 
     derived = _derive_pen_score(score)
     if derived[0] is not None:
         return derived
-    return _pen_scores_from_kicks(m)
+    kicks = _pen_scores_from_kicks(m)
+    if kicks[0] is not None and kicks[1] is not None and kicks[0] != kicks[1]:
+        return kicks
+    if api_h is not None and api_a is not None:
+        return _infer_tied_pen_shootout(
+            api_h, api_a, winner=score.get("winner"), adv_is_home=adv_is_home)
+    return None, None
 
 
 def _parse_fdo_scores(m: dict) -> dict:
@@ -356,6 +378,12 @@ def upsert_match(cur, edition_id, m, team_type):
     else:
         home_goals, away_goals = None, None
     adv_id = _advancing_team_id(parsed["winner"], home_id, away_id) if status in FINISHED_STATUSES else None
+    if status in FINISHED_STATUSES and parsed["went_to_pens"]:
+        adv_home = True if adv_id == home_id else False if adv_id == away_id else None
+        hp, ap = _resolve_pen_shootout_scores(
+            m, m.get("score") or {}, adv_is_home=adv_home)
+        if hp is not None:
+            parsed["home_pens"], parsed["away_pens"] = hp, ap
     group_name = m.get("group")   # e.g. "GROUP_A" from football-data.org
     if group_name:
         # normalise "GROUP_A" -> "A"
@@ -699,12 +727,16 @@ def refresh_knockout_scores(conn, client, comp_code: str = "WC", limit: int = 24
         parsed = _parse_fdo_scores(m)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT home_team_id, away_team_id FROM matches WHERE id = %s",
+                "SELECT home_team_id, away_team_id, advancing_team_id FROM matches "
+                "WHERE id = %s",
                 (match_id,))
             row = cur.fetchone()
             if not row:
                 continue
-            adv_id = _advancing_team_id(parsed["winner"], row[0], row[1])
+            adv_id = _advancing_team_id(parsed["winner"], row[0], row[1]) or row[2]
+            adv_home = True if adv_id == row[0] else False if adv_id == row[1] else None
+            home_pens, away_pens = _resolve_pen_shootout_scores(
+                m, m.get("score") or {}, adv_is_home=adv_home)
             cur.execute(
                 "UPDATE matches SET "
                 "  home_goals = %s, away_goals = %s, "
@@ -715,7 +747,7 @@ def refresh_knockout_scores(conn, client, comp_code: str = "WC", limit: int = 24
                 "WHERE id = %s",
                 (parsed["home_goals"], parsed["away_goals"],
                  parsed["went_to_et"], parsed["went_to_pens"],
-                 parsed["home_pens"], parsed["away_pens"],
+                 home_pens, away_pens,
                  parsed["reg_home"], parsed["reg_away"],
                  adv_id, match_id))
         conn.commit()
@@ -755,13 +787,19 @@ def sync_match_details(conn, client, limit=20):
                 _sync_match_events(cur, match_id, m, team_type, kind)
             if (m.get("status") or "") in FINISHED_STATUSES:
                 cur.execute(
-                    "SELECT home_team_id, away_team_id FROM matches WHERE id = %s",
+                    "SELECT home_team_id, away_team_id, advancing_team_id "
+                    "FROM matches WHERE id = %s",
                     (match_id,))
                 row = cur.fetchone()
                 if row:
                     parsed = _parse_fdo_scores(m)
                     adv_id = _advancing_team_id(
-                        parsed["winner"], row[0], row[1])
+                        parsed["winner"], row[0], row[1]) or row[2]
+                    adv_home = (
+                        True if adv_id == row[0]
+                        else False if adv_id == row[1] else None)
+                    home_pens, away_pens = _resolve_pen_shootout_scores(
+                        m, m.get("score") or {}, adv_is_home=adv_home)
                     cur.execute(
                         "UPDATE matches SET "
                         "  home_goals = %s, away_goals = %s, "
@@ -772,7 +810,7 @@ def sync_match_details(conn, client, limit=20):
                         "WHERE id = %s",
                         (parsed["home_goals"], parsed["away_goals"],
                          parsed["went_to_et"], parsed["went_to_pens"],
-                         parsed["home_pens"], parsed["away_pens"],
+                         home_pens, away_pens,
                          parsed["reg_home"], parsed["reg_away"],
                          adv_id, match_id))
             cur.execute("UPDATE matches SET details_synced = TRUE WHERE id = %s",

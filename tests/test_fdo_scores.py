@@ -97,6 +97,26 @@ def test_parse_fdo_scores_pen_shootout_derives_pens_when_api_tied():
     assert parsed["away_pens"] == 4
 
 
+def test_parse_fdo_scores_pen_shootout_infers_from_advancing_side():
+    """Netherlands–Morocco case: API pens frozen at 3–3 with no winner field."""
+    from footballmind_sync import _resolve_pen_shootout_scores
+
+    m = {
+        "status": "FINISHED",
+        "score": {
+            "duration": "PENALTY_SHOOTOUT",
+            "winner": None,
+            "fullTime": {"home": 4, "away": 4},
+            "regularTime": {"home": 1, "away": 1},
+            "extraTime": {"home": 0, "away": 0},
+            "penalties": {"home": 3, "away": 3},
+        },
+        "goals": [],
+    }
+    hp, ap = _resolve_pen_shootout_scores(m, m["score"], adv_is_home=False)
+    assert (hp, ap) == (3, 4)
+
+
 def test_parse_fdo_scores_pen_shootout_from_kick_list():
     m = {
         "status": "FINISHED",
