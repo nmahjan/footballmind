@@ -101,8 +101,6 @@ class FootballDataClient:
             params["dateFrom"] = date_from
         if date_to:
             params["dateTo"] = date_to
-        elif date_from:
-            params["dateTo"] = date.today().isoformat()
         return self._get(f"/competitions/{comp}/matches", params).get("matches", [])
 
     def teams(self, comp):
@@ -238,17 +236,18 @@ def upsert_match(cur, edition_id, m, team_type):
         group_name = group_name.replace("GROUP_", "").replace("Group ", "").strip()
     cur.execute(
         "INSERT INTO matches (edition_id, stage, match_date, home_team_id, "
-        " away_team_id, home_goals, away_goals, external_id, group_name) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        " away_team_id, home_goals, away_goals, external_id, group_name, matchday) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
         "ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET "
         "  match_date = EXCLUDED.match_date, "
         "  home_team_id = EXCLUDED.home_team_id, "
         "  away_team_id = EXCLUDED.away_team_id, "
         "  home_goals = COALESCE(EXCLUDED.home_goals, matches.home_goals), "
         "  away_goals = COALESCE(EXCLUDED.away_goals, matches.away_goals), "
-        "  stage = EXCLUDED.stage, group_name = EXCLUDED.group_name",
+        "  stage = EXCLUDED.stage, group_name = EXCLUDED.group_name, "
+        "  matchday = COALESCE(EXCLUDED.matchday, matches.matchday)",
         (edition_id, stage, m["utcDate"], home_id, away_id,
-         home_goals, away_goals, str(m["id"]), group_name))
+         home_goals, away_goals, str(m["id"]), group_name, m.get("matchday")))
 
 
 # ----------------------------------------------------------------------

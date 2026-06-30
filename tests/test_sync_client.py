@@ -1,18 +1,18 @@
 """Football-data client query params (no network)."""
 
-from datetime import date
 from unittest.mock import patch
 
 from footballmind_sync import FootballDataClient, TokenBucket
 
 
-def test_matches_adds_date_to_when_date_from_set():
+def test_matches_date_from_does_not_cap_at_today():
+    """Future knockout fixtures must be included when only dateFrom is set."""
     client = FootballDataClient("test-key", TokenBucket(10))
     with patch.object(client, "_get", return_value={"matches": []}) as get:
         client.matches("WC", status=None, date_from="2026-06-02")
     params = get.call_args[0][1]
     assert params["dateFrom"] == "2026-06-02"
-    assert params["dateTo"] == date.today().isoformat()
+    assert "dateTo" not in params
     assert "status" not in params
 
 

@@ -1198,11 +1198,17 @@ const BRACKET_ORDER = ["round_of_32", "round_of_16", "quarter_final", "semi_fina
 
 const BRACKET_MATCH_H = 76;
 const BRACKET_GAP = 10;
+const BRACKET_HEADER_H = 28;
+const BRACKET_CONNECTOR_W = 24;
 
 function bracketMatchTop(roundIndex, matchIndex) {
   const stride = BRACKET_MATCH_H + BRACKET_GAP;
   return matchIndex * stride * (2 ** roundIndex)
     + ((2 ** roundIndex) - 1) * stride / 2;
+}
+
+function bracketMatchCenterY(roundIndex, matchIndex) {
+  return BRACKET_HEADER_H + bracketMatchTop(roundIndex, matchIndex) + BRACKET_MATCH_H / 2;
 }
 
 function BracketTeamRow({ name, goals, winner }) {
@@ -1244,25 +1250,37 @@ function BracketMatchCard({ f }) {
   );
 }
 
-function BracketConnectors({ roundIndex, matchCount, colHeight }) {
-  if (roundIndex === 0) return null;
-  const stride = (BRACKET_MATCH_H + BRACKET_GAP) * (2 ** roundIndex);
-  const arm = stride / 4;
+function BracketConnectors({ prevRoundIndex, matchCount, colHeight }) {
   const lines = [];
-  for (let i = 0; i < matchCount; i++) {
-    const cy = bracketMatchTop(roundIndex, i) + BRACKET_MATCH_H / 2;
+  for (let mi = 0; mi < matchCount; mi++) {
+    const yTop = bracketMatchCenterY(prevRoundIndex, 2 * mi);
+    const yBot = bracketMatchCenterY(prevRoundIndex, 2 * mi + 1);
+    const yMid = (yTop + yBot) / 2;
     lines.push(
-      <div key={i} className="absolute left-0 pointer-events-none"
-        style={{ top: cy, width: 20, height: 1, background: C.line }} />,
-      <div key={`v-${i}`} className="absolute pointer-events-none"
+      <div key={`vt-${mi}`} className="absolute pointer-events-none"
         style={{
-          left: 0, top: cy - arm, width: 1, height: arm * 2,
+          left: BRACKET_CONNECTOR_W / 2, top: yTop, width: 1,
+          height: yBot - yTop, background: C.line,
+        }} />,
+      <div key={`ht-${mi}`} className="absolute pointer-events-none"
+        style={{
+          left: 0, top: yTop, width: BRACKET_CONNECTOR_W / 2, height: 1,
           background: C.line,
+        }} />,
+      <div key={`hb-${mi}`} className="absolute pointer-events-none"
+        style={{
+          left: 0, top: yBot, width: BRACKET_CONNECTOR_W / 2, height: 1,
+          background: C.line,
+        }} />,
+      <div key={`hm-${mi}`} className="absolute pointer-events-none"
+        style={{
+          left: BRACKET_CONNECTOR_W / 2, top: yMid,
+          width: BRACKET_CONNECTOR_W / 2, height: 1, background: C.line,
         }} />
     );
   }
   return (
-    <div className="relative shrink-0" style={{ width: 20, height: colHeight }}>
+    <div className="relative shrink-0" style={{ width: BRACKET_CONNECTOR_W, height: colHeight + BRACKET_HEADER_H }}>
       {lines}
     </div>
   );
@@ -1310,14 +1328,14 @@ function BracketTree({ rounds, scrollRef: externalRef }) {
             <div key={round} className="flex shrink-0 items-start">
               {ri > 0 && (
                 <BracketConnectors
-                  roundIndex={ri}
+                  prevRoundIndex={ri - 1}
                   matchCount={matches.length}
                   colHeight={colHeight}
                 />
               )}
               <div className="shrink-0 px-2">
-                <div className="mb-2 text-center text-[10px] font-semibold uppercase tracking-wider"
-                  style={{ color: C.mute }}>
+                <div className="mb-2 flex items-end justify-center text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ color: C.mute, height: BRACKET_HEADER_H }}>
                   {ROUND_LABEL[round] ?? round}
                 </div>
                 <div className="relative" style={{ height: colHeight, width: 168 }}>

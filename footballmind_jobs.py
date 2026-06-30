@@ -109,9 +109,10 @@ def cmd_sync_matchday(force=False):
             if code not in active:
                 continue
             try:
+                comp_since = None if code in ("WC", "CL") else since
                 print(f"[sync-matchday] {code} matches...", flush=True)
                 sync_competition(conn, client, code, name, ctype, season,
-                                 team_type=team_type, since=since)
+                                 team_type=team_type, since=comp_since)
             except Exception as e:        # one bad competition shouldn't kill the run
                 conn.rollback()
                 print(f"[sync-matchday] {code} FAILED: {e}", file=sys.stderr,

@@ -1,6 +1,10 @@
 """Bracket API and knockout sync helpers."""
 
-from footballmind_services import _bracket_team_label, get_bracket
+from footballmind_services import (
+    _bracket_team_label,
+    _propagate_bracket_winners,
+    get_bracket,
+)
 from footballmind_sync import upsert_match
 
 
@@ -74,3 +78,19 @@ def test_knockout_upsert_uses_tbd_placeholders(monkeypatch):
     assert params[4] == 2
     assert ("TBD (555-h)", "national") in teams
     assert ("TBD (555-a)", "national") in teams
+
+
+def test_propagate_bracket_winners():
+    rounds = [
+        {"round": "round_of_32", "matches": [
+            {"home": "South Africa", "away": "Canada", "home_goals": 0, "away_goals": 1},
+            {"home": "Netherlands", "away": "Morocco", "home_goals": 3, "away_goals": 4},
+        ]},
+        {"round": "round_of_16", "matches": [
+            {"home": "TBD", "away": "TBD", "home_goals": None, "away_goals": None},
+        ]},
+    ]
+    _propagate_bracket_winners(rounds)
+    r16 = rounds[1]["matches"][0]
+    assert r16["home"] == "Canada"
+    assert r16["away"] == "Morocco"

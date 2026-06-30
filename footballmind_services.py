@@ -1430,19 +1430,49 @@ def _bracket_team_label(name: str | None) -> str:
     return name
 
 
+def _bracket_winner(f: dict) -> str | None:
+    hg, ag = f.get("home_goals"), f.get("away_goals")
+    if hg is not None and ag is not None and hg != ag:
+        return f["home"] if hg > ag else f["away"]
+    adv = f.get("advances")
+    if adv and adv != "TBD":
+        return adv
+    return None
+
+
+def _propagate_bracket_winners(rounds: list[dict]) -> None:
+    """Fill next-round TBD slots from finished feeder matches."""
+    for ri in range(len(rounds) - 1):
+        feeders = rounds[ri]["matches"]
+        nxt = rounds[ri + 1]["matches"]
+        for i, f in enumerate(feeders):
+            winner = _bracket_winner(f)
+            if not winner:
+                continue
+            ni, slot = divmod(i, 2)
+            if ni >= len(nxt):
+                continue
+            cur = nxt[ni].get("home" if slot == 0 else "away")
+            if cur in (None, "TBD"):
+                nxt[ni]["home" if slot == 0 else "away"] = winner
+
+
 def get_bracket(conn, comp: str = "WC") -> list:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT m.stage, th.name AS home, ta.name AS away, "
-            "       m.match_date, m.home_goals, m.away_goals "
+            "       m.match_date, m.home_goals, m.away_goals, m.matchday, "
+            "       tw.name AS advances "
             "FROM matches m "
             "JOIN competition_editions e ON e.id = m.edition_id "
             "JOIN competitions c ON c.id = e.competition_id "
             "JOIN teams th ON th.id = m.home_team_id "
             "JOIN teams ta ON ta.id = m.away_team_id "
+            "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
             "WHERE c.code = %s "
             "  AND m.stage NOT IN ('regular_season', 'group', 'third_place') "
-            "ORDER BY m.match_date ASC NULLS LAST",
+            "ORDER BY m.stage, COALESCE(m.matchday, 9999), "
+            "         m.match_date ASC NULLS LAST, m.id",
             (comp,))
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
@@ -1454,6 +1484,8 @@ def get_bracket(conn, comp: str = "WC") -> list:
             f["match_date"] = f["match_date"].isoformat()
         f["home"] = _bracket_team_label(f.get("home"))
         f["away"] = _bracket_team_label(f.get("away"))
+        if f.get("advances"):
+            f["advances"] = _bracket_team_label(f["advances"])
         stage = f["stage"]
         if stage in rounds:
             rounds[stage].append(f)
@@ -1472,6 +1504,7 @@ def get_bracket(conn, comp: str = "WC") -> list:
                 "match_date": None, "home_goals": None, "away_goals": None,
             })
         out.append({"round": stage, "matches": padded})
+    _propagate_bracket_winners(out)
     return out
 
 
