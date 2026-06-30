@@ -2,6 +2,7 @@
 
 from footballmind_services import (
     _bracket_team_label,
+    _enrich_fixture_display,
     _propagate_bracket_winners,
     get_bracket,
 )
@@ -94,3 +95,18 @@ def test_propagate_bracket_winners():
     r16 = rounds[1]["matches"][0]
     assert r16["home"] == "Canada"
     assert r16["away"] == "Morocco"
+
+
+def test_enrich_fixture_display_uses_bracket_labels():
+    labels = {
+        ("round_of_16", "2026-07-04T17:00:00+00:00"): ("Canada", "Morocco"),
+    }
+    f = {
+        "home": "Canada",
+        "away": "TBD (537376-a)",
+        "stage": "round_of_16",
+        "match_date": "2026-07-04T17:00:00+00:00",
+    }
+    _enrich_fixture_display(f, labels)
+    assert f["home"] == "Canada"
+    assert f["away"] == "Morocco"

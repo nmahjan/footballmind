@@ -952,9 +952,16 @@ const COMP_LABELS = {
   MLS: "MLS",
 };
 
+function displayTeam(name) {
+  if (!name || String(name).startsWith("TBD")) return "TBD";
+  return name;
+}
+
 function FixtureRow({ f, onClick }) {
+  const home = displayTeam(f.home);
+  const away = displayTeam(f.away);
   return (
-    <button onClick={() => onClick(f)}
+    <button onClick={() => onClick({ ...f, home, away })}
       className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-opacity hover:opacity-70"
       style={{ background: "transparent" }}>
       <span className="shrink-0 rounded px-2 py-0.5 text-center text-[10px] font-semibold"
@@ -962,9 +969,9 @@ function FixtureRow({ f, onClick }) {
         {STAGE_BADGE[f.stage] ?? "GS"}
       </span>
       <span className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium" style={{ color: C.chalk }}>
-        <span className="truncate">{flag(f.home)}{f.home}</span>
+        <span className="truncate">{flag(home)}{home}</span>
         <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>vs</span>
-        <span className="truncate">{flag(f.away)}{f.away}</span>
+        <span className="truncate">{flag(away)}{away}</span>
       </span>
       {f.live && <span className="shrink-0 animate-pulse text-[9px] font-bold" style={{ color: C.away }}>LIVE</span>}
       {f.home_goals != null

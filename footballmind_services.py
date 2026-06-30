@@ -539,6 +539,7 @@ def get_standings(conn, comp_code: str = "PL", season: str | None = None) -> lis
 
 def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
     limit = min(limit, 64)
+    labels = _bracket_fixture_labels(conn, comp)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT th.name AS home, ta.name AS away, "
@@ -577,6 +578,7 @@ def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
                 continue
             if f.get("match_date"):
                 f["match_date"] = f["match_date"].isoformat()
+            _enrich_fixture_display(f, labels)
             fixtures.append(f)
             if len(fixtures) >= limit:
                 break
@@ -590,6 +592,7 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
     ensure_result_predictions(conn, comp, backfill_limit=40)
     grade_predictions(conn)
     limit = min(limit, 100)
+    labels = _bracket_fixture_labels(conn, comp)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT m.id, m.home_team_id, m.away_team_id, th.name AS home, ta.name AS away, "
@@ -639,6 +642,7 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             "stage": r.get("stage"),
             "match_date": md.isoformat() if md else None,
         }
+        _enrich_fixture_display(item, labels)
         if r.get("prediction_id"):
             probs = [r["home_win_prob"] or 0, r["draw_prob"] or 0, r["away_win_prob"] or 0]
             predicted = _outcome_label(home, away, r["home_win_prob"],
@@ -1428,6 +1432,34 @@ def _bracket_team_label(name: str | None) -> str:
     if name.startswith("TBD"):
         return "TBD"
     return name
+
+
+def _bracket_fixture_labels(conn, comp: str) -> dict[tuple[str, str], tuple[str, str]]:
+    """(stage, match_date_iso) -> home/away labels after knockout propagation."""
+    if comp not in ("WC", "CL"):
+        return {}
+    labels: dict[tuple[str, str], tuple[str, str]] = {}
+    for round_data in get_bracket(conn, comp):
+        stage = round_data["round"]
+        for m in round_data["matches"]:
+            md = m.get("match_date")
+            if md:
+                labels[(stage, md)] = (m["home"], m["away"])
+    return labels
+
+
+def _enrich_fixture_display(f: dict, labels: dict[tuple[str, str], tuple[str, str]]) -> None:
+    """Normalize TBD placeholders and apply bracket-propagated team names."""
+    f["home"] = _bracket_team_label(f.get("home"))
+    f["away"] = _bracket_team_label(f.get("away"))
+    key = (f.get("stage"), f.get("match_date"))
+    if key not in labels:
+        return
+    bh, ba = labels[key]
+    if f["home"] == "TBD" and bh != "TBD":
+        f["home"] = bh
+    if f["away"] == "TBD" and ba != "TBD":
+        f["away"] = ba
 
 
 def _bracket_winner(f: dict) -> str | None:
