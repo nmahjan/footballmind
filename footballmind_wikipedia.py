@@ -158,6 +158,7 @@ FIFA_NAT_NAMES: dict[str, str] = {
     "BFA": "Burkina Faso",
     "CPV": "Cape Verde",
     "COD": "Congo DR",
+    "CUW": "Curaçao",
     "ZAF": "South Africa",
 }
 
@@ -809,18 +810,22 @@ def sync_wikipedia_club_squads(
         for _league_code, clubs in league_map.items():
             for wiki_title, db_name in clubs.items():
                 try:
+                    cur.execute("SAVEPOINT wiki_club")
                     wikitext = fetch_wikitext(wiki_title)
                     section = extract_first_squad_block(wikitext)
                     if not section:
+                        cur.execute("ROLLBACK TO SAVEPOINT wiki_club")
                         stats["skipped_clubs"].append(wiki_title)
                         continue
                     players = parse_fs_player_lines(section)
                     if not players:
+                        cur.execute("ROLLBACK TO SAVEPOINT wiki_club")
                         stats["skipped_clubs"].append(wiki_title)
                         continue
                     try:
                         team_id, _ = _resolve_team(cur, db_name)
                     except ValueError:
+                        cur.execute("ROLLBACK TO SAVEPOINT wiki_club")
                         stats["skipped_clubs"].append(db_name)
                         continue
 
@@ -840,8 +845,10 @@ def sync_wikipedia_club_squads(
                             create_missing=True,
                             nationality_id=nat_id,
                         )
+                    cur.execute("RELEASE SAVEPOINT wiki_club")
                     time.sleep(delay_s)
                 except Exception as exc:
+                    cur.execute("ROLLBACK TO SAVEPOINT wiki_club")
                     stats["errors"].append(f"{wiki_title}: {exc}")
 
     conn.commit()
