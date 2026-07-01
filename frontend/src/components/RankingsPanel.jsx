@@ -42,7 +42,7 @@ export default function RankingsPanel({ apiBase, offline }) {
           {offline ? "Available when backend is connected." : "Run seed-elo + sync to populate."}
         </div>
       ) : (
-        <div className="max-h-[240px] overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
+        <div>
           {rows.map((r) => (
             <div key={r.rank} className="flex items-center gap-3 px-4 py-1.5"
               style={{ borderTop: r.rank > 1 ? `1px solid ${C.line}` : "none" }}>
