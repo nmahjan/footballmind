@@ -112,7 +112,7 @@ function BracketConnectors({ prevRoundIndex, matchCount, colHeight }) {
   );
 }
 
-function normaliseBracket(data) {
+export function normaliseBracket(data) {
   if (Array.isArray(data)) {
     const byRound = Object.fromEntries(data.map((r) => [r.round, r]));
     return BRACKET_ORDER
@@ -123,7 +123,7 @@ function normaliseBracket(data) {
   return BRACKET_ORDER.filter((k) => b[k]?.length).map((k) => ({ round: k, matches: b[k] }));
 }
 
-function BracketTree({ rounds, scrollRef: externalRef }) {
+export function BracketTree({ rounds, scrollRef: externalRef }) {
   const internalRef = useRef(null);
   const scrollRef = externalRef || internalRef;
   const firstCount = rounds[0]?.matches?.length ?? 0;
