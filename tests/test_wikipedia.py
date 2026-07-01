@@ -1,13 +1,21 @@
 """Wikipedia WC squad parsing (offline fixture)."""
 
+from unittest.mock import patch
+
+import requests
+
 from footballmind_wikipedia import (
+    _filter_club_wiki_pages,
     _normalize_wiki_title,
     _store_wiki_provider,
+    _wiki_api_get,
     extract_first_squad_block,
     is_wikipedia_dob_name,
     map_fifa_squad_position,
+    parse_club_squad_html,
     parse_fs_player_lines,
     parse_wc_squads_html,
+    PREMIER_LEAGUE_WIKI_TO_DB,
 )
 
 # Legacy all-<td> rows (still supported).
@@ -124,3 +132,50 @@ def test_store_wiki_provider_skips_conflicting_player():
     _store_wiki_provider(cur, 42, "Ladislav Krejčí (footballer, born 1999)")
     inserts = [c for c in cur.calls if c[0].startswith("INSERT")]
     assert inserts == []
+
+
+CLUB_HTML = """
+<html><body><div class="mw-parser-output">
+<h3>First-team squad</h3>
+<table class="wikitable">
+<tr><th>No.</th><th>Pos.</th><th>Player</th><th>Nationality</th></tr>
+<tr><td>1</td><td>1 GK</td><td><a href="/wiki/Markus_Viitamies">Markus Viitamies</a></td><td>Finland</td></tr>
+<tr><td>9</td><td>4 FW</td><td><a href="/wiki/Evanilson">Evanilson</a></td><td>Brazil</td></tr>
+</table>
+</div></body></html>
+"""
+
+
+def test_parse_club_squad_html():
+    players = parse_club_squad_html(CLUB_HTML)
+    assert len(players) == 2
+    assert players[0]["name"] == "Markus Viitamies"
+    assert players[0]["line_role"] == "GK"
+    assert players[1]["name"] == "Evanilson"
+    assert players[1]["line_role"] == "ST"
+
+
+def test_filter_club_wiki_pages():
+    filtered = _filter_club_wiki_pages(PREMIER_LEAGUE_WIKI_TO_DB, ["Arsenal FC"])
+    assert list(filtered.values()) == ["Arsenal FC"]
+    assert "Arsenal F.C." in filtered
+
+
+def test_wiki_api_get_retries_transient_error():
+    calls = {"n": 0}
+
+    def _fake_get(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise requests.ConnectionError("network unreachable")
+        mock_resp = type("R", (), {})()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = lambda: None
+        mock_resp.json = lambda: {"parse": {"wikitext": {"*": "ok"}}}
+        return mock_resp
+
+    with patch("footballmind_wikipedia.requests.get", side_effect=_fake_get), \
+         patch("footballmind_wikipedia.time.sleep"):
+        payload = _wiki_api_get({"action": "parse", "page": "Test", "prop": "wikitext", "format": "json"})
+    assert payload["parse"]["wikitext"]["*"] == "ok"
+    assert calls["n"] == 3

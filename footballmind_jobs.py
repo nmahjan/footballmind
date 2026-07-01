@@ -6,6 +6,8 @@ Scheduled via GitHub Actions (see .github/workflows/):
     python footballmind_jobs.py sync              # every ~6h: pull results, update Elo
     python footballmind_jobs.py sync-matchday     # every ~30m on match days: fixtures only
     python footballmind_jobs.py sync-wikipedia    # quarterly: WC + PL squads from Wikipedia
+    python footballmind_jobs.py sync-wikipedia --clubs-only --teams Arsenal,Bournemouth
+    python footballmind_jobs.py regrade           # re-link + re-grade all finished predictions
     python footballmind_jobs.py sync-espn-wc      # ESPN WC lineups (batch / backfill)
     python footballmind_jobs.py sync-sofifa       # EA FC attrs via SoFIFA (optional, needs Chrome)
     python footballmind_jobs.py backfill-scorers  # past season top scorers (optional)
@@ -146,6 +148,14 @@ def cmd_sync_matchday(force=False):
                   f"synced={espn['synced']} players={espn['players']}", flush=True)
         except Exception as e:
             print(f"[sync-matchday] espn-wc FAILED: {e}", file=sys.stderr, flush=True)
+        try:
+            from footballmind_sync_status import record_sync_run
+            record_sync_run(
+                conn, "matchday", status="ok",
+                summary={"active": sorted(active), "linked": linked, "graded": graded},
+            )
+        except Exception:
+            pass
 
 
 def cmd_sync(full=False):
@@ -201,6 +211,14 @@ def cmd_sync(full=False):
         linked = link_orphan_predictions(conn)
         graded = grade_predictions(conn)
         print(f"[sync] predictions: {linked} linked, {graded} graded")
+        try:
+            from footballmind_sync_status import record_sync_run
+            record_sync_run(
+                conn, "sync", status="ok",
+                summary={"linked": linked, "graded": graded, "full": full},
+            )
+        except Exception:
+            pass
 
 
 def cmd_sync_enrich():
@@ -410,30 +428,72 @@ def cmd_sync_wikipedia():
     """WC + club squad positions from Wikipedia (free, no Chrome)."""
     wc_only = "--wc-only" in sys.argv
     clubs_only = "--clubs-only" in sys.argv
-    with _connect() as conn:
-        from footballmind_wikipedia import sync_wikipedia_all
-        from footballmind_roles import apply_player_line_roles
+    teams = None
+    args = sys.argv[2:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--teams" and i + 1 < len(args):
+            teams = [t.strip() for t in args[i + 1].split(",") if t.strip()]
+            i += 2
+        else:
+            i += 1
+    try:
+        with _connect() as conn:
+            from footballmind_wikipedia import sync_wikipedia_all
+            from footballmind_roles import apply_player_line_roles
+            from footballmind_sync_status import record_sync_run
 
-        stats = sync_wikipedia_all(
-            conn,
-            wc=not clubs_only,
-            clubs=not wc_only,
-        )
-        n = apply_player_line_roles(conn)
-        if n:
-            print(f"[sync-wikipedia] applied {n} manual line_role overrides", flush=True)
-        for label, block in stats.items():
-            parts = ", ".join(
-                f"{k}={v}" for k, v in sorted(block.items())
-                if k not in ("skipped_teams", "skipped_clubs", "missing_names", "errors")
+            stats = sync_wikipedia_all(
+                conn,
+                wc=not clubs_only,
+                clubs=not wc_only,
+                teams=teams,
             )
-            print(f"[sync-wikipedia:{label}] {parts}", flush=True)
-            skipped = block.get("skipped_teams") or block.get("skipped_clubs") or []
-            if skipped:
-                print(f"[sync-wikipedia:{label}] skipped: {', '.join(skipped[:8])}", flush=True)
-            errors = block.get("errors") or []
-            for err in errors[:5]:
+            n = apply_player_line_roles(conn)
+            if n:
+                print(f"[sync-wikipedia] applied {n} manual line_role overrides", flush=True)
+            _print_wikipedia_stats(stats)
+            status = "partial" if any(b.get("errors") for b in stats.values()) else "ok"
+            record_sync_run(conn, "wikipedia", status=status, summary=stats)
+    except Exception as exc:
+        try:
+            with _connect() as conn:
+                from footballmind_sync_status import record_sync_run
+                record_sync_run(conn, "wikipedia", status="failed",
+                                summary={"error": str(exc)})
+        except Exception:
+            pass
+        print(f"[sync-wikipedia] FAILED: {exc}", file=sys.stderr, flush=True)
+        raise
+
+
+def _print_wikipedia_stats(stats: dict) -> None:
+    for label, block in stats.items():
+        parts = ", ".join(
+            f"{k}={v}" for k, v in sorted(block.items())
+            if k not in ("skipped_teams", "skipped_clubs", "missing_names", "errors")
+        )
+        print(f"[sync-wikipedia:{label}] {parts}", flush=True)
+        skipped = block.get("skipped_teams") or block.get("skipped_clubs") or []
+        if skipped:
+            print(
+                f"[sync-wikipedia:{label}] skipped ({len(skipped)}): "
+                f"{', '.join(skipped)}",
+                flush=True,
+            )
+        errors = block.get("errors") or []
+        if errors:
+            print(f"[sync-wikipedia:{label}] errors ({len(errors)}):", flush=True)
+            for err in errors:
                 print(f"[sync-wikipedia:{label}] error: {err}", flush=True)
+
+
+def cmd_regrade():
+    """Re-link orphan predictions and re-grade all finished matches."""
+    with _connect() as conn:
+        linked = link_orphan_predictions(conn)
+        graded = grade_predictions(conn, force=True)
+        print(f"[regrade] linked={linked} graded={graded}", flush=True)
 
 
 def cmd_sync_footballdata_io():
@@ -516,8 +576,10 @@ if __name__ == "__main__":
         cmd_sync_footballdata_io()
     elif cmd == "sync-wikipedia":
         cmd_sync_wikipedia()
+    elif cmd == "regrade":
+        cmd_regrade()
     else:
         print("usage: footballmind_jobs.py "
               "[sync|sync-matchday|sync-enrich|sync-espn-wc|sync-sofifa|"
-              "sync-footballdata-io|sync-wikipedia|backfill-scorers|retrain|seed-elo]")
+              "sync-footballdata-io|sync-wikipedia|regrade|backfill-scorers|retrain|seed-elo]")
         sys.exit(1)

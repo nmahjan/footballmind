@@ -999,6 +999,16 @@ def api_analyze():
     return jsonify({"analysis": analysis})
 
 
+@app.get("/api/sync-health")
+@limiter.exempt
+def sync_health():
+    try:
+        from footballmind_sync_status import get_sync_health
+        return jsonify(get_sync_health(get_conn()))
+    except Exception as e:
+        return jsonify({"error": str(e), "jobs": []}), 500
+
+
 @app.get("/api/health")
 @limiter.exempt
 def health():

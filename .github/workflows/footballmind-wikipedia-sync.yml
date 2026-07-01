@@ -47,3 +47,9 @@ jobs:
             ARGS="--clubs-only"
           fi
           python -u footballmind_jobs.py sync-wikipedia $ARGS
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          echo "## Wikipedia sync failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Partial club failures may still commit — re-run with \`clubs-only\` and \`--teams\`." >> "$GITHUB_STEP_SUMMARY"
