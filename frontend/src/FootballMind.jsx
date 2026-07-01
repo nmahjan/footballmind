@@ -1,15 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import BracketPanel, { BracketTree, normaliseBracket } from "./components/BracketPanel.jsx";
-import SyncHealthPanel from "./components/SyncHealthPanel.jsx";
+import AppHeader from "./components/AppHeader.jsx";
+import ChatPanel from "./components/ChatPanel.jsx";
+import MatchesSidebar from "./components/MatchesSidebar.jsx";
 import PlayersSidebar, { SidebarModeToggle } from "./components/PlayersSidebar.jsx";
-import FixturesPanel from "./components/FixturesPanel.jsx";
 import GroupsPanel from "./components/GroupsPanel.jsx";
 import StandingsPanel from "./components/StandingsPanel.jsx";
-import CalibrationPanel from "./components/CalibrationPanel.jsx";
-import RankingsPanel from "./components/RankingsPanel.jsx";
-import PredictionCard from "./components/PredictionCard.jsx";
-import MarkdownBody from "./components/MarkdownBody.jsx";
-import TypingIndicator, { guessLoadPhase } from "./components/TypingIndicator.jsx";
 import { C } from "./fm/theme.js";
 import { pct } from "./fm/format.js";
 import { DEMO_FIXTURES, demoPredict, COMP_LABELS } from "./fm/demo.js";
@@ -22,22 +17,9 @@ import {
   deepLinkSignature, clearDeepLinkParams, markDeepLinkHandled, deepLinkAlreadyHandled,
   savePredictionCache, loadPredictionCache, syncPredictUrl, parseDeepLinkSearch,
 } from "./fm/deeplink.js";
+import { guessLoadPhase } from "./components/TypingIndicator.jsx";
 
 const API_BASE = getApiBase();
-
-const CHIPS = [
-  "Predict Netherlands vs Morocco",
-  "Show World Cup knockout bracket",
-  "Predict Spain vs Germany",
-  "Predict Brazil vs Argentina",
-];
-
-const PLAYER_CHIPS = [
-  "Who is top scorer in the Premier League?",
-  "Tell me about Brazil's squad and how they play",
-  "What formation does Manchester City use?",
-  "Who are Spain's key midfielders?",
-];
 
 export default function FootballMind() {
   const [sessionId, setSessionId] = useState(getOrCreateSessionId);
@@ -56,7 +38,6 @@ export default function FootballMind() {
   const [sidebarLoaded, setSidebarLoaded] = useState(false);
   const [chatComp, setChatComp] = useState("WC");
   const [adminKey, setAdminKey] = useState(() => getAdminKey());
-  const scroller = useRef(null);
   const sendRef = useRef(null);
   const deepLinkHandled = useRef(false);
   const shareLinkAtLoad = useRef(parseDeepLinkSearch());
@@ -146,8 +127,6 @@ export default function FootballMind() {
     return () => ctrl.abort();
   }, [sessionId]);
 
-  useEffect(() => { scroller.current?.scrollTo(0, scroller.current.scrollHeight); }, [messages, busy, loadPhase]);
-
   async function ensureBackendAwake() {
     if (!API_BASE || backendStatus === "live") return true;
     setLoadPhase("waking");
@@ -164,12 +143,10 @@ export default function FootballMind() {
 
   function handleFixtureClick(f) {
     setInput(`Predict ${f.home} vs ${f.away}`);
-    scroller.current?.scrollIntoView({ behavior: "smooth" });
   }
 
   function handlePlayerAsk(text) {
     send(text);
-    scroller.current?.scrollIntoView({ behavior: "smooth" });
   }
 
   function startNewChat() {
@@ -292,155 +269,52 @@ export default function FootballMind() {
     return () => clearTimeout(t);
   }, []);
 
-  const showChips = messages.length === 0;
+  const showTablesBelowChat = sidebarMode === "matches";
 
   return (
     <div className="flex min-h-screen w-full flex-col font-sans" style={{ background: C.bg, color: C.chalk }}>
-      <header className="flex items-center justify-between border-b px-5 py-3" style={{ borderColor: C.line }}>
-        <div className="flex items-baseline gap-2">
-          <span className="text-lg font-bold tracking-tight">Football Mind</span>
-          <span className="text-xs" style={{ color: C.mute }}>Match Intelligence · By Neil M.</span>
-        </div>
-        {offline ? (
-          <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: C.panel, color: C.away }}>
-            demo data
-          </span>
-        ) : backendStatus === "connecting" ? (
-          <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: C.panel, color: C.mute }}>
-            connecting…
-          </span>
-        ) : backendStatus === "unreachable" ? (
-          <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: C.panel, color: C.away }}>
-            backend waking up
-          </span>
-        ) : (
-          <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: C.panel, color: C.home }}>
-            live
-          </span>
-        )}
-      </header>
+      <AppHeader offline={offline} backendStatus={backendStatus} />
 
-      <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 md:flex-row">
-        <section className="flex min-h-[60vh] min-w-0 flex-1 flex-col rounded-xl border md:min-w-0 md:basis-[60%]"
-          style={{ borderColor: C.line, background: C.panel2 }}>
-          <div className="flex items-center justify-between border-b px-4 py-2" style={{ borderColor: C.line }}>
-            <span className="text-[10px] font-medium" style={{ color: C.mute }}>Chat</span>
-            <button
-              type="button"
-              onClick={startNewChat}
-              disabled={busy}
-              title="Start a fresh conversation"
-              className="rounded-md border px-2.5 py-1 text-[10px] font-semibold transition-opacity hover:opacity-80 disabled:opacity-40"
-              style={{ borderColor: C.line, color: C.chalk, background: C.panel }}>
-              New chat
-            </button>
-          </div>
-          <div ref={scroller} className="flex-1 space-y-4 overflow-y-auto p-4" style={{ maxHeight: "70vh" }}>
-            {messages.length === 0 && (
-              <div className="mt-10 text-center">
-                <div className="text-sm" style={{ color: C.chalk }}>
-                  {sidebarMode === "players"
-                    ? "Ask about players, squads, or why a team works."
-                    : "Ask anything about a match."}
-                </div>
-                <div className="mt-1 text-xs" style={{ color: C.mute }}>
-                  {sidebarMode === "players"
-                    ? "Switch to Players on the right, tap a name, or type a question below."
-                    : "Tap a fixture on the right, or type a question below."}
-                </div>
-              </div>
-            )}
-            {messages.map((m, i) => (
-              <div key={i} className={m.role === "user" ? "flex justify-end" : ""}>
-                <div className="max-w-[85%]">
-                  <div className="rounded-xl px-3.5 py-2 text-sm"
-                    style={{ background: m.role === "user" ? C.home : C.panel, color: m.role === "user" ? "#08120F" : C.chalk }}>
-                    {m.role === "user" ? m.text : <MarkdownBody text={m.text} />}
-                  </div>
-                  {m.prediction && m.teams && (
-                    <PredictionCard
-                      p={m.prediction}
-                      home={m.teams.home}
-                      away={m.teams.away}
-                      comp={m.comp ?? chatComp}
-                      neutral={m.neutral ?? null}
-                      apiBase={API_BASE}
-                    />
-                  )}
-                  {m.bracket && (
-                    <div className="mt-2 w-full min-w-0 max-w-full overflow-hidden rounded-xl border p-1"
-                      style={{ borderColor: C.line, background: C.panel }}>
-                      <BracketTree rounds={normaliseBracket(m.bracket)} />
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-            {busy && loadPhase && <TypingIndicator phase={loadPhase} />}
-          </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 md:flex-row md:items-start">
+        <div className="flex min-w-0 flex-1 flex-col gap-4 md:basis-[60%]">
+          <ChatPanel
+            messages={messages}
+            busy={busy}
+            loadPhase={loadPhase}
+            input={input}
+            setInput={setInput}
+            send={send}
+            startNewChat={startNewChat}
+            sidebarMode={sidebarMode}
+            venueMode={venueMode}
+            setVenueMode={setVenueMode}
+            chatComp={chatComp}
+            apiBase={API_BASE}
+          />
 
-          {showChips && (
-            <div className="flex flex-wrap gap-2 px-3 pt-3 pb-0">
-              {(sidebarMode === "players" ? PLAYER_CHIPS : CHIPS).map((c) => (
-                <button key={c} onClick={() => send(c)}
-                  className="rounded-full border px-3 py-1 text-[11px] font-medium transition-opacity hover:opacity-70"
-                  style={{ borderColor: C.line, color: C.chalk, background: C.panel }}>
-                  {c}
-                </button>
-              ))}
+          {showTablesBelowChat && (
+            <div className={`grid min-w-0 gap-4 ${Object.keys(groups).length > 0 ? "lg:grid-cols-2" : "grid-cols-1"}`}>
+              {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
+              <StandingsPanel apiBase={API_BASE} offline={offline} onCompChange={handleCompChange} />
             </div>
           )}
-
-          <div className="border-t px-3 pt-2 pb-0" style={{ borderColor: C.line }}>
-            <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="text-[10px] font-medium" style={{ color: C.mute }}>
-                Context: <span style={{ color: C.chalk }}>{COMP_LABELS[chatComp] ?? chatComp}</span>
-              </span>
-              <span className="text-[10px] font-medium" style={{ color: C.mute }}>Venue:</span>
-              {[
-                [null,  "⚡ Auto",    "auto-detect based on teams"],
-                [false, "🏠 Home",   "home team has advantage"],
-                [true,  "🏟 Neutral","no home advantage"],
-              ].map(([val, label, title]) => (
-                <button key={String(val)} title={title}
-                  onClick={() => setVenueMode(val)}
-                  className="rounded px-2 py-0.5 text-[10px] font-semibold transition-colors"
-                  style={{
-                    background: venueMode === val ? (val === false ? C.away : val === true ? C.home : C.mute) : C.line,
-                    color: venueMode === val ? "#08120F" : C.mute,
-                  }}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-2 pb-3">
-              <input
-                value={input} onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && send()}
-                placeholder={sidebarMode === "players"
-                  ? "Who are Brazil's key players?"
-                  : "Predict Mexico vs South Korea in Mexico"}
-                className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-                style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }} />
-              <button onClick={() => send()} disabled={busy}
-                className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
-                style={{ background: C.home, color: "#08120F" }}>Ask</button>
-            </div>
-          </div>
-        </section>
+        </div>
 
         <aside className="flex min-w-0 flex-col gap-4 md:max-w-[40%] md:basis-[40%] md:shrink-0">
           <SidebarModeToggle mode={sidebarMode} setMode={setSidebarMode} />
           {sidebarMode === "matches" ? (
-            <>
-              <CalibrationPanel summary={summary} apiBase={API_BASE} offline={offline} />
-              <SyncHealthPanel apiBase={API_BASE} offline={offline} />
-              <FixturesPanel initialWc={wcFixtures} initialPl={plFixtures} sidebarLoaded={sidebarLoaded} onClickFixture={handleFixtureClick} apiBase={API_BASE} onSummary={setSummary} onCompChange={handleCompChange} />
-              {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
-              <BracketPanel apiBase={API_BASE} offline={offline} defaultComp={chatComp === "CL" ? "CL" : "WC"} />
-              <RankingsPanel apiBase={API_BASE} offline={offline} />
-              <StandingsPanel apiBase={API_BASE} offline={offline} onCompChange={handleCompChange} />
-            </>
+            <MatchesSidebar
+              summary={summary}
+              apiBase={API_BASE}
+              offline={offline}
+              wcFixtures={wcFixtures}
+              plFixtures={plFixtures}
+              sidebarLoaded={sidebarLoaded}
+              onClickFixture={handleFixtureClick}
+              onSummary={setSummary}
+              onCompChange={handleCompChange}
+              chatComp={chatComp}
+            />
           ) : (
             <PlayersSidebar apiBase={API_BASE} offline={offline} onAsk={handlePlayerAsk} onCompChange={handleCompChange} adminKey={adminKey} />
           )}
