@@ -5,6 +5,7 @@ import MatchesSidebar from "./components/MatchesSidebar.jsx";
 import PlayersSidebar, { SidebarModeToggle } from "./components/PlayersSidebar.jsx";
 import GroupsPanel from "./components/GroupsPanel.jsx";
 import StandingsPanel from "./components/StandingsPanel.jsx";
+import RankingsPanel from "./components/RankingsPanel.jsx";
 import { C } from "./fm/theme.js";
 import { pct } from "./fm/format.js";
 import { DEMO_FIXTURES, demoPredict, COMP_LABELS } from "./fm/demo.js";
@@ -293,9 +294,12 @@ export default function FootballMind() {
           />
 
           {showTablesBelowChat && (
-            <div className={`grid min-w-0 gap-4 ${Object.keys(groups).length > 0 ? "lg:grid-cols-2" : "grid-cols-1"}`}>
-              {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
-              <StandingsPanel apiBase={API_BASE} offline={offline} onCompChange={handleCompChange} />
+            <div className="flex min-w-0 flex-col gap-4">
+              <div className={`grid min-w-0 gap-4 ${Object.keys(groups).length > 0 ? "md:grid-cols-2" : "grid-cols-1"}`}>
+                {Object.keys(groups).length > 0 && <GroupsPanel groups={groups} />}
+                <StandingsPanel apiBase={API_BASE} offline={offline} onCompChange={handleCompChange} />
+              </div>
+              <RankingsPanel apiBase={API_BASE} offline={offline} />
             </div>
           )}
         </div>

@@ -42,13 +42,12 @@ export default function RankingsPanel({ apiBase, offline }) {
           {offline ? "Available when backend is connected." : "Run seed-elo + sync to populate."}
         </div>
       ) : (
-        <div className="divide-y" style={{ divideColor: C.line }}>
+        <div className="max-h-[240px] overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
           {rows.map((r) => (
             <div key={r.rank} className="flex items-center gap-3 px-4 py-1.5"
               style={{ borderTop: r.rank > 1 ? `1px solid ${C.line}` : "none" }}>
               <span className="w-5 shrink-0 text-[11px] tabular-nums text-right" style={{ color: C.mute }}>{r.rank}</span>
               <span className="flex-1 text-xs" style={{ color: C.chalk }}>{flag(r.team)}{r.team}</span>
-              {/* Strength bar */}
               <div className="h-1.5 w-20 overflow-hidden rounded-full" style={{ background: C.line }}>
                 <div className="h-full rounded-full" style={{ width: `${Math.round(r.strength * 100)}%`, background: C.home }} />
               </div>
