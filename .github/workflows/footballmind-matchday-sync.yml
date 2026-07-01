@@ -40,3 +40,9 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: python footballmind_jobs.py sync-matchday ${{ github.event.inputs.force == 'true' && '--force' || '' }}
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          echo "## Matchday sync failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Check the job log above. Enable GitHub **Watch → Actions** for email alerts." >> "$GITHUB_STEP_SUMMARY"

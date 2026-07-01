@@ -1,5 +1,9 @@
 """Prediction grading and stale-score regrade."""
 
+from unittest.mock import patch
+
+import requests
+
 from footballmind_grading import grade_predictions
 
 
@@ -69,3 +73,56 @@ def test_grade_predictions_uses_pen_shootout_winner():
     assert n == 1
     updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
     assert updates[0][1] == (1, 1, True, 2)  # predicted away, actual away (pens)
+
+
+def test_grade_predictions_home_wins_pen_shootout():
+    class _PenCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            self.executed.append((sql.strip(), params))
+            if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
+                self._fetch = [
+                    (3, 0.55, 0.0, 0.45, 1, 1, "quarter_final", None, 10,
+                     True, 4, 3, 20),
+                ]
+
+    conn = _FakeConn()
+    conn.cur = _PenCursor()
+    n = grade_predictions(conn)
+    assert n == 1
+    updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
+    assert updates[0][1] == (1, 1, True, 3)  # predicted home, home won pens
+
+
+def test_grade_predictions_advancing_team_overrides_pens():
+    class _AdvCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            self.executed.append((sql.strip(), params))
+            if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
+                self._fetch = [
+                    (4, 0.2, 0.0, 0.8, 1, 1, "semi_final", 20, 10,
+                     True, 3, 3, 20),
+                ]
+
+    conn = _FakeConn()
+    conn.cur = _AdvCursor()
+    n = grade_predictions(conn)
+    assert n == 1
+    updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
+    assert updates[0][1] == (1, 1, True, 4)  # away advanced despite tied pens
+
+
+def test_grade_predictions_force_regrades_all():
+    class _ForceCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            self.executed.append((sql.strip(), params))
+            if "SELECT p.id" in sql:
+                self._fetch = [
+                    (5, 0.5, 0.3, 0.2, 2, 0, "regular_season", None, 10,
+                     False, None, None, 20),
+                ]
+
+    conn = _FakeConn()
+    conn.cur = _ForceCursor()
+    n = grade_predictions(conn, force=True)
+    assert n == 1
+    assert not any("DISTINCT FROM" in q[0] for q in conn.cur.executed)

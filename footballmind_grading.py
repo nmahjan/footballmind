@@ -50,13 +50,25 @@ def find_fixture(
     return row[0] if row else None
 
 
-def grade_predictions(conn):
+def grade_predictions(conn, *, force: bool = False):
     """Grade linked predictions from match scores.
 
     Re-grades when football-data.org later corrects a score so stale
     actual_home_goals / actual_away_goals do not leak into the UI.
+
+    With force=True, re-evaluate every finished linked prediction (one-time
+    backfill after grading logic changes).
     """
     with conn.cursor() as cur:
+        stale_filter = ""
+        if not force:
+            stale_filter = (
+                "  AND (p.was_correct IS NULL "
+                "       OR p.actual_home_goals IS DISTINCT FROM m.home_goals "
+                "       OR p.actual_away_goals IS DISTINCT FROM m.away_goals "
+                "       OR (m.went_to_pens AND m.home_pens IS NOT NULL "
+                "           AND m.away_pens IS NOT NULL AND m.home_pens != m.away_pens))"
+            )
         cur.execute(
             "SELECT p.id, p.home_win_prob, p.draw_prob, p.away_win_prob, "
             "       m.home_goals, m.away_goals, m.stage, "
@@ -64,11 +76,7 @@ def grade_predictions(conn):
             "       m.went_to_pens, m.home_pens, m.away_pens, m.away_team_id "
             "FROM predictions p JOIN matches m ON m.id = p.match_id "
             "WHERE m.home_goals IS NOT NULL "
-            "  AND (p.was_correct IS NULL "
-            "       OR p.actual_home_goals IS DISTINCT FROM m.home_goals "
-            "       OR p.actual_away_goals IS DISTINCT FROM m.away_goals "
-            "       OR (m.went_to_pens AND m.home_pens IS NOT NULL "
-            "           AND m.away_pens IS NOT NULL AND m.home_pens != m.away_pens))")
+            f"{stale_filter}")
         rows = cur.fetchall()
         knockout = {
             "round_of_32", "round_of_16", "quarter_final", "semi_final", "final",

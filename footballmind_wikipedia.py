@@ -25,6 +25,8 @@ from footballmind_roles import LINE_ROLES, resolve_player_line_role
 
 WIKI_API = "https://en.wikipedia.org/w/api.php"
 DEFAULT_WC_SQUADS_PAGE = "2026_FIFA_World_Cup_squads"
+DEFAULT_WIKI_RETRIES = 5
+DEFAULT_WIKI_RETRY_BASE_SEC = 2.0
 USER_AGENT = (
     "FootballMind/1.0 "
     "(https://github.com/nmahjan/footballmind; football squad enrichment)"
@@ -248,43 +250,62 @@ def _player_name_from_cell(cell) -> tuple[str, str | None]:
     return _clean_player_name(cell.text_content()), None
 
 
+def _wiki_api_get(params: dict[str, Any], *, formatversion: int | None = None) -> dict[str, Any]:
+    """MediaWiki parse API with retries for transient network / server errors."""
+    last_err: Exception | None = None
+    for attempt in range(DEFAULT_WIKI_RETRIES):
+        try:
+            req_params = dict(params)
+            if formatversion is not None:
+                req_params["formatversion"] = formatversion
+            r = requests.get(
+                WIKI_API,
+                params=req_params,
+                headers={"User-Agent": USER_AGENT},
+                timeout=30,
+            )
+            if r.status_code >= 500:
+                raise requests.HTTPError(f"HTTP {r.status_code}", response=r)
+            r.raise_for_status()
+            payload = r.json()
+            if "error" in payload:
+                code = payload["error"].get("code", "")
+                if code in ("maxlag", "ratelimited") and attempt + 1 < DEFAULT_WIKI_RETRIES:
+                    time.sleep(DEFAULT_WIKI_RETRY_BASE_SEC * (2 ** attempt))
+                    continue
+                raise RuntimeError(payload["error"].get("info") or "Wikipedia API error")
+            return payload
+        except (requests.RequestException, requests.HTTPError) as exc:
+            last_err = exc
+            if attempt + 1 >= DEFAULT_WIKI_RETRIES:
+                break
+            time.sleep(DEFAULT_WIKI_RETRY_BASE_SEC * (2 ** attempt))
+    if last_err:
+        raise last_err
+    raise RuntimeError("Wikipedia API unreachable")
+
+
 def fetch_wikipedia_html(page_title: str) -> str:
-    r = requests.get(
-        WIKI_API,
-        params={
+    payload = _wiki_api_get(
+        {
             "action": "parse",
             "page": page_title,
             "prop": "text",
             "format": "json",
-            "formatversion": "2",
         },
-        headers={"User-Agent": USER_AGENT},
-        timeout=30,
+        formatversion=2,
     )
-    r.raise_for_status()
-    payload = r.json()
-    if "error" in payload:
-        raise RuntimeError(payload["error"].get("info") or "Wikipedia API error")
     return payload["parse"]["text"]
 
 
 def fetch_wikitext(page_title: str) -> str:
     """Fetch raw wikitext for a Wikipedia page."""
-    r = requests.get(
-        WIKI_API,
-        params={
-            "action": "parse",
-            "page": page_title,
-            "prop": "wikitext",
-            "format": "json",
-        },
-        headers={"User-Agent": USER_AGENT},
-        timeout=30,
-    )
-    r.raise_for_status()
-    payload = r.json()
-    if "error" in payload:
-        raise RuntimeError(payload["error"].get("info") or "Wikipedia API error")
+    payload = _wiki_api_get({
+        "action": "parse",
+        "page": page_title,
+        "prop": "wikitext",
+        "format": "json",
+    })
     return payload["parse"]["wikitext"]["*"]
 
 
@@ -458,6 +479,77 @@ def parse_wc_squads_html(page_html: str) -> list[dict[str, Any]]:
             squads.append({"team": current_team, "players": players})
             current_team = None
     return squads
+
+
+def parse_club_squad_html(page_html: str) -> list[dict[str, Any]]:
+    """Parse the first squad wikitable on a club page (fallback when no {{fs}} block)."""
+    tree = html.fromstring(page_html)
+    for table in tree.xpath("//table[contains(@class, 'wikitable')]"):
+        rows = table.xpath(".//tr")
+        if len(rows) < 2:
+            continue
+        header = [c.text_content().strip() for c in rows[0].xpath("th|td")]
+        header_text = " ".join(h.lower() for h in header)
+        if "player" not in header_text or "pos" not in header_text:
+            continue
+        cols = _map_wc_squad_columns(header)
+
+        def _cell_text(cells, key: str, default: int) -> str:
+            idx = cols.get(key, default)
+            if idx >= len(cells):
+                return ""
+            return cells[idx].text_content().strip()
+
+        players: list[dict[str, Any]] = []
+        for row in rows[1:]:
+            cells = row.xpath("./td|./th")
+            if len(cells) < 4:
+                continue
+            try:
+                player_idx = cols.get("player", 2)
+                name, wiki_title = _player_name_from_cell(cells[player_idx])
+                pos_raw = _cell_text(cells, "pos", 1)
+                shirt = int(re.sub(r"[^\d]", "", _cell_text(cells, "no", 0) or "0") or 0)
+            except (ValueError, IndexError):
+                continue
+            if not name or is_wikipedia_dob_name(name):
+                continue
+            pos_code = None
+            m = re.search(r"\b(GK|DF|MF|FW)\b", (pos_raw or "").upper())
+            if m:
+                pos_code = m.group(1)
+            players.append({
+                "name": name,
+                "wiki_title": wiki_title,
+                "pos_code": pos_code,
+                "position_raw": pos_raw,
+                "line_role": map_fifa_squad_position(pos_raw),
+                "position": _coarse_position(pos_code),
+                "shirt_number": shirt or None,
+                "caps": None,
+                "goals": None,
+                "club": None,
+                "nationality_code": None,
+            })
+        if players:
+            return players
+    return []
+
+
+def _filter_club_wiki_pages(
+    clubs: dict[str, str],
+    teams: list[str] | None,
+) -> dict[str, str]:
+    if not teams:
+        return clubs
+    wanted = {_norm(t) for t in teams if t}
+    filtered: dict[str, str] = {}
+    for wiki_title, db_name in clubs.items():
+        if (_norm(db_name) in wanted
+                or _norm(wiki_title) in wanted
+                or any(w in _norm(db_name) for w in wanted)):
+            filtered[wiki_title] = db_name
+    return filtered
 
 
 def _resolve_db_team(cur, wiki_team: str) -> str | None:
@@ -774,6 +866,7 @@ def sync_wikipedia_wc_squads(
                     nationality_id=nat_id,
                     edition_id=edition_id,
                 )
+            conn.commit()
 
     conn.commit()
     return stats
@@ -783,9 +876,12 @@ def sync_wikipedia_club_squads(
     conn,
     *,
     leagues: list[str] | None = None,
+    teams: list[str] | None = None,
     delay_s: float = 0.5,
 ) -> dict[str, Any]:
     """Sync current club squads from Wikipedia wikitext (PL first)."""
+    from psycopg import OperationalError
+
     from footballmind_mcp_predict import _resolve_team
     from footballmind_sync import upsert_country
 
@@ -808,16 +904,16 @@ def sync_wikipedia_club_squads(
 
     with conn.cursor() as cur:
         for _league_code, clubs in league_map.items():
+            clubs = _filter_club_wiki_pages(clubs, teams)
             for wiki_title, db_name in clubs.items():
                 try:
                     cur.execute("SAVEPOINT wiki_club")
                     wikitext = fetch_wikitext(wiki_title)
                     section = extract_first_squad_block(wikitext)
-                    if not section:
-                        cur.execute("ROLLBACK TO SAVEPOINT wiki_club")
-                        stats["skipped_clubs"].append(wiki_title)
-                        continue
-                    players = parse_fs_player_lines(section)
+                    players = parse_fs_player_lines(section) if section else []
+                    if not players:
+                        page_html = fetch_wikipedia_html(wiki_title)
+                        players = parse_club_squad_html(page_html)
                     if not players:
                         cur.execute("ROLLBACK TO SAVEPOINT wiki_club")
                         stats["skipped_clubs"].append(wiki_title)
@@ -846,9 +942,14 @@ def sync_wikipedia_club_squads(
                             nationality_id=nat_id,
                         )
                     cur.execute("RELEASE SAVEPOINT wiki_club")
+                    conn.commit()
                     time.sleep(delay_s)
                 except Exception as exc:
-                    cur.execute("ROLLBACK TO SAVEPOINT wiki_club")
+                    try:
+                        cur.execute("ROLLBACK TO SAVEPOINT wiki_club")
+                    except OperationalError:
+                        conn.rollback()
+                        raise
                     stats["errors"].append(f"{wiki_title}: {exc}")
 
     conn.commit()
@@ -867,5 +968,5 @@ def sync_wikipedia_all(
     if wc:
         out["wc"] = sync_wikipedia_wc_squads(conn, **kwargs)
     if clubs:
-        out["clubs"] = sync_wikipedia_club_squads(conn)
+        out["clubs"] = sync_wikipedia_club_squads(conn, **kwargs)
     return out

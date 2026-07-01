@@ -60,3 +60,9 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python footballmind_jobs.py retrain
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          echo "## Scheduled job failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Workflow: **footballmind-jobs**. Check logs above." >> "$GITHUB_STEP_SUMMARY"

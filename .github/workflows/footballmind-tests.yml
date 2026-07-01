@@ -5,10 +5,10 @@ on:
   push:
     branches: [main]
     paths:
-      - "footballmind_*.py"
-      - "tests/**"
+      - "**/*.py"
+      - "frontend/**"
       - "requirements.txt"
-      - ".github/workflows/footballmind-tests.yml"
+      - ".github/workflows/**"
   pull_request:
     branches: [main]
   workflow_dispatch:
