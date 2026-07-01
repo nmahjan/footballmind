@@ -16,6 +16,7 @@ import time
 import unicodedata
 from datetime import date
 from typing import Any
+from urllib.parse import unquote
 
 import requests
 from lxml import html
@@ -229,12 +230,18 @@ def _map_wc_squad_columns(header: list[str]) -> dict[str, int]:
     return cols
 
 
+def _normalize_wiki_title(title: str | None) -> str | None:
+    if not title:
+        return None
+    return unquote(title.replace("_", " ")).strip() or None
+
+
 def _player_name_from_cell(cell) -> tuple[str, str | None]:
     """Return (display name, Wikipedia page title if linked)."""
     link = cell.xpath(".//a[starts-with(@href, '/wiki/') and not(contains(@href, ':'))]")
     if link:
         href = link[0].get("href") or ""
-        title = href.split("/wiki/", 1)[-1].replace("_", " ")
+        title = _normalize_wiki_title(href.split("/wiki/", 1)[-1])
         name = link[0].text_content().strip() or title
         return _clean_player_name(name), title
     return _clean_player_name(cell.text_content()), None
@@ -538,7 +545,16 @@ def _ensure_affiliation(
 
 
 def _store_wiki_provider(cur, player_id: int, wiki_title: str | None) -> None:
-    if not wiki_title:
+    title = _normalize_wiki_title(wiki_title)
+    if not title:
+        return
+    cur.execute(
+        "SELECT entity_id FROM provider_external_ids "
+        "WHERE provider = 'wikipedia' AND external_id = %s",
+        (title,),
+    )
+    row = cur.fetchone()
+    if row and row[0] != player_id:
         return
     cur.execute(
         "INSERT INTO provider_external_ids "
@@ -546,7 +562,7 @@ def _store_wiki_provider(cur, player_id: int, wiki_title: str | None) -> None:
         "VALUES ('player', %s, 'wikipedia', %s) "
         "ON CONFLICT (entity_type, entity_id, provider) DO UPDATE SET "
         "  external_id = EXCLUDED.external_id",
-        (player_id, wiki_title),
+        (player_id, title),
     )
 
 

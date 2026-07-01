@@ -1,6 +1,8 @@
 """Wikipedia WC squad parsing (offline fixture)."""
 
 from footballmind_wikipedia import (
+    _normalize_wiki_title,
+    _store_wiki_provider,
     extract_first_squad_block,
     is_wikipedia_dob_name,
     map_fifa_squad_position,
@@ -96,3 +98,29 @@ def test_extract_first_squad_block():
     assert players[0]["line_role"] == "GK"
     assert players[1]["name"] == "Viktor Gyökeres"
     assert players[1]["line_role"] == "ST"
+
+
+def test_normalize_wiki_title_decodes_percent_encoding():
+    raw = "Ladislav Krej%C4%8D%C3%AD (footballer, born 1999)"
+    assert _normalize_wiki_title(raw) == "Ladislav Krejčí (footballer, born 1999)"
+
+
+def test_store_wiki_provider_skips_conflicting_player():
+    class _Cur:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params=None):
+            self.calls.append((sql.strip(), params))
+            if "SELECT entity_id" in sql:
+                self._fetch = [(99,)]
+            else:
+                self._fetch = []
+
+        def fetchone(self):
+            return getattr(self, "_fetch", [None])[0]
+
+    cur = _Cur()
+    _store_wiki_provider(cur, 42, "Ladislav Krejčí (footballer, born 1999)")
+    inserts = [c for c in cur.calls if c[0].startswith("INSERT")]
+    assert inserts == []
