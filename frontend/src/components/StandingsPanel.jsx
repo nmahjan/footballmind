@@ -97,6 +97,7 @@ export default function StandingsPanel({ apiBase, offline, onCompChange }) {
         </div>
       ) : (
         <>
+        <div className="max-h-[280px] overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
         {standingsSections(activeComp, rows).map((section) => (
           <div key={section.key}>
             {section.label && (
@@ -106,7 +107,7 @@ export default function StandingsPanel({ apiBase, offline, onCompChange }) {
               </div>
             )}
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 z-[1]" style={{ background: C.panel }}>
                 <tr className="text-[10px] uppercase" style={{ color: C.mute }}>
                   <th className="px-3 py-1.5 text-left font-medium w-8">#</th>
                   <th className="px-2 py-1.5 text-left font-medium">Club</th>
@@ -124,6 +125,7 @@ export default function StandingsPanel({ apiBase, offline, onCompChange }) {
             </table>
           </div>
         ))}
+        </div>
         {activeComp === "MLS" && (
           <div className="border-t px-3 py-2 text-[10px]" style={{ borderColor: C.line, color: C.mute }}>
             MLS has no relegation. Top 9 per conference reach the Audi MLS Cup Playoffs (seeds 1–7 Round One, 8–9 Wild Card).

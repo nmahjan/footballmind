@@ -1,7 +1,6 @@
 import BracketPanel from "./BracketPanel.jsx";
 import SyncHealthPanel from "./SyncHealthPanel.jsx";
 import FixturesPanel from "./FixturesPanel.jsx";
-import RankingsPanel from "./RankingsPanel.jsx";
 import CalibrationPanel from "./CalibrationPanel.jsx";
 
 export default function MatchesSidebar({
@@ -30,7 +29,6 @@ export default function MatchesSidebar({
         onCompChange={onCompChange}
       />
       <BracketPanel apiBase={apiBase} offline={offline} defaultComp={chatComp === "CL" ? "CL" : "WC"} />
-      <RankingsPanel apiBase={apiBase} offline={offline} />
     </>
   );
 }
