@@ -177,11 +177,20 @@ def upsert_team(cur, name, team_type, external_id, country_id=None):
 def upsert_country(cur, name, fifa_code=None):
     if not name:
         return None
+    code = fifa_code.strip().upper() if fifa_code else None
+    if code:
+        cur.execute(
+            "SELECT id FROM countries WHERE fifa_code = %s",
+            (code,),
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0]
     cur.execute(
         "INSERT INTO countries (name, fifa_code) VALUES (%s,%s) "
         "ON CONFLICT (name) DO UPDATE SET "
         "  fifa_code = COALESCE(EXCLUDED.fifa_code, countries.fifa_code) "
-        "RETURNING id", (name, fifa_code))
+        "RETURNING id", (name, code))
     return cur.fetchone()[0]
 
 
