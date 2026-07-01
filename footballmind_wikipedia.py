@@ -49,7 +49,7 @@ WIKI_TEAM_TO_DB: dict[str, str] = {
 PREMIER_LEAGUE_WIKI_TO_DB: dict[str, str] = {
     "Arsenal F.C.": "Arsenal FC",
     "Aston Villa F.C.": "Aston Villa FC",
-    "Bournemouth A.F.C.": "AFC Bournemouth",
+    "AFC Bournemouth": "AFC Bournemouth",
     "Brentford F.C.": "Brentford FC",
     "Brighton & Hove Albion F.C.": "Brighton & Hove Albion FC",
     "Burnley F.C.": "Burnley FC",
