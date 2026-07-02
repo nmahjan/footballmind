@@ -41,6 +41,11 @@ jobs:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: python footballmind_jobs.py sync-matchday ${{ github.event.inputs.force == 'true' && '--force' || '' }}
 
+      - name: Regrade finished predictions
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python footballmind_jobs.py regrade
+
       - name: Failure summary
         if: failure()
         run: |

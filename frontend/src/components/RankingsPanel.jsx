@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { C, flag } from "../fm/theme.js";
 
-export default function RankingsPanel({ apiBase, offline }) {
+export default function RankingsPanel({ apiBase, offline, defaultOpen = false }) {
   const [rows, setRows] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
 
   function load() {
     if (loaded || offline || !apiBase) return;
@@ -13,6 +13,10 @@ export default function RankingsPanel({ apiBase, offline }) {
       .then((d) => { setRows(d.rankings ?? []); setLoaded(true); })
       .catch(() => setLoaded(true));
   }
+
+  useEffect(() => {
+    if (defaultOpen) load();
+  }, [defaultOpen, apiBase, offline]);
 
   if (!open) {
     return (

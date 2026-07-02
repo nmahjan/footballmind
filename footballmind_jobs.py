@@ -454,7 +454,15 @@ def cmd_sync_wikipedia():
                 print(f"[sync-wikipedia] applied {n} manual line_role overrides", flush=True)
             _print_wikipedia_stats(stats)
             status = "partial" if any(b.get("errors") for b in stats.values()) else "ok"
-            record_sync_run(conn, "wikipedia", status=status, summary=stats)
+            summary = record_sync_run(conn, "wikipedia", status=status, summary=stats)
+            if summary.get("repeat_skips"):
+                print(
+                    f"[sync-wikipedia] ALERT repeat skips: "
+                    f"{', '.join(summary['repeat_skips'])}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                sys.exit(1)
     except Exception as exc:
         try:
             with _connect() as conn:
