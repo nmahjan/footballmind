@@ -329,6 +329,10 @@ def _predict_match(conn, home_team, away_team, match_date,
             label = max(probs, key=probs.get)
             confidence = probs[label]
 
+        raw_confidence = confidence
+        from footballmind_calibration import adjust_confidence_from_calibration
+        confidence, cal_gap = adjust_confidence_from_calibration(conn, confidence)
+
         home_form = _team_form(cur, home_id)
         away_form = _team_form(cur, away_id)
         h2h = _head_to_head(cur, home_id, away_id)
@@ -350,6 +354,10 @@ def _predict_match(conn, home_team, away_team, match_date,
         ]
         if stakes_adj.get("applied"):
             key_factors.append("High-pressure λ adjustment applied")
+        if cal_gap is not None and abs(confidence - raw_confidence) >= 0.005:
+            key_factors.append(
+                f"Calibration-adjusted ({int(raw_confidence * 100)}% → {int(confidence * 100)}%)"
+            )
         key_factors.extend(stakes.get("labels") or [])
 
         from footballmind_grading import find_fixture
@@ -384,6 +392,7 @@ def _predict_match(conn, home_team, away_team, match_date,
         "stage":         eff_stage,
         "stakes":        stakes,
         "stakes_adjustment": stakes_adj,
+        "calibration_gap": cal_gap,
     }
 
 

@@ -12,10 +12,22 @@ def record_sync_run(
     *,
     status: str,
     summary: dict[str, Any] | None = None,
-) -> None:
+) -> dict[str, Any]:
     """Upsert the latest run for a named job (matchday, wikipedia, sync, …)."""
-    payload = json.dumps(summary or {})
+    summary = dict(summary or {})
     with conn.cursor() as cur:
+        cur.execute(
+            "SELECT summary FROM sync_job_runs WHERE job_name = %s",
+            (job_name,),
+        )
+        prev = cur.fetchone()
+        repeat = _repeat_skips(prev[0] if prev else {}, summary)
+        if repeat:
+            summary["repeat_skips"] = repeat
+            summary["alert"] = (
+                f"Skipped in 2 consecutive runs: {', '.join(repeat)}"
+            )
+        payload = json.dumps(summary)
         cur.execute(
             "INSERT INTO sync_job_runs (job_name, status, summary, finished_at) "
             "VALUES (%s, %s, %s::jsonb, now()) "
@@ -26,6 +38,31 @@ def record_sync_run(
             (job_name, status, payload),
         )
     conn.commit()
+    return summary
+
+
+def _collect_skips(block: dict[str, Any]) -> set[str]:
+    skips: set[str] = set()
+    if not isinstance(block, dict):
+        return skips
+    for key in ("skipped_teams", "skipped_clubs"):
+        for name in block.get(key) or []:
+            if name:
+                skips.add(str(name))
+    return skips
+
+
+def _repeat_skips(prev_summary: dict[str, Any], new_summary: dict[str, Any]) -> list[str]:
+    """Clubs/teams skipped in both the previous and current run."""
+    prev = set()
+    new = set()
+    for block in (prev_summary or {}).values():
+        if isinstance(block, dict):
+            prev |= _collect_skips(block)
+    for block in (new_summary or {}).values():
+        if isinstance(block, dict):
+            new |= _collect_skips(block)
+    return sorted(prev & new)
 
 
 def get_sync_health(conn) -> dict[str, Any]:

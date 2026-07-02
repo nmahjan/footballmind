@@ -126,3 +126,58 @@ def test_grade_predictions_force_regrades_all():
     n = grade_predictions(conn, force=True)
     assert n == 1
     assert not any("DISTINCT FROM" in q[0] for q in conn.cur.executed)
+
+
+def test_grade_knockout_regulation_draw():
+    class _DrawCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            self.executed.append((sql.strip(), params))
+            if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
+                self._fetch = [
+                    (6, 0.2, 0.55, 0.25, 1, 1, "quarter_final", None, 10,
+                     False, None, None, 20),
+                ]
+
+    conn = _FakeConn()
+    conn.cur = _DrawCursor()
+    n = grade_predictions(conn)
+    assert n == 1
+    updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
+    assert updates[0][1][2] is True  # predicted draw, actual draw at 90'
+
+
+def test_grade_knockout_extra_time_still_uses_regulation_score():
+    """Regulation goals in DB; no pens/advancing_team — draw stands."""
+    class _EtCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            self.executed.append((sql.strip(), params))
+            if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
+                self._fetch = [
+                    (7, 0.15, 0.25, 0.60, 2, 2, "semi_final", None, 10,
+                     False, None, None, 20),
+                ]
+
+    conn = _FakeConn()
+    conn.cur = _EtCursor()
+    n = grade_predictions(conn)
+    assert n == 1
+    updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
+    assert updates[0][1][2] is False  # predicted away, actual draw at 90'
+
+
+def test_grade_two_leg_aggregate_uses_advancing_team():
+    class _AggCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            self.executed.append((sql.strip(), params))
+            if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
+                self._fetch = [
+                    (8, 0.75, 0.0, 0.25, 0, 0, "semi_final", 10, 10,
+                     False, None, None, 20),
+                ]
+
+    conn = _FakeConn()
+    conn.cur = _AggCursor()
+    n = grade_predictions(conn)
+    assert n == 1
+    updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
+    assert updates[0][1][2] is True  # home predicted, home advanced on aggregate

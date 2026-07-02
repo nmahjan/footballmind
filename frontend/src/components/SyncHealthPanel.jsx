@@ -65,6 +65,14 @@ export default function SyncHealthPanel({ apiBase, offline }) {
           ))}
         </ul>
       )}
+      {health?.jobs?.some((j) => j.summary?.alert) && (
+        <div className="mt-3 rounded-md border px-2.5 py-2 text-[11px]"
+          style={{ borderColor: C.away, color: C.away, background: "rgba(244,161,82,0.08)" }}>
+          {health.jobs.filter((j) => j.summary?.alert).map((j) => (
+            <div key={j.job}>{j.summary.alert}</div>
+          ))}
+        </div>
+      )}
       {health?.last_result_at && (
         <div className="mt-3 border-t pt-2 text-[10px]" style={{ borderColor: C.line, color: C.mute }}>
           Latest result: {fmtWhen(health.last_result_at)}
