@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C, flag } from "../fm/theme.js";
 
 export default function RankingsPanel({ apiBase, offline, defaultOpen = false }) {
