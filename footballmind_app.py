@@ -759,9 +759,15 @@ def api_groups():
 @limiter.exempt
 def api_fixtures():
     """Upcoming matches for a competition. Defaults to WC, limit 16."""
+    from footballmind_services import enrich_fixtures_with_previews
+
     comp = request.args.get("comp", "WC")
     limit = min(int(request.args.get("limit", 16)), 64)
-    fixtures = get_fixtures(get_conn(), comp, limit)
+    preview = request.args.get("preview", "1").lower() not in ("0", "false", "no")
+    conn = get_conn()
+    fixtures = get_fixtures(conn, comp, limit)
+    if preview:
+        enrich_fixtures_with_previews(conn, fixtures, comp)
     return jsonify({"fixtures": fixtures, "comp": comp})
 
 

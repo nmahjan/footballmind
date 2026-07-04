@@ -616,6 +616,37 @@ def get_fixtures(conn, comp: str = "WC", limit: int = 16) -> list:
     return fixtures
 
 
+def _fixture_team_resolved(name: str | None) -> bool:
+    return bool(name) and not str(name).upper().startswith("TBD")
+
+
+def enrich_fixtures_with_previews(conn, fixtures: list, comp: str) -> list:
+    """Attach lightweight model picks to upcoming fixtures (no DB writes)."""
+    from footballmind_mcp_predict import _predict_match
+
+    for f in fixtures:
+        home, away = f.get("home"), f.get("away")
+        if not _fixture_team_resolved(home) or not _fixture_team_resolved(away):
+            continue
+        stage = f.get("stage") or "regular_season"
+        try:
+            prev = _predict_match(
+                conn, home, away, None, stage,
+                session_id=None, neutral=None, comp=comp, persist=False,
+            )
+        except ValueError:
+            continue
+        f["preview"] = {
+            "prediction": prev["prediction"],
+            "confidence": prev["confidence"],
+            "home_win_prob": prev["home_win_prob"],
+            "draw_prob": prev["draw_prob"],
+            "away_win_prob": prev["away_win_prob"],
+            "is_knockout": bool(prev.get("is_knockout")),
+        }
+    return fixtures
+
+
 def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[dict]:
     """Recent finished matches for a competition, with optional prediction grading."""
     from footballmind_grading import ensure_result_predictions, grade_predictions

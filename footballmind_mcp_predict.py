@@ -256,7 +256,7 @@ def _save_prediction(cur, session_id, match_id, home_id, away_id,
 
 def _predict_match(conn, home_team, away_team, match_date,
                    stage="regular_season", session_id=None, neutral=None,
-                   comp=None):
+                   comp=None, *, persist=True):
     """Predict a match.
 
     neutral: True  = no home-field bonus (WC / Euros / all international tournaments)
@@ -363,9 +363,11 @@ def _predict_match(conn, home_team, away_team, match_date,
         from footballmind_grading import find_fixture
         match_id = find_fixture(cur, home_id, away_id, comp_code=comp)
 
-        _save_prediction(cur, session_id, match_id, home_id, away_id,
-                         lam_h, lam_a, out, knockout, confidence, reasoning)
-    conn.commit()
+        if persist:
+            _save_prediction(cur, session_id, match_id, home_id, away_id,
+                             lam_h, lam_a, out, knockout, confidence, reasoning)
+    if persist:
+        conn.commit()
 
     return {
         "prediction":    label,

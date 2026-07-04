@@ -32,8 +32,8 @@ export default function FootballMind() {
     try {
       const [healthRes, wcRes, plRes, grpRes] = await Promise.all([
         fetch(`${API_BASE}/api/health`),
-        fetch(`${API_BASE}/api/fixtures?comp=WC&limit=32`),
-        fetch(`${API_BASE}/api/fixtures?comp=PL&limit=10`),
+        fetch(`${API_BASE}/api/fixtures?comp=WC&limit=32&preview=1`),
+        fetch(`${API_BASE}/api/fixtures?comp=PL&limit=10&preview=1`),
         fetch(`${API_BASE}/api/groups?comp=WC`),
       ]);
       if (!healthRes.ok) throw new Error("health");

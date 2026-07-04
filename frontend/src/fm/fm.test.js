@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pct, outcomeColor, localDayKey, dayHeaderLabel } from "./format.js";
+import { pct, outcomeColor, localDayKey, dayHeaderLabel, fixtureTeamStyle, fixturePreviewLabel } from "./format.js";
 import { C } from "./theme.js";
 import { parseVs, buildPredictUrl } from "./deeplink.js";
 import { zoneForRank, rowZone, standingLegend } from "./standings.js";
@@ -13,6 +13,22 @@ describe("format", () => {
   it("outcomeColor picks team colors", () => {
     expect(outcomeColor("Spain win", "Spain", "Germany")).toBe(C.home);
     expect(outcomeColor("Draw", "Spain", "Germany")).toBe(C.draw);
+  });
+
+  it("fixtureTeamStyle highlights pick and underdog", () => {
+    const preview = { prediction: "Spain", confidence: 0.58 };
+    expect(fixtureTeamStyle("Spain", "Spain", "Germany", preview).color).toBe(C.home);
+    expect(fixtureTeamStyle("Germany", "Spain", "Germany", preview).color).toBe(C.away);
+    const draw = { prediction: "Draw", confidence: 0.31 };
+    expect(fixtureTeamStyle("Spain", "Spain", "Germany", draw).color).toBe(C.draw);
+  });
+
+  it("fixturePreviewLabel normalizes knockout picks", () => {
+    expect(fixturePreviewLabel({ prediction: "Draw" })).toBe("Draw");
+    expect(fixturePreviewLabel({
+      prediction: "Brazil advance",
+      is_knockout: true,
+    })).toBe("Brazil");
   });
 
   it("localDayKey uses local calendar date", () => {
