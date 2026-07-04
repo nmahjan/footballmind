@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useLayoutEffect } from "react";
 import AppHeader from "./components/AppHeader.jsx";
 import ChatPanel from "./components/ChatPanel.jsx";
 import MatchesSidebar from "./components/MatchesSidebar.jsx";
@@ -26,6 +26,37 @@ export default function FootballMind() {
   const [sidebarLoaded, setSidebarLoaded] = useState(false);
   const [adminKey, setAdminKey] = useState(() => getAdminKey());
   const [mobileTab, setMobileTab] = useState("chat");
+  const sidebarToggleRef = useRef(null);
+  const sidebarTopRef = useRef(null);
+  const [chatStretchHeight, setChatStretchHeight] = useState(null);
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      if (window.innerWidth < 768) {
+        setChatStretchHeight(null);
+        return;
+      }
+      const toggleH = sidebarToggleRef.current?.offsetHeight ?? 0;
+      const topH = sidebarMode === "matches"
+        ? (sidebarTopRef.current?.offsetHeight ?? 0)
+        : 0;
+      const gap = 16;
+      const fallbackTop = sidebarMode === "players" ? 320 : 0;
+      const total = toggleH + gap + (topH || fallbackTop);
+      if (total > 0) setChatStretchHeight(total);
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    for (const node of [sidebarToggleRef.current, sidebarTopRef.current]) {
+      if (node) ro.observe(node);
+    }
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [sidebarMode, sidebarLoaded, summary, chat.offline, chat.backendStatus]);
 
   async function loadSidebarData() {
     if (!API_BASE) return;
@@ -99,6 +130,7 @@ export default function FootballMind() {
               setVenueMode={chat.setVenueMode}
               chatComp={chat.chatComp}
               apiBase={API_BASE}
+              stretchHeight={chatStretchHeight}
             />
           </div>
 
@@ -115,8 +147,10 @@ export default function FootballMind() {
 
         <aside className={`${sidebarMode === "players"
           ? mobilePanelClass(mobileTab, "players")
-          : mobilePanelClass(mobileTab, "fixtures")} md:max-w-[40%] md:basis-[40%] md:shrink-0`}>
-          <SidebarModeToggle mode={sidebarMode} setMode={(m) => { setSidebarMode(m); setMobileTab("chat"); }} />
+          : mobilePanelClass(mobileTab, "fixtures")} md:max-w-[40%] md:basis-[40%] md:shrink-0 flex flex-col gap-4`}>
+          <div ref={sidebarToggleRef}>
+            <SidebarModeToggle mode={sidebarMode} setMode={(m) => { setSidebarMode(m); setMobileTab("chat"); }} />
+          </div>
           {sidebarMode === "matches" ? (
             <MatchesSidebar
               summary={summary}
@@ -129,6 +163,7 @@ export default function FootballMind() {
               onSummary={setSummary}
               onCompChange={chat.handleCompChange}
               chatComp={chat.chatComp}
+              topSectionRef={sidebarTopRef}
             />
           ) : (
             <PlayersSidebar apiBase={API_BASE} offline={chat.offline} onAsk={chat.handlePlayerAsk} onCompChange={chat.handleCompChange} adminKey={adminKey} />
