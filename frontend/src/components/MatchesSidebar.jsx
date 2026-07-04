@@ -27,6 +27,7 @@ export default function MatchesSidebar({
         apiBase={apiBase}
         onSummary={onSummary}
         onCompChange={onCompChange}
+        offline={offline}
       />
       <BracketPanel apiBase={apiBase} offline={offline} defaultComp={chatComp === "CL" ? "CL" : "WC"} />
     </>
