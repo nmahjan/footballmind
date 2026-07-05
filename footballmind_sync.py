@@ -668,15 +668,33 @@ def _sync_side_lineup(cur, match_id, team_side, team_type, kind):
                  p.get("shirtNumber"), pos))
 
 
-def _sync_match_events(cur, match_id, m, team_type, kind):
-    cur.execute("DELETE FROM match_events WHERE match_id = %s", (match_id,))
-    cur.execute("DELETE FROM match_lineup_players WHERE match_id = %s", (match_id,))
-    cur.execute("DELETE FROM match_team_lineups WHERE match_id = %s", (match_id,))
+def _api_match_has_lineup(m: dict) -> bool:
+    """True when football-data.org returned at least one starting XI."""
+    return any(
+        (m.get(side) or {}).get("lineup")
+        for side in ("homeTeam", "awayTeam")
+    )
 
-    for side in ("homeTeam", "awayTeam"):
-        team_api = m.get(side) or {}
-        team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"])
-        _sync_side_lineup(cur, match_id, team_api, team_type, kind)
+
+def _api_match_has_events(m: dict) -> bool:
+    """True when football-data.org returned goals, cards, or subs to sync."""
+    return bool(m.get("goals") or m.get("bookings") or m.get("substitutions"))
+
+
+def _sync_match_events(cur, match_id, m, team_type, kind):
+    # Lineup-only responses are common on the free tier. Do not wipe goal
+    # timelines synced from ESPN when the API omits goals/bookings/subs.
+    if _api_match_has_events(m):
+        cur.execute("DELETE FROM match_events WHERE match_id = %s", (match_id,))
+
+    # Goals-only responses are common on the free tier (e.g. WC). Do not wipe
+    # lineups synced from ESPN or other sources when the API omits XIs.
+    if _api_match_has_lineup(m):
+        cur.execute("DELETE FROM match_lineup_players WHERE match_id = %s", (match_id,))
+        cur.execute("DELETE FROM match_team_lineups WHERE match_id = %s", (match_id,))
+        for side in ("homeTeam", "awayTeam"):
+            team_api = m.get(side) or {}
+            _sync_side_lineup(cur, match_id, team_api, team_type, kind)
 
     for goal in m.get("goals") or []:
         team_api = goal.get("team") or {}
@@ -804,7 +822,7 @@ def sync_match_details(conn, client, limit=20):
             m = client.match(external_id)
         except Exception:
             continue
-        has_detail = bool(m.get("goals") or (m.get("homeTeam") or {}).get("lineup"))
+        has_detail = bool(m.get("goals") or _api_match_has_lineup(m))
         with conn.cursor() as cur:
             if has_detail:
                 _sync_match_events(cur, match_id, m, team_type, kind)

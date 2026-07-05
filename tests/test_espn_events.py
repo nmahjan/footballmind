@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from footballmind_espn_wc import _stat_value, _sync_espn_key_events
+from footballmind_espn_wc import _espn_scoring_events, _stat_value, _sync_espn_key_events
 
 
 def test_stat_value_reads_saves():
@@ -34,3 +34,22 @@ def test_sync_key_events_inserts_goals():
     assert resolve.call_count == 2
     insert_sql = cur.execute.call_args_list[-1][0][0]
     assert "INSERT INTO match_events" in insert_sql
+
+
+def test_sync_key_events_skips_delete_without_scoring_plays():
+    summary = {"keyEvents": [{"scoringPlay": False, "type": {"type": "substitution"}}]}
+    cur = MagicMock()
+    n = _sync_espn_key_events(cur, 42, summary, {})
+    assert n == 0
+    delete_sql = [call[0][0] for call in cur.execute.call_args_list]
+    assert not any("DELETE FROM match_events" in s for s in delete_sql)
+
+
+def test_espn_scoring_events_filters_non_scoring():
+    summary = {
+        "keyEvents": [
+            {"scoringPlay": True, "type": {"type": "goal"}},
+            {"scoringPlay": False, "type": {"type": "yellowcard"}},
+        ],
+    }
+    assert len(_espn_scoring_events(summary)) == 1
