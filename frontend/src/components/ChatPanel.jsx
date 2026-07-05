@@ -33,6 +33,7 @@ export default function ChatPanel({
   setVenueMode,
   chatComp,
   apiBase,
+  stretchHeight,
 }) {
   const scroller = useRef(null);
   const showChips = messages.length === 0;
@@ -42,10 +43,20 @@ export default function ChatPanel({
     scroller.current?.scrollTo(0, scroller.current.scrollHeight);
   }, [messages, busy, loadPhase]);
 
+  const stretched = stretchHeight != null && stretchHeight > 0;
+
   return (
     <section
-      className="flex w-full shrink-0 flex-col rounded-xl border"
-      style={{ borderColor: C.line, background: C.panel2 }}>
+      className="flex w-full shrink-0 flex-col rounded-xl border md:min-h-0"
+      style={{
+        borderColor: C.line,
+        background: C.panel2,
+        ...(stretched ? {
+          minHeight: stretchHeight,
+          height: stretchHeight,
+          maxHeight: stretchHeight,
+        } : {}),
+      }}>
       <div className="flex items-center justify-between border-b px-4 py-2" style={{ borderColor: C.line }}>
         <span className="text-[10px] font-medium" style={{ color: C.mute }}>Chat</span>
         <button
@@ -61,10 +72,10 @@ export default function ChatPanel({
 
       <div
         ref={scroller}
-        className="space-y-4 overflow-y-auto p-4"
-        style={{ maxHeight: "min(420px, 52vh)" }}>
+        className={`space-y-4 overflow-y-auto p-4 ${stretched ? "min-h-0 flex-1" : ""} ${stretched && messages.length === 0 ? "flex flex-col justify-center" : ""}`}
+        style={stretched ? undefined : { maxHeight: "min(420px, 52vh)" }}>
         {messages.length === 0 && (
-          <div className="mt-6 text-center">
+          <div className={`text-center ${stretched ? "" : "mt-6"}`}>
             <div className="text-sm" style={{ color: C.chalk }}>
               {sidebarMode === "players"
                 ? "Ask about players, squads, or why a team works."

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Users/neilmahajan/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/brainstorming/scripts/start-server.sh:*)",
+      "Bash(pip install:*)",
+      "Bash(python -m pytest tests/test_data.py -v)",
+      "Bash(python app.py)",
+      "Bash(curl -s http://localhost:8083/)",
+      "Bash(python3 -c ':*)",
+      "Bash(python3:*)"
+    ]
+  }
+}

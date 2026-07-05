@@ -5,6 +5,35 @@ export const pct = (x) => `${Math.round((x || 0) * 100)}%`;
 export const outcomeColor = (label, home, away) =>
   label?.startsWith(home) ? C.home : label?.startsWith(away) ? C.away : C.draw;
 
+/** Style for a team name in the upcoming-fixtures list from a model preview. */
+export function fixtureTeamStyle(team, home, away, preview) {
+  if (!preview?.prediction) return { color: C.chalk };
+  const pred = preview.prediction;
+  if (pred === "Draw") return { color: C.draw };
+  const homePick = pred === home || pred.startsWith(home) || pred.includes(`${home} advance`);
+  const awayPick = pred === away || pred.startsWith(away) || pred.includes(`${away} advance`);
+  if (homePick) {
+    return team === home
+      ? { color: C.home, fontWeight: 600 }
+      : { color: C.away, opacity: 0.92 };
+  }
+  if (awayPick) {
+    return team === away
+      ? { color: C.home, fontWeight: 600 }
+      : { color: C.away, opacity: 0.92 };
+  }
+  return { color: C.chalk };
+}
+
+export function fixturePreviewLabel(preview) {
+  if (!preview?.prediction) return null;
+  if (preview.prediction === "Draw") return "Draw";
+  if (preview.is_knockout && preview.prediction.includes(" advance")) {
+    return preview.prediction.replace(" advance", "");
+  }
+  return preview.prediction;
+}
+
 export function fmtDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);

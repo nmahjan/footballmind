@@ -1,7 +1,23 @@
 import { useState, useEffect } from "react";
 import { C, flag } from "../fm/theme.js";
-import { pct, outcomeColor, fmtDate, localDayKey, dayHeaderLabel } from "../fm/format.js";
-import { STAGE_BADGE, FIXTURE_TABS, COMP_LABELS } from "../fm/demo.js";
+import { pct, outcomeColor, fmtDate, localDayKey, dayHeaderLabel, fixtureTeamStyle, fixturePreviewLabel } from "../fm/format.js";
+import { STAGE_BADGE, FIXTURE_TABS, COMP_LABELS, demoPredict } from "../fm/demo.js";
+
+function resolvePreview(f, offline) {
+  if (f.preview) return f.preview;
+  if (offline && f.home && f.away && !String(f.home).startsWith("TBD")) {
+    const p = demoPredict(f.home, f.away);
+    return {
+      prediction: p.prediction,
+      confidence: p.confidence,
+      home_win_prob: p.home_win_prob,
+      draw_prob: p.draw_prob,
+      away_win_prob: p.away_win_prob,
+      is_knockout: false,
+    };
+  }
+  return null;
+}
 
 function displayTeam(name) {
   if (!name || String(name).startsWith("TBD")) return "TBD";
@@ -33,9 +49,15 @@ function ResultScoreLine({ r }) {
   );
 }
 
-function FixtureRow({ f, comp, onClick }) {
+function FixtureRow({ f, comp, onClick, offline }) {
   const home = displayTeam(f.home);
   const away = displayTeam(f.away);
+  const preview = resolvePreview(f, offline);
+  const pick = fixturePreviewLabel(preview);
+  const homeStyle = fixtureTeamStyle(home, home, away, preview);
+  const awayStyle = fixtureTeamStyle(away, home, away, preview);
+  const scored = f.home_goals != null;
+
   return (
     <button onClick={() => onClick({ ...f, home, away, comp })}
       className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-opacity hover:opacity-70"
@@ -44,15 +66,28 @@ function FixtureRow({ f, comp, onClick }) {
         style={{ background: C.line, color: C.mute, minWidth: "2.25rem" }}>
         {STAGE_BADGE[f.stage] ?? "GS"}
       </span>
-      <span className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium" style={{ color: C.chalk }}>
-        <span className="truncate">{flag(home)}{home}</span>
+      <span className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium">
+        <span className="truncate" style={homeStyle}>{flag(home)}{home}</span>
         <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>vs</span>
-        <span className="truncate">{flag(away)}{away}</span>
+        <span className="truncate" style={awayStyle}>{flag(away)}{away}</span>
       </span>
       {f.live && <span className="shrink-0 animate-pulse text-[9px] font-bold" style={{ color: C.away }}>LIVE</span>}
-      {f.home_goals != null
-        ? <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: C.home }}>{f.home_goals}–{f.away_goals}</span>
-        : <span className="shrink-0 text-[10px] whitespace-nowrap" style={{ color: C.mute }}>{fmtDate(f.match_date)}</span>}
+      {scored ? (
+        <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: C.home }}>{f.home_goals}–{f.away_goals}</span>
+      ) : (
+        <span className="flex shrink-0 flex-col items-end gap-0.5">
+          {pick && (
+            <span className="rounded px-1.5 py-0.5 text-[9px] font-bold tabular-nums"
+              style={{
+                background: pick === "Draw" ? "rgba(154,167,178,0.15)" : "rgba(52,211,153,0.12)",
+                color: pick === "Draw" ? C.draw : C.home,
+              }}>
+              {pick === "Draw" ? "Draw" : `${flag(pick)}${pick}`} · {pct(preview.confidence)}
+            </span>
+          )}
+          <span className="text-[10px] whitespace-nowrap" style={{ color: C.mute }}>{fmtDate(f.match_date)}</span>
+        </span>
+      )}
     </button>
   );
 }
@@ -144,7 +179,7 @@ function PredictionResultsView({ apiBase, comp = "WC", onSummary }) {
   );
 }
 
-export default function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, apiBase, onSummary, onCompChange }) {
+export default function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onClickFixture, apiBase, onSummary, onCompChange, offline }) {
   const [view, setView] = useState("upcoming");
   const [tab, setTab] = useState("WC");
   // Lazy-loaded tabs only (WC/PL come from parent after async fetch)
@@ -163,7 +198,7 @@ export default function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onC
     onCompChange?.(code);
     if (code === "WC" || code === "PL" || loaded.has(code) || !apiBase) return;
     setLoading(true);
-    fetch(`${apiBase}/api/fixtures?comp=${code}&limit=16`)
+    fetch(`${apiBase}/api/fixtures?comp=${code}&limit=16&preview=1`)
       .then((r) => r.json())
       .then((d) => setCache((c) => ({ ...c, [code]: d.fixtures ?? [] })))
       .catch(() => setCache((c) => ({ ...c, [code]: [] })))
@@ -189,6 +224,11 @@ export default function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onC
           <>
             <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
               Upcoming Fixtures
+            </div>
+            <div className="mb-2 text-[10px]" style={{ color: C.mute }}>
+              <span style={{ color: C.home }}>Green</span> = model pick ·{" "}
+              <span style={{ color: C.away }}>Orange</span> = underdog ·{" "}
+              <span style={{ color: C.draw }}>Gray</span> = draw
             </div>
             <div className="flex gap-1 overflow-x-auto pb-2" style={{ scrollbarWidth: "none" }}>
               {FIXTURE_TABS.map(({ code, label }) => (
@@ -246,7 +286,7 @@ export default function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onC
                 </div>
                 {games.map((f, i) => (
                   <div key={i} style={{ borderTop: `1px solid ${C.line}` }}>
-                    <FixtureRow f={f} comp={tab} onClick={onClickFixture} />
+                    <FixtureRow f={f} comp={tab} onClick={onClickFixture} offline={offline} />
                   </div>
                 ))}
               </div>

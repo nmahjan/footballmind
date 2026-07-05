@@ -425,11 +425,16 @@ uvicorn footballmind_asgi:app --reload --port 8000
 
 # Frontend
 cd frontend && cp .env.example .env   # VITE_API_BASE=http://127.0.0.1:8000
-npm install && npm run dev
+npm ci && npm run dev
+
+# Frontend tests + production smoke check
+cd frontend && npm ci && npm test && npm run build && npm run preview
+# open http://127.0.0.1:4173/footballmind/ — chat header and input should render
 ```
 
 ```bash
-python -m pytest tests/ -q   # intent parser unit tests (no DB)
+python -m pytest tests/ -q   # backend unit tests (no DB)
+cd frontend && npm ci && npm test   # Vitest (fm/* helpers + deeplink)
 ```
 
 ---
@@ -541,6 +546,13 @@ If you already have a Render web service, updating does **not** break the site:
 - [ ] Add `MCP_API_KEY` (optional — only secures `/mcp`)
 - [ ] Confirm `/api/health` returns `{"status":"ok"}` after deploy
 
+### GitHub Pages (frontend)
+
+- **Live URL:** [nmahjan.github.io/footballmind](https://nmahjan.github.io/footballmind) — built from `frontend/` on every push to `main` (`deploy-pages` workflow).
+- **Repo variable:** set `VITE_API_BASE` under **Settings → Secrets and variables → Actions → Variables** to your Render URL (e.g. `https://football-mind.onrender.com`). Without it, the UI runs in offline demo mode.
+- **Manual redeploy:** Actions → **deploy-pages** → **Run workflow** (useful if a deploy job failed while the build succeeded).
+- **Blank page after deploy:** open DevTools → Console. A runtime error (e.g. missing React hook import) prevents the app from mounting — `#root` stays empty even though `index.html` loads. Fix the JS error, push to `main`, and wait for `deploy-pages` to finish. Smoke-test locally with `npm run build && npm run preview` before merging.
+
 ---
 
 ## Key design decisions
@@ -558,3 +570,4 @@ If you already have a Render web service, updating does **not** break the site:
 
 GNU Affero General Public License v3.0 — see [LICENSE](LICENSE) for details.
 If you run a modified version of this software as a network service, you must publish your source code under the same license.
+test line

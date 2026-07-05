@@ -14,11 +14,14 @@ export default function MatchesSidebar({
   onSummary,
   onCompChange,
   chatComp,
+  topSectionRef,
 }) {
   return (
     <>
-      <CalibrationPanel summary={summary} apiBase={apiBase} offline={offline} />
-      <SyncHealthPanel apiBase={apiBase} offline={offline} />
+      <div ref={topSectionRef} className="flex flex-col gap-4">
+        <CalibrationPanel summary={summary} apiBase={apiBase} offline={offline} />
+        <SyncHealthPanel apiBase={apiBase} offline={offline} />
+      </div>
       <FixturesPanel
         initialWc={wcFixtures}
         initialPl={plFixtures}
@@ -27,6 +30,7 @@ export default function MatchesSidebar({
         apiBase={apiBase}
         onSummary={onSummary}
         onCompChange={onCompChange}
+        offline={offline}
       />
       <BracketPanel apiBase={apiBase} offline={offline} defaultComp={chatComp === "CL" ? "CL" : "WC"} />
     </>

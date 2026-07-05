@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basketball Stats Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: system-ui, sans-serif;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 1.5rem;
+    }
+
+    .table-wrapper {
+      overflow-x: auto;
+      border-radius: 8px;
+      border: 1px solid #1e293b;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    thead tr {
+      background: #1e293b;
+    }
+
+    th {
+      padding: 10px 14px;
+      text-align: right;
+      color: #94a3b8;
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+      border-bottom: 1px solid #334155;
+    }
+
+    th:first-child, th:nth-child(2) { text-align: left; }
+    th:hover { color: #e2e8f0; }
+
+    th .arrow { margin-left: 4px; font-style: normal; }
+    th.sort-asc  .arrow::after { content: '↑'; opacity: 1; }
+    th.sort-desc .arrow::after { content: '↓'; opacity: 1; }
+    th:not(.sort-asc):not(.sort-desc) .arrow::after { content: '↕'; opacity: 0.35; }
+
+    tbody tr:nth-child(odd)  { background: #1e293b; }
+    tbody tr:nth-child(even) { background: #0f172a; }
+    tbody tr:hover           { background: #263348; }
+
+    td {
+      padding: 9px 14px;
+      text-align: right;
+      color: #e2e8f0;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    td:first-child, td:nth-child(2) { text-align: left; }
+    td:first-child { font-weight: 600; }
+
+    /* Top 3 PER */
+    tr.row-top {
+      background: rgba(34, 197, 94, 0.08) !important;
+    }
+    tr.row-top td:first-child { color: #4ade80; border-left: 3px solid #22c55e; }
+    td.cell-top  { color: #4ade80; font-weight: 700; }
+
+    /* Bottom 3 PER */
+    tr.row-bottom {
+      background: rgba(239, 68, 68, 0.08) !important;
+    }
+    tr.row-bottom td:first-child { color: #f87171; border-left: 3px solid #ef4444; }
+    td.cell-bottom { color: #f87171; font-weight: 700; }
+
+    .legend {
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      color: #64748b;
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      display: inline-block; margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    @media (max-width: 600px) {
+      body { padding: 1rem 0.5rem; }
+      h1 { font-size: 1.2rem; }
+      th, td { padding: 6px 6px; font-size: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Basketball Stats Dashboard</h1>
+
+  <div class="table-wrapper">
+    <table id="stats-table">
+      <thead>
+        <tr>
+          
+          <th onclick="sortTable('player_name')" data-col="player_name">
+            Player<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('team')" data-col="team">
+            Team<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('points')" data-col="points">
+            PTS<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('rebounds')" data-col="rebounds">
+            REB<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('assists')" data-col="assists">
+            AST<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('turnovers')" data-col="turnovers">
+            TOV<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('field_goal_pct')" data-col="field_goal_pct">
+            FG%<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('three_point_pct')" data-col="three_point_pct">
+            3P%<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('free_throw_pct')" data-col="free_throw_pct">
+            FT%<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('true_shooting_pct')" data-col="true_shooting_pct">
+            TS%<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('assist_to_turnover_ratio')" data-col="assist_to_turnover_ratio">
+            AST/TOV<span class="arrow"></span>
+          </th>
+          
+          <th onclick="sortTable('per')" data-col="per">
+            PER<span class="arrow"></span>
+          </th>
+          
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        
+        <tr class="row-top"
+            >
+          
+          <td>
+            Jaylen Carter
+          </td>
+          
+          <td>
+            Duke
+          </td>
+          
+          <td>
+            24.3
+          </td>
+          
+          <td>
+            8.1
+          </td>
+          
+          <td>
+            3.2
+          </td>
+          
+          <td>
+            2.1
+          </td>
+          
+          <td>
+            0.512
+          </td>
+          
+          <td>
+            0.381
+          </td>
+          
+          <td>
+            0.774
+          </td>
+          
+          <td>
+            0.198
+          </td>
+          
+          <td>
+            1.52
+          </td>
+          
+          <td class="cell-top">
+            1.12
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Marcus Webb
+          </td>
+          
+          <td>
+            Kentucky
+          </td>
+          
+          <td>
+            18.7
+          </td>
+          
+          <td>
+            5.4
+          </td>
+          
+          <td>
+            7.8
+          </td>
+          
+          <td>
+            3.4
+          </td>
+          
+          <td>
+            0.448
+          </td>
+          
+          <td>
+            0.362
+          </td>
+          
+          <td>
+            0.811
+          </td>
+          
+          <td>
+            0.18
+          </td>
+          
+          <td>
+            2.29
+          </td>
+          
+          <td >
+            0.95
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Darius Stone
+          </td>
+          
+          <td>
+            Kansas
+          </td>
+          
+          <td>
+            21.5
+          </td>
+          
+          <td>
+            9.8
+          </td>
+          
+          <td>
+            2.1
+          </td>
+          
+          <td>
+            1.8
+          </td>
+          
+          <td>
+            0.534
+          </td>
+          
+          <td>
+            0.291
+          </td>
+          
+          <td>
+            0.692
+          </td>
+          
+          <td>
+            0.199
+          </td>
+          
+          <td>
+            1.17
+          </td>
+          
+          <td >
+            1.05
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Tre&#39;von Miles
+          </td>
+          
+          <td>
+            Gonzaga
+          </td>
+          
+          <td>
+            15.2
+          </td>
+          
+          <td>
+            3.9
+          </td>
+          
+          <td>
+            9.4
+          </td>
+          
+          <td>
+            4.2
+          </td>
+          
+          <td>
+            0.423
+          </td>
+          
+          <td>
+            0.401
+          </td>
+          
+          <td>
+            0.855
+          </td>
+          
+          <td>
+            0.174
+          </td>
+          
+          <td>
+            2.24
+          </td>
+          
+          <td >
+            0.81
+          </td>
+          
+        </tr>
+        
+        <tr class="row-top"
+            >
+          
+          <td>
+            Antoine Brooks
+          </td>
+          
+          <td>
+            Houston
+          </td>
+          
+          <td>
+            28.1
+          </td>
+          
+          <td>
+            6.2
+          </td>
+          
+          <td>
+            4.5
+          </td>
+          
+          <td>
+            2.7
+          </td>
+          
+          <td>
+            0.571
+          </td>
+          
+          <td>
+            0.344
+          </td>
+          
+          <td>
+            0.731
+          </td>
+          
+          <td>
+            0.212
+          </td>
+          
+          <td>
+            1.67
+          </td>
+          
+          <td class="cell-top">
+            1.2
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Caleb Nwaneri
+          </td>
+          
+          <td>
+            UConn
+          </td>
+          
+          <td>
+            11.4
+          </td>
+          
+          <td>
+            11.3
+          </td>
+          
+          <td>
+            1.8
+          </td>
+          
+          <td>
+            1.2
+          </td>
+          
+          <td>
+            0.489
+          </td>
+          
+          <td>
+            0.182
+          </td>
+          
+          <td>
+            0.643
+          </td>
+          
+          <td>
+            0.183
+          </td>
+          
+          <td>
+            1.5
+          </td>
+          
+          <td >
+            0.78
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Jordan Phelps
+          </td>
+          
+          <td>
+            Purdue
+          </td>
+          
+          <td>
+            19.8
+          </td>
+          
+          <td>
+            4.7
+          </td>
+          
+          <td>
+            6.1
+          </td>
+          
+          <td>
+            2.9
+          </td>
+          
+          <td>
+            0.461
+          </td>
+          
+          <td>
+            0.412
+          </td>
+          
+          <td>
+            0.888
+          </td>
+          
+          <td>
+            0.188
+          </td>
+          
+          <td>
+            2.1
+          </td>
+          
+          <td >
+            0.92
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Malik Osei
+          </td>
+          
+          <td>
+            Arizona
+          </td>
+          
+          <td>
+            22.6
+          </td>
+          
+          <td>
+            7.3
+          </td>
+          
+          <td>
+            3.7
+          </td>
+          
+          <td>
+            3.1
+          </td>
+          
+          <td>
+            0.503
+          </td>
+          
+          <td>
+            0.358
+          </td>
+          
+          <td>
+            0.761
+          </td>
+          
+          <td>
+            0.195
+          </td>
+          
+          <td>
+            1.19
+          </td>
+          
+          <td >
+            1.02
+          </td>
+          
+        </tr>
+        
+        <tr class="row-bottom">
+          
+          <td>
+            Devon Hartley
+          </td>
+          
+          <td>
+            Tennessee
+          </td>
+          
+          <td>
+            9.3
+          </td>
+          
+          <td>
+            12.7
+          </td>
+          
+          <td>
+            1.4
+          </td>
+          
+          <td>
+            1.1
+          </td>
+          
+          <td>
+            0.447
+          </td>
+          
+          <td>
+            0.143
+          </td>
+          
+          <td>
+            0.571
+          </td>
+          
+          <td>
+            0.166
+          </td>
+          
+          <td>
+            1.27
+          </td>
+          
+          <td class="cell-bottom">
+            0.74
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Chris Lamonte
+          </td>
+          
+          <td>
+            Baylor
+          </td>
+          
+          <td>
+            16.5
+          </td>
+          
+          <td>
+            5.1
+          </td>
+          
+          <td>
+            8.2
+          </td>
+          
+          <td>
+            3.8
+          </td>
+          
+          <td>
+            0.432
+          </td>
+          
+          <td>
+            0.389
+          </td>
+          
+          <td>
+            0.822
+          </td>
+          
+          <td>
+            0.175
+          </td>
+          
+          <td>
+            2.16
+          </td>
+          
+          <td >
+            0.87
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Elijah Thomas
+          </td>
+          
+          <td>
+            Michigan St
+          </td>
+          
+          <td>
+            25.9
+          </td>
+          
+          <td>
+            6.8
+          </td>
+          
+          <td>
+            2.9
+          </td>
+          
+          <td>
+            2.3
+          </td>
+          
+          <td>
+            0.558
+          </td>
+          
+          <td>
+            0.312
+          </td>
+          
+          <td>
+            0.708
+          </td>
+          
+          <td>
+            0.207
+          </td>
+          
+          <td>
+            1.26
+          </td>
+          
+          <td >
+            1.11
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Samson Adeyemi
+          </td>
+          
+          <td>
+            Alabama
+          </td>
+          
+          <td>
+            13.7
+          </td>
+          
+          <td>
+            10.4
+          </td>
+          
+          <td>
+            2.3
+          </td>
+          
+          <td>
+            2.8
+          </td>
+          
+          <td>
+            0.471
+          </td>
+          
+          <td>
+            0.211
+          </td>
+          
+          <td>
+            0.654
+          </td>
+          
+          <td>
+            0.179
+          </td>
+          
+          <td>
+            0.82
+          </td>
+          
+          <td >
+            0.79
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Zach Kowalski
+          </td>
+          
+          <td>
+            Creighton
+          </td>
+          
+          <td>
+            17.3
+          </td>
+          
+          <td>
+            4.2
+          </td>
+          
+          <td>
+            5.6
+          </td>
+          
+          <td>
+            2.6
+          </td>
+          
+          <td>
+            0.445
+          </td>
+          
+          <td>
+            0.437
+          </td>
+          
+          <td>
+            0.901
+          </td>
+          
+          <td>
+            0.183
+          </td>
+          
+          <td>
+            2.15
+          </td>
+          
+          <td >
+            0.82
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Omari Jackson
+          </td>
+          
+          <td>
+            Florida
+          </td>
+          
+          <td>
+            20.1
+          </td>
+          
+          <td>
+            7.9
+          </td>
+          
+          <td>
+            4.1
+          </td>
+          
+          <td>
+            2.8
+          </td>
+          
+          <td>
+            0.519
+          </td>
+          
+          <td>
+            0.333
+          </td>
+          
+          <td>
+            0.745
+          </td>
+          
+          <td>
+            0.199
+          </td>
+          
+          <td>
+            1.46
+          </td>
+          
+          <td >
+            0.98
+          </td>
+          
+        </tr>
+        
+        <tr class="row-bottom">
+          
+          <td>
+            Preston Yue
+          </td>
+          
+          <td>
+            Saint Mary&#39;s
+          </td>
+          
+          <td>
+            8.6
+          </td>
+          
+          <td>
+            3.1
+          </td>
+          
+          <td>
+            10.7
+          </td>
+          
+          <td>
+            4.9
+          </td>
+          
+          <td>
+            0.398
+          </td>
+          
+          <td>
+            0.421
+          </td>
+          
+          <td>
+            0.863
+          </td>
+          
+          <td>
+            0.165
+          </td>
+          
+          <td>
+            2.18
+          </td>
+          
+          <td class="cell-bottom">
+            0.58
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Dante Simmons
+          </td>
+          
+          <td>
+            Texas Tech
+          </td>
+          
+          <td>
+            23.4
+          </td>
+          
+          <td>
+            8.6
+          </td>
+          
+          <td>
+            3.3
+          </td>
+          
+          <td>
+            1.9
+          </td>
+          
+          <td>
+            0.544
+          </td>
+          
+          <td>
+            0.276
+          </td>
+          
+          <td>
+            0.717
+          </td>
+          
+          <td>
+            0.204
+          </td>
+          
+          <td>
+            1.74
+          </td>
+          
+          <td >
+            1.11
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Kwame Asare
+          </td>
+          
+          <td>
+            Marquette
+          </td>
+          
+          <td>
+            14.8
+          </td>
+          
+          <td>
+            9.2
+          </td>
+          
+          <td>
+            3.8
+          </td>
+          
+          <td>
+            2.2
+          </td>
+          
+          <td>
+            0.478
+          </td>
+          
+          <td>
+            0.251
+          </td>
+          
+          <td>
+            0.682
+          </td>
+          
+          <td>
+            0.183
+          </td>
+          
+          <td>
+            1.73
+          </td>
+          
+          <td >
+            0.85
+          </td>
+          
+        </tr>
+        
+        <tr >
+          
+          <td>
+            Brendan Foley
+          </td>
+          
+          <td>
+            Illinois
+          </td>
+          
+          <td>
+            18.2
+          </td>
+          
+          <td>
+            5.5
+          </td>
+          
+          <td>
+            7.1
+          </td>
+          
+          <td>
+            3.6
+          </td>
+          
+          <td>
+            0.451
+          </td>
+          
+          <td>
+            0.395
+          </td>
+          
+          <td>
+            0.839
+          </td>
+          
+          <td>
+            0.182
+          </td>
+          
+          <td>
+            1.97
+          </td>
+          
+          <td >
+            0.91
+          </td>
+          
+        </tr>
+        
+        <tr class="row-bottom">
+          
+          <td>
+            Raul Gutierrez
+          </td>
+          
+          <td>
+            San Diego St
+          </td>
+          
+          <td>
+            12.9
+          </td>
+          
+          <td>
+            4.8
+          </td>
+          
+          <td>
+            6.4
+          </td>
+          
+          <td>
+            3.3
+          </td>
+          
+          <td>
+            0.419
+          </td>
+          
+          <td>
+            0.368
+          </td>
+          
+          <td>
+            0.791
+          </td>
+          
+          <td>
+            0.17
+          </td>
+          
+          <td>
+            1.94
+          </td>
+          
+          <td class="cell-bottom">
+            0.69
+          </td>
+          
+        </tr>
+        
+        <tr class="row-top"
+            >
+          
+          <td>
+            Tyrese Moon
+          </td>
+          
+          <td>
+            Auburn
+          </td>
+          
+          <td>
+            26.7
+          </td>
+          
+          <td>
+            7.1
+          </td>
+          
+          <td>
+            4.8
+          </td>
+          
+          <td>
+            3.0
+          </td>
+          
+          <td>
+            0.563
+          </td>
+          
+          <td>
+            0.329
+          </td>
+          
+          <td>
+            0.752
+          </td>
+          
+          <td>
+            0.212
+          </td>
+          
+          <td>
+            1.6
+          </td>
+          
+          <td class="cell-top">
+            1.19
+          </td>
+          
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot" style="background:#22c55e"></span>Top 3 PER</span>
+    <span><span class="dot" style="background:#ef4444"></span>Bottom 3 PER</span>
+  </div>
+
+  <script>
+    const COLUMNS = [["player_name", "Player"], ["team", "Team"], ["points", "PTS"], ["rebounds", "REB"], ["assists", "AST"], ["turnovers", "TOV"], ["field_goal_pct", "FG%"], ["three_point_pct", "3P%"], ["free_throw_pct", "FT%"], ["true_shooting_pct", "TS%"], ["assist_to_turnover_ratio", "AST/TOV"], ["per", "PER"]];
+    let sortState = { col: null, asc: true };
+
+    function sortTable(colKey) {
+      const tbody = document.getElementById('table-body');
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      const colIndex = COLUMNS.findIndex(([k]) => k === colKey);
+
+      sortState.asc = sortState.col === colKey ? !sortState.asc : true;
+      sortState.col = colKey;
+
+      const stringCols = new Set(['player_name', 'team']);
+
+      rows.sort((a, b) => {
+        const aVal = a.cells[colIndex].textContent.trim();
+        const bVal = b.cells[colIndex].textContent.trim();
+        const cmp = stringCols.has(colKey)
+          ? aVal.localeCompare(bVal)
+          : parseFloat(aVal) - parseFloat(bVal);
+        return sortState.asc ? cmp : -cmp;
+      });
+
+      rows.forEach(r => tbody.appendChild(r));
+
+      document.querySelectorAll('th').forEach((th, i) => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (COLUMNS[i][0] === colKey) {
+          th.classList.add(sortState.asc ? 'sort-asc' : 'sort-desc');
+        }
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<h2>Table Visual Style</h2>
+<p class="subtitle">Which look feels right for the basketball stats dashboard?</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;font-family:system-ui,sans-serif;font-size:11px;">
+        <div style="background:#1a56db;color:#fff;padding:10px 14px;font-size:13px;font-weight:700;">Basketball Stats Dashboard</div>
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="background:#f1f5f9;">
+              <th style="padding:6px 10px;text-align:left;color:#475569;font-weight:600;border-bottom:2px solid #e2e8f0;">Player</th>
+              <th style="padding:6px 10px;text-align:left;color:#475569;font-weight:600;border-bottom:2px solid #e2e8f0;">Team</th>
+              <th style="padding:6px 10px;text-align:right;color:#475569;font-weight:600;border-bottom:2px solid #e2e8f0;">PTS</th>
+              <th style="padding:6px 10px;text-align:right;color:#475569;font-weight:600;border-bottom:2px solid #e2e8f0;">PER</th>
+              <th style="padding:6px 10px;text-align:right;color:#475569;font-weight:600;border-bottom:2px solid #e2e8f0;">TS%</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="background:#dcfce7;">
+              <td style="padding:5px 10px;color:#166534;font-weight:600;">Antoine Brooks</td>
+              <td style="padding:5px 10px;color:#166534;">Houston</td>
+              <td style="padding:5px 10px;text-align:right;color:#166534;">28.1</td>
+              <td style="padding:5px 10px;text-align:right;color:#166534;font-weight:700;">1.22</td>
+              <td style="padding:5px 10px;text-align:right;color:#166534;">0.581</td>
+            </tr>
+            <tr style="background:#fff;">
+              <td style="padding:5px 10px;color:#1e293b;">Elijah Thomas</td>
+              <td style="padding:5px 10px;color:#64748b;">Michigan St</td>
+              <td style="padding:5px 10px;text-align:right;color:#1e293b;">25.9</td>
+              <td style="padding:5px 10px;text-align:right;color:#1e293b;">1.15</td>
+              <td style="padding:5px 10px;text-align:right;color:#1e293b;">0.563</td>
+            </tr>
+            <tr style="background:#f8fafc;">
+              <td style="padding:5px 10px;color:#1e293b;">Tyrese Moon</td>
+              <td style="padding:5px 10px;color:#64748b;">Auburn</td>
+              <td style="padding:5px 10px;text-align:right;color:#1e293b;">26.7</td>
+              <td style="padding:5px 10px;text-align:right;color:#1e293b;">1.19</td>
+              <td style="padding:5px 10px;text-align:right;color:#1e293b;">0.572</td>
+            </tr>
+            <tr style="background:#fee2e2;">
+              <td style="padding:5px 10px;color:#991b1b;">Preston Yue</td>
+              <td style="padding:5px 10px;color:#991b1b;">Saint Mary's</td>
+              <td style="padding:5px 10px;text-align:right;color:#991b1b;">8.6</td>
+              <td style="padding:5px 10px;text-align:right;color:#991b1b;font-weight:700;">0.69</td>
+              <td style="padding:5px 10px;text-align:right;color:#991b1b;">0.412</td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="padding:8px 14px;color:#94a3b8;font-size:10px;">Green = Top 3 PER · Red = Bottom 3 PER</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Clean Light</h3>
+      <p>White background, blue header, subtle row striping, green/red highlights on the entire row</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#0f172a;border-radius:8px;overflow:hidden;font-family:system-ui,sans-serif;font-size:11px;">
+        <div style="background:#1e293b;color:#e2e8f0;padding:10px 14px;font-size:13px;font-weight:700;border-bottom:1px solid #334155;">🏀 Basketball Stats Dashboard</div>
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="background:#1e293b;">
+              <th style="padding:6px 10px;text-align:left;color:#94a3b8;font-weight:600;border-bottom:1px solid #334155;">Player</th>
+              <th style="padding:6px 10px;text-align:left;color:#94a3b8;font-weight:600;border-bottom:1px solid #334155;">Team</th>
+              <th style="padding:6px 10px;text-align:right;color:#94a3b8;font-weight:600;border-bottom:1px solid #334155;">PTS</th>
+              <th style="padding:6px 10px;text-align:right;color:#94a3b8;font-weight:600;border-bottom:1px solid #334155;">PER</th>
+              <th style="padding:6px 10px;text-align:right;color:#94a3b8;font-weight:600;border-bottom:1px solid #334155;">TS%</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="background:rgba(34,197,94,0.12);border-left:3px solid #22c55e;">
+              <td style="padding:5px 10px;color:#4ade80;font-weight:600;">Antoine Brooks</td>
+              <td style="padding:5px 10px;color:#4ade80;">Houston</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">28.1</td>
+              <td style="padding:5px 10px;text-align:right;color:#4ade80;font-weight:700;">1.22</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">0.581</td>
+            </tr>
+            <tr style="background:#1e293b;">
+              <td style="padding:5px 10px;color:#e2e8f0;">Elijah Thomas</td>
+              <td style="padding:5px 10px;color:#64748b;">Michigan St</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">25.9</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">1.15</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">0.563</td>
+            </tr>
+            <tr style="background:#0f172a;">
+              <td style="padding:5px 10px;color:#e2e8f0;">Tyrese Moon</td>
+              <td style="padding:5px 10px;color:#64748b;">Auburn</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">26.7</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">1.19</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">0.572</td>
+            </tr>
+            <tr style="background:rgba(239,68,68,0.12);border-left:3px solid #ef4444;">
+              <td style="padding:5px 10px;color:#f87171;font-weight:600;">Preston Yue</td>
+              <td style="padding:5px 10px;color:#f87171;">Saint Mary's</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">8.6</td>
+              <td style="padding:5px 10px;text-align:right;color:#f87171;font-weight:700;">0.69</td>
+              <td style="padding:5px 10px;text-align:right;color:#e2e8f0;">0.412</td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="padding:8px 14px;color:#475569;font-size:10px;">Green = Top 3 PER · Red = Bottom 3 PER</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Dark Dashboard</h3>
+      <p>Dark background, accent border on highlighted rows, glowing green/red text for PER leaders</p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basketball Stats</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      padding: 32px 16px;
+      color: #1a1a2e;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 8px;
+      font-size: 1.8rem;
+      color: #1a1a2e;
+    }
+    .legend {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      font-size: 0.85rem;
+    }
+    .legend span { display: flex; align-items: center; gap: 6px; }
+    .swatch { width: 14px; height: 14px; border-radius: 3px; }
+    .swatch-top    { background: #c8f7c5; border: 1px solid #62c462; }
+    .swatch-bottom { background: #fdd;    border: 1px solid #e66; }
+    .table-wrapper {
+      overflow-x: auto;
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background: #fff;
+      font-size: 0.85rem;
+    }
+    thead th {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 12px 14px;
+      text-align: left;
+      white-space: nowrap;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+    tbody tr:nth-child(even) { background: #f8f9fb; }
+    tbody tr:hover { filter: brightness(0.97); }
+    tbody td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #e8e8e8;
+      white-space: nowrap;
+    }
+    tr.top    td { background: #c8f7c5 !important; }
+    tr.bottom td { background: #fdd    !important; }
+  </style>
+</head>
+<body>
+  <h1>Basketball Player Stats</h1>
+  <div class="legend">
+    <span><span class="swatch swatch-top"></span> Top 3 by PER</span>
+    <span><span class="swatch swatch-bottom"></span> Bottom 3 by PER</span>
+  </div>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          {% for col in columns %}
+          <th>{{ col.replace('_', ' ').title() }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for css, row in rows %}
+        <tr class="{{ css }}">
+          {% for col in columns %}
+          <td>{{ row[col] if row[col] is not none else '&mdash;' }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
