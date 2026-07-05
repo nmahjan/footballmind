@@ -13,20 +13,39 @@ to the canned help reply when no key is set.
 import os
 import json
 
+from footballmind_services import COMP_LABELS, SUPPORTED_COMP_CODES
+
 MODEL = os.environ.get("FOOTBALLMIND_LLM_MODEL", "anthropic/claude-sonnet-4-6")
 MAX_TOOL_ROUNDS = 4
 
+_COMP_LIST = ", ".join(
+    f"{COMP_LABELS[c]} ({c})" for c in
+    ("PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC")
+)
+_COMP_CODES = ", ".join(sorted(SUPPORTED_COMP_CODES))
+
 SYSTEM = (
     "You are FootballMind, a football (soccer) intelligence assistant covering "
-    "the Premier League, Champions League, and World Cup. Use the tools for any "
-    "prediction, standings, squad, or player question; never invent probabilities, "
-    "tables, or player facts. When discussing players, use search_players or "
-    "get_team_squad for real squad data, then explain their role and why the "
-    "team works tactically based on team rating and squad composition. "
+    f"{_COMP_LIST}. Use the tools for any prediction, standings, squad, or player "
+    "question; never invent probabilities, tables, or player facts. "
+    "Competition codes: " + _COMP_CODES + ". "
+    "When discussing players, use search_players, get_player_profile, or "
+    "compare_players for real stats and squad data. Player comp stats use synced "
+    "season data (current season first, then the best past synced season in that "
+    "competition). For 'compare X vs Y' or 'who is better', call compare_players. "
+    "For follow-ups like 'what about in La Liga', call compare_players with comp=PD "
+    "and the same player names from the prior turn. "
+    "If a tool returns player_not_found or compare_failed, answer from context "
+    "or explain what data is unavailable — never quote the raw error as the reply. "
+    "When discussing teams, use get_team_squad and explain roles tactically from "
+    "ratings and squad composition. "
     "Be concise: 1-3 sentences unless the user asks for detail (player/team "
     "questions may use a few short paragraphs). If using structure, put each "
     "heading on its own line; avoid long horizontal rules. If a question "
-    "is outside football, say so briefly."
+    "is outside football, say so briefly. "
+    "IMPORTANT: Short follow-ups like 'explain', 'why?', or 'tell me more' refer "
+    "to the previous turn — read the conversation history and elaborate on that "
+    "topic. Never ask the user to rephrase when history makes their intent clear."
 )
 
 TOOLS = [
@@ -47,6 +66,9 @@ TOOLS = [
                                        "round_of_16", "quarter_final", "semi_final",
                                        "third_place", "final"],
                               "default": "regular_season"},
+                    "comp": {"type": "string",
+                             "description": "Competition code for stakes context: "
+                                            f"{_COMP_CODES}"},
                 },
                 "required": ["home_team", "away_team"],
             },
@@ -57,7 +79,7 @@ TOOLS = [
         "function": {
             "name": "get_standings",
             "description": "Current league table computed from results. "
-                           "comp is a competition code: PL, CL, or WC.",
+                           f"comp codes: {_COMP_CODES}.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -79,7 +101,7 @@ TOOLS = [
                 "properties": {
                     "query": {"type": "string", "description": "Player name or fragment"},
                     "comp": {"type": "string",
-                             "description": "Optional comp filter: WC, PL, CL, etc."},
+                             "description": f"Competition code ({_COMP_CODES})"},
                 },
                 "required": ["query"],
             },
@@ -96,7 +118,7 @@ TOOLS = [
                 "properties": {
                     "team": {"type": "string"},
                     "comp": {"type": "string",
-                             "description": "Optional comp: WC, PL, CL, etc."},
+                             "description": f"Competition code ({_COMP_CODES})"},
                 },
                 "required": ["team"],
             },
@@ -129,6 +151,43 @@ TOOLS = [
                     "comp": {"type": "string", "default": "PL"},
                     "limit": {"type": "integer", "default": 15},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_player_profile",
+            "description": "Look up one player by name: position, team, age, "
+                           "goals/assists when synced.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "comp": {"type": "string",
+                             "description": "Optional: WC, PL, CL, etc."},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compare_players",
+            "description": "Compare two players side-by-side: stats, position, "
+                           "team, age. Uses synced season stats (current or best "
+                           "past season in that comp). Use for 'X vs Y', comp "
+                           "switch follow-ups, 'who is better', etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "player_a": {"type": "string"},
+                    "player_b": {"type": "string"},
+                    "comp": {"type": "string",
+                             "description": f"Competition for stats ({_COMP_CODES})"},
+                },
+                "required": ["player_a", "player_b"],
             },
         },
     },
@@ -213,24 +272,65 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
 
     venue = "neutral venue" if prediction.get("neutral") else f"{home}'s home ground"
 
+    stakes = prediction.get("stakes") or {}
+    stakes_lines = []
+    for lbl in stakes.get("labels") or []:
+        stakes_lines.append(f"- {lbl}")
+    if stakes.get("summary"):
+        stakes_lines.append(f"- Stakes note: {stakes['summary']}")
+    adj = prediction.get("stakes_adjustment") or {}
+    if adj.get("applied"):
+        stakes_lines.append(
+            f"- Model pressure adjustment: intensity {adj.get('intensity', '?')}, "
+            f"xG scaled ×{adj.get('total_xg_multiplier', 1)}"
+            + (f", draw tilt {adj.get('draw_tilt')}" if adj.get("draw_tilt") else "")
+        )
+    ctx = stakes.get("context") or {}
+    for side, name in (("home", home), ("away", away)):
+        row = ctx.get(side) or {}
+        if row.get("rank"):
+            zone = (row.get("zone") or {}).get("label") or ""
+            extra = f" ({zone})" if zone else ""
+            stakes_lines.append(
+                f"- {name} table: rank {row['rank']}, {row.get('pts', '?')} pts{extra}")
+
+    stakes_block = "\n".join(stakes_lines) if stakes_lines else "- No specific table-pressure context"
+
+    prog = prediction.get("progression") or {}
+    knockout = prediction.get("is_knockout") or bool(prog)
+    if knockout and prog:
+        outcome_line = (
+            f"- Advance probabilities: {home} "
+            f"{round(prog.get('home_advance', 0) * 100)}% · "
+            f"{away} {round(prog.get('away_advance', 0) * 100)}% "
+            f"(knockout — extra time/penalties if level after 90)"
+        )
+    else:
+        outcome_line = (
+            f"- Win probabilities: {home} {round(prediction['home_win_prob']*100)}% · "
+            f"Draw {round(prediction['draw_prob']*100)}% · "
+            f"{away} {round(prediction['away_win_prob']*100)}%"
+        )
+
     prompt = (
         f"You are a sharp football analyst writing for a match preview. "
         f"Write exactly 3–4 sentences in broadcast style explaining why "
         f"**{prediction['prediction']}** is the expected outcome for "
         f"**{home} vs {away}**. Use the stats below — be specific but punchy. "
+        f"Weave in mental pressure / stakes where relevant (relegation, "
+        f"qualification, knockout elimination) but do not invent facts. "
         f"Do NOT repeat the numbers verbatim; weave them into the narrative.\n\n"
         f"Stats:\n"
         f"- Elo ratings: {home} {prediction.get('home_elo', '?')} / "
         f"{away} {prediction.get('away_elo', '?')}\n"
         f"- Expected goals: {home} {prediction.get('home_xg', '?')} – "
         f"{away} {prediction.get('away_xg', '?')}\n"
-        f"- Win probabilities: {home} {round(prediction['home_win_prob']*100)}% · "
-        f"Draw {round(prediction['draw_prob']*100)}% · "
-        f"{away} {round(prediction['away_win_prob']*100)}%\n"
+        f"{outcome_line}\n"
         f"- {home} last 5: {form_str(prediction.get('home_form'))}\n"
         f"- {away} last 5: {form_str(prediction.get('away_form'))}\n"
         f"- Head to head: {h2h_line}\n"
         f"- Venue: {venue}\n"
+        f"- Match stakes:\n{stakes_block}\n"
     )
 
     resp = litellm.completion(
@@ -241,25 +341,46 @@ def analyze_match(home: str, away: str, prediction: dict) -> str:
     return (resp.choices[0].message.content or "").strip()
 
 
-def _run_tool(conn, name, args, session_id):
+def _run_tool(conn, name, args, session_id, default_comp=None):
     from footballmind_mcp_predict import _predict_match
     from footballmind_services import (
+        compare_players,
         get_standings,
         get_standouts,
         get_team_formations,
         get_team_squad,
         get_match_lineup,
         get_top_scorers,
+        get_player_profile,
         search_players,
     )
     if name == "predict_match":
         return _predict_match(conn, args["home_team"], args["away_team"], None,
                               args.get("stage", "regular_season"),
-                              session_id=session_id)
+                              session_id=session_id,
+                              comp=args.get("comp") or default_comp)
     if name == "get_standings":
         return get_standings(conn, args.get("comp", "PL"), args.get("season"))
     if name == "search_players":
         return search_players(conn, args["query"], args.get("comp"))
+    if name == "get_player_profile":
+        profile = get_player_profile(conn, args["name"], args.get("comp"))
+        if not profile:
+            return {
+                "error": "player_not_found",
+                "message": f"No synced profile for {args['name']!r}. "
+                           "Try search_players or rephrase — do not treat this as the "
+                           "final answer if the user asked about a team or tactic.",
+            }
+    if name == "compare_players":
+        result = compare_players(conn, args["player_a"], args["player_b"],
+                                 args.get("comp"))
+        if result.get("error"):
+            return {
+                "error": "compare_failed",
+                "message": result["error"],
+            }
+        return result
     if name == "get_team_squad":
         return get_team_squad(conn, args["team"], args.get("comp"))
     if name == "list_standout_players":
@@ -286,17 +407,43 @@ def _run_tool(conn, name, args, session_id):
     return {"error": f"unknown tool {name}"}
 
 
-def answer(conn, message, session_id=None):
-    """Free-form question -> (reply_text, last_prediction_or_None)."""
+_COMP_LABELS = COMP_LABELS
+
+
+def _comp_system_hint(comp: str | None) -> str:
+    if not comp:
+        return ""
+    label = _COMP_LABELS.get(comp, comp)
+    return (
+        f"The user is browsing {label} ({comp}) in the sidebar. "
+        f"When they do not name a competition, default tool calls and answers to {comp}."
+    )
+
+
+def answer(conn, message, session_id=None, history=None, comp=None):
+    """Free-form question -> (reply_text, last_prediction_or_None).
+
+    history: optional list of {role: user|assistant, content: str} from prior turns.
+    """
     import litellm
 
-    messages = [{"role": "system", "content": SYSTEM},
-                {"role": "user", "content": message}]
+    system = SYSTEM
+    hint = _comp_system_hint(comp)
+    if hint:
+        system = f"{SYSTEM}\n\n{hint}"
+    messages = [{"role": "system", "content": system}]
+    if history:
+        for turn in history[-12:]:
+            role = turn.get("role")
+            content = (turn.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
     prediction = None
 
     for _ in range(MAX_TOOL_ROUNDS):
         resp = litellm.completion(model=MODEL, messages=messages, tools=TOOLS,
-                                  max_tokens=700)
+                                  max_tokens=900)
         msg = resp.choices[0].message
         if not msg.tool_calls:
             return (msg.content or "").strip(), prediction
@@ -305,7 +452,8 @@ def answer(conn, message, session_id=None):
         for call in msg.tool_calls:
             args = json.loads(call.function.arguments or "{}")
             try:
-                result = _run_tool(conn, call.function.name, args, session_id)
+                result = _run_tool(conn, call.function.name, args, session_id,
+                                   default_comp=comp)
                 if call.function.name == "predict_match":
                     prediction = result
             except ValueError as e:           # e.g. unknown team -> let Claude rephrase
@@ -315,3 +463,23 @@ def answer(conn, message, session_id=None):
 
     return ("I couldn't finish answering that -- try rephrasing, or ask for a "
             "specific match prediction or the standings."), prediction
+
+
+def answer_followup(message, history=None, comp=None):
+    """Short follow-up (e.g. 'explain') — answer from conversation history only."""
+    import litellm
+
+    system = SYSTEM
+    hint = _comp_system_hint(comp)
+    if hint:
+        system = f"{SYSTEM}\n\n{hint}"
+    messages = [{"role": "system", "content": system}]
+    if history:
+        for turn in history[-12:]:
+            role = turn.get("role")
+            content = (turn.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
+    resp = litellm.completion(model=MODEL, messages=messages, max_tokens=900)
+    return (resp.choices[0].message.content or "").strip(), None

@@ -14,6 +14,7 @@ from datetime import date
 from threading import Lock
 
 import requests
+from psycopg.errors import DeadlockDetected
 
 from footballmind_elo import apply_match_result
 from footballmind_services import normalize_position
@@ -21,10 +22,16 @@ from footballmind_services import normalize_position
 # football-data.org stage strings -> our match_stage enum
 STAGE_MAP = {
     "REGULAR_SEASON": "regular_season", "GROUP_STAGE": "group",
-    "LAST_32": "round_of_32", "LAST_16": "round_of_16",
-    "QUARTER_FINALS": "quarter_final", "SEMI_FINALS": "semi_final",
+    "LAST_32": "round_of_32", "ROUND_OF_32": "round_of_32",
+    "LAST_16": "round_of_16", "ROUND_OF_16": "round_of_16",
+    "QUARTER_FINALS": "quarter_final", "QUARTER_FINAL": "quarter_final",
+    "SEMI_FINALS": "semi_final", "SEMI_FINAL": "semi_final",
     "THIRD_PLACE": "third_place", "FINAL": "final",
 }
+KNOCKOUT_STAGES = frozenset({
+    "round_of_32", "round_of_16", "quarter_final", "semi_final", "final",
+    "third_place",
+})
 # competition code -> Elo importance weight
 IMPORTANCE_BY_COMP = {"PL": "league", "CL": "continental", "WC": "world_cup"}
 
@@ -86,17 +93,23 @@ class FootballDataClient:
             self._throttle_from_headers(r.headers)
             return r.json()
 
-    def matches(self, comp, status="FINISHED", date_from=None, date_to=None):
-        params = {"status": status}
-        if date_from: params["dateFrom"] = date_from
-        if date_to:   params["dateTo"] = date_to
+    def matches(self, comp, status=None, date_from=None, date_to=None):
+        params = {}
+        if status:
+            params["status"] = status
+        if date_from:
+            params["dateFrom"] = date_from
+        if date_to:
+            params["dateTo"] = date_to
         return self._get(f"/competitions/{comp}/matches", params).get("matches", [])
 
     def teams(self, comp):
         return self._get(f"/competitions/{comp}/teams").get("teams", [])
 
-    def scorers(self, comp, limit=100):
+    def scorers(self, comp, limit=500, season=None):
         params = {"limit": limit}
+        if season is not None:
+            params["season"] = season
         return self._get(f"/competitions/{comp}/scorers", params).get("scorers", [])
 
     def match(self, match_id):
@@ -106,6 +119,51 @@ class FootballDataClient:
 # ----------------------------------------------------------------------
 # Upserts (idempotent -- re-running the sync never double-writes)
 # ----------------------------------------------------------------------
+def _player_position_raw(p: dict) -> str | None:
+    """Prefer API role string (Midfield, Attacking Midfield) over coarse codes."""
+    return p.get("position") or p.get("section") or normalize_position(p.get("position"))
+
+
+def apply_team_captains(conn, captains: dict[tuple[str, str], str]) -> int:
+    """Set is_captain on affiliations. Keys: (comp_code, team_name) -> player name."""
+    from footballmind_mcp_predict import _resolve_team
+    from footballmind_services import _resolve_player_on_team
+
+    n = 0
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE player_affiliations SET is_captain = FALSE "
+            "WHERE end_date IS NULL AND is_captain = TRUE")
+        for (comp_code, team_name), captain_name in captains.items():
+            cur.execute(
+                "SELECT type FROM competitions WHERE code = %s", (comp_code,))
+            row = cur.fetchone()
+            kind = "national" if row and row[0] == "international" else "club"
+            try:
+                team_id, _ = _resolve_team(cur, team_name)
+            except ValueError:
+                continue
+            found = _resolve_player_on_team(cur, captain_name, team_id)
+            if not found:
+                continue
+            player_id, _ = found
+            cur.execute(
+                "UPDATE player_affiliations pa SET is_captain = TRUE "
+                "WHERE pa.player_id = %s AND pa.team_id = %s "
+                "  AND pa.end_date IS NULL AND pa.kind = %s "
+                "  AND EXISTS ("
+                "    SELECT 1 FROM matches m "
+                "    JOIN competition_editions e2 ON e2.id = m.edition_id "
+                "    JOIN competitions c2 ON c2.id = e2.competition_id "
+                "    WHERE c2.code = %s AND (m.home_team_id = pa.team_id "
+                "       OR m.away_team_id = pa.team_id)"
+                "  )",
+                (player_id, team_id, kind, comp_code))
+            n += cur.rowcount
+    conn.commit()
+    return n
+
+
 def upsert_team(cur, name, team_type, external_id, country_id=None):
     cur.execute(
         "INSERT INTO teams (name, type, external_id, country_id) "
@@ -119,11 +177,20 @@ def upsert_team(cur, name, team_type, external_id, country_id=None):
 def upsert_country(cur, name, fifa_code=None):
     if not name:
         return None
+    code = fifa_code.strip().upper() if fifa_code else None
+    if code:
+        cur.execute(
+            "SELECT id FROM countries WHERE fifa_code = %s",
+            (code,),
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0]
     cur.execute(
         "INSERT INTO countries (name, fifa_code) VALUES (%s,%s) "
         "ON CONFLICT (name) DO UPDATE SET "
         "  fifa_code = COALESCE(EXCLUDED.fifa_code, countries.fifa_code) "
-        "RETURNING id", (name, fifa_code))
+        "RETURNING id", (name, code))
     return cur.fetchone()[0]
 
 
@@ -138,53 +205,257 @@ def get_or_create_edition(cur, comp_code, comp_name, comp_type, season):
     return cur.fetchone()[0]
 
 
+FINISHED_STATUSES = frozenset({"FINISHED", "AWARDED"})
+
+
+def _score_side(node: dict | None, *, home: bool) -> int | None:
+    """Read home/away from an FDO score sub-node (v4 uses homeTeam/awayTeam)."""
+    if not node:
+        return None
+    if home:
+        v = node.get("home")
+        return v if v is not None else node.get("homeTeam")
+    v = node.get("away")
+    return v if v is not None else node.get("awayTeam")
+
+
+def _playing_time_score(score: dict) -> tuple[int | None, int | None]:
+    """Goals after 90'+ET (before any penalty shootout)."""
+    rt = score.get("regularTime") or {}
+    et = score.get("extraTime")
+    rh, ra = _score_side(rt, home=True), _score_side(rt, home=False)
+    if rh is None or ra is None:
+        return None, None
+    if et:
+        eh = _score_side(et, home=True)
+        ea = _score_side(et, home=False)
+        rh += eh if eh is not None else 0
+        ra += ea if ea is not None else 0
+    return rh, ra
+
+
+def _pen_scores_from_kicks(m: dict) -> tuple[int | None, int | None]:
+    """Count scored kicks from the match penalties[] list."""
+    kicks = m.get("penalties")
+    if not isinstance(kicks, list) or not kicks:
+        return None, None
+    home_api = (m.get("homeTeam") or {}).get("id")
+    away_api = (m.get("awayTeam") or {}).get("id")
+    home = away = 0
+    for kick in kicks:
+        if not kick.get("scored"):
+            continue
+        tid = (kick.get("team") or {}).get("id")
+        if tid == home_api:
+            home += 1
+        elif tid == away_api:
+            away += 1
+    return (home, away) if (home or away) else (None, None)
+
+
+def _derive_pen_score(score: dict) -> tuple[int | None, int | None]:
+    """FDO fullTime aggregates reg + ET + shootout; derive pens when needed."""
+    ft = score.get("fullTime") or {}
+    rt = score.get("regularTime") or {}
+    et = score.get("extraTime") or {}
+    fh, fa = _score_side(ft, home=True), _score_side(ft, home=False)
+    rh, ra = _score_side(rt, home=True), _score_side(rt, home=False)
+    if None in (fh, fa, rh, ra):
+        return None, None
+    eh = _score_side(et, home=True) or 0 if et else 0
+    ea = _score_side(et, home=False) or 0 if et else 0
+    ph, pa = fh - rh - eh, fa - ra - ea
+    if ph >= 0 and pa >= 0 and ph != pa:
+        return ph, pa
+    return None, None
+
+
+def _infer_tied_pen_shootout(
+    home: int, away: int, *, winner: str | None = None,
+    adv_is_home: bool | None = None,
+) -> tuple[int | None, int | None]:
+    """FDO often reports a tied pens tally before sudden-death; bump the winner."""
+    if home != away:
+        return None, None
+    if winner == "HOME_TEAM" or adv_is_home is True:
+        return home + 1, away
+    if winner == "AWAY_TEAM" or adv_is_home is False:
+        return home, away + 1
+    return None, None
+
+
+def _resolve_pen_shootout_scores(
+    m: dict, score: dict, *, adv_is_home: bool | None = None,
+) -> tuple[int | None, int | None]:
+    """Best available penalty-shootout tally (must not be tied for a finished match)."""
+    pens = score.get("penalties") or {}
+    api_h, api_a = _score_side(pens, home=True), _score_side(pens, home=False)
+    if api_h is not None and api_a is not None and api_h != api_a:
+        return api_h, api_a
+    derived = _derive_pen_score(score)
+    if derived[0] is not None:
+        return derived
+    kicks = _pen_scores_from_kicks(m)
+    if kicks[0] is not None and kicks[1] is not None and kicks[0] != kicks[1]:
+        return kicks
+    if api_h is not None and api_a is not None:
+        return _infer_tied_pen_shootout(
+            api_h, api_a, winner=score.get("winner"), adv_is_home=adv_is_home)
+    return None, None
+
+
+def _parse_fdo_scores(m: dict) -> dict:
+    """Extract display scores and knockout metadata from an FDO match payload."""
+    score = m.get("score") or {}
+    ft = score.get("fullTime") or {}
+    rt = score.get("regularTime") or {}
+    duration = score.get("duration") or "REGULAR"
+    reg_home = _score_side(rt, home=True)
+    reg_away = _score_side(rt, home=False)
+
+    if duration == "PENALTY_SHOOTOUT":
+        pt_h, pt_a = _playing_time_score(score)
+        home_goals, away_goals = pt_h, pt_a
+        if home_goals is None:
+            home_goals = _score_side(ft, home=True)
+            away_goals = _score_side(ft, home=False)
+        home_pens, away_pens = _resolve_pen_shootout_scores(m, score)
+    else:
+        home_goals = _score_side(ft, home=True)
+        away_goals = _score_side(ft, home=False)
+        # Prefer goal-by-goal running score when present (more reliable than live fullTime).
+        goals = m.get("goals") or []
+        if goals:
+            last = (goals[-1].get("score") or {})
+            gh = _score_side(last, home=True)
+            ga = _score_side(last, home=False)
+            if gh is not None and ga is not None:
+                home_goals, away_goals = gh, ga
+        home_pens, away_pens = None, None
+
+    return {
+        "home_goals": home_goals,
+        "away_goals": away_goals,
+        "reg_home": reg_home,
+        "reg_away": reg_away,
+        "duration": duration,
+        "winner": score.get("winner"),
+        "went_to_et": duration in ("EXTRA_TIME", "PENALTY_SHOOTOUT"),
+        "went_to_pens": duration == "PENALTY_SHOOTOUT",
+        "home_pens": home_pens,
+        "away_pens": away_pens,
+    }
+
+
+def _advancing_team_id(winner: str | None, home_id: int, away_id: int) -> int | None:
+    if winner == "HOME_TEAM":
+        return home_id
+    if winner == "AWAY_TEAM":
+        return away_id
+    return None
+
+
+def _advancing_from_pen_scores(
+    home_pens: int | None, away_pens: int | None,
+    home_id: int, away_id: int,
+) -> int | None:
+    if home_pens is None or away_pens is None or home_pens == away_pens:
+        return None
+    return home_id if home_pens > away_pens else away_id
+
+
+def _team_from_api(cur, team_api, team_type, match_ext_id, side, is_knockout):
+    """Resolve API team payload to a teams.id (placeholder row for TBD knockouts)."""
+    api = team_api or {}
+    name = api.get("name") or api.get("shortName")
+    ext = api.get("id")
+    if name:
+        return upsert_team(cur, name, team_type, ext)
+    if not is_knockout:
+        return None
+    slot_name = f"TBD ({match_ext_id}-{side})"
+    return upsert_team(cur, slot_name, team_type, ext or f"tbd-{match_ext_id}-{side}")
+
+
 def upsert_match(cur, edition_id, m, team_type):
     """Insert/update one match row. Does NOT touch ratings (that is staged
     separately so it happens in chronological order, exactly once).
-    Knockout fixtures whose participants are not yet decided (TBD slots with
-    null team names) are skipped; later syncs pick them up once known."""
-    if not m["homeTeam"].get("name") or not m["awayTeam"].get("name"):
-        return
-    home_id = upsert_team(cur, m["homeTeam"]["name"], team_type, m["homeTeam"]["id"])
-    away_id = upsert_team(cur, m["awayTeam"]["name"], team_type, m["awayTeam"]["id"])
+    Knockout fixtures with undecided participants get placeholder TBD teams
+    so the bracket can show dates and fill in names on later syncs."""
     stage = STAGE_MAP.get(m.get("stage", "REGULAR_SEASON"), "regular_season")
-    ft = (m.get("score") or {}).get("fullTime") or {}
+    is_knockout = stage in KNOCKOUT_STAGES
+    match_ext = str(m["id"])
+    home_id = _team_from_api(cur, m.get("homeTeam"), team_type, match_ext, "h", is_knockout)
+    away_id = _team_from_api(cur, m.get("awayTeam"), team_type, match_ext, "a", is_knockout)
+    if home_id is None or away_id is None:
+        return
+    status = m.get("status") or ""
+    parsed = _parse_fdo_scores(m)
+    if status in FINISHED_STATUSES:
+        home_goals, away_goals = parsed["home_goals"], parsed["away_goals"]
+    else:
+        home_goals, away_goals = None, None
+    adv_id = _advancing_team_id(parsed["winner"], home_id, away_id) if status in FINISHED_STATUSES else None
+    if status in FINISHED_STATUSES and parsed["went_to_pens"]:
+        adv_home = True if adv_id == home_id else False if adv_id == away_id else None
+        hp, ap = _resolve_pen_shootout_scores(
+            m, m.get("score") or {}, adv_is_home=adv_home)
+        if hp is not None:
+            parsed["home_pens"], parsed["away_pens"] = hp, ap
+        if adv_id is None:
+            adv_id = _advancing_from_pen_scores(hp, ap, home_id, away_id)
     group_name = m.get("group")   # e.g. "GROUP_A" from football-data.org
     if group_name:
         # normalise "GROUP_A" -> "A"
         group_name = group_name.replace("GROUP_", "").replace("Group ", "").strip()
     cur.execute(
         "INSERT INTO matches (edition_id, stage, match_date, home_team_id, "
-        " away_team_id, home_goals, away_goals, external_id, group_name) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        " away_team_id, home_goals, away_goals, external_id, group_name, matchday, "
+        " went_to_et, went_to_pens, home_pens, away_pens, advancing_team_id, "
+        " reg_home_goals, reg_away_goals) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
         "ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET "
-        "  home_goals = EXCLUDED.home_goals, away_goals = EXCLUDED.away_goals, "
-        "  stage = EXCLUDED.stage, group_name = EXCLUDED.group_name",
+        "  match_date = EXCLUDED.match_date, "
+        "  home_team_id = EXCLUDED.home_team_id, "
+        "  away_team_id = EXCLUDED.away_team_id, "
+        "  home_goals = COALESCE(EXCLUDED.home_goals, matches.home_goals), "
+        "  away_goals = COALESCE(EXCLUDED.away_goals, matches.away_goals), "
+        "  stage = EXCLUDED.stage, group_name = EXCLUDED.group_name, "
+        "  matchday = COALESCE(EXCLUDED.matchday, matches.matchday), "
+        "  went_to_et = EXCLUDED.went_to_et, "
+        "  went_to_pens = EXCLUDED.went_to_pens, "
+        "  home_pens = COALESCE(EXCLUDED.home_pens, matches.home_pens), "
+        "  away_pens = COALESCE(EXCLUDED.away_pens, matches.away_pens), "
+        "  advancing_team_id = COALESCE(EXCLUDED.advancing_team_id, "
+        "                                matches.advancing_team_id), "
+        "  reg_home_goals = COALESCE(EXCLUDED.reg_home_goals, matches.reg_home_goals), "
+        "  reg_away_goals = COALESCE(EXCLUDED.reg_away_goals, matches.reg_away_goals)",
         (edition_id, stage, m["utcDate"], home_id, away_id,
-         ft.get("home"), ft.get("away"), str(m["id"]), group_name))
+         home_goals, away_goals, str(m["id"]), group_name, m.get("matchday"),
+         parsed["went_to_et"], parsed["went_to_pens"],
+         parsed["home_pens"], parsed["away_pens"], adv_id,
+         parsed["reg_home"], parsed["reg_away"]))
 
 
 # ----------------------------------------------------------------------
 # The two correctness-critical steps
 # ----------------------------------------------------------------------
 def apply_pending_ratings(conn, comp_code):
-    """Apply every finished-but-not-yet-rated match to Elo, oldest first.
-
-    Elo is sequential (each update depends on prior ratings) AND not
-    idempotent (applying a match twice corrupts ratings). This query handles
-    both: it selects only matches with NO rating_history yet, ordered by date,
-    so each match is rated exactly once, in chronological order."""
+    """Apply finished-but-not-yet-rated matches for one competition, oldest first."""
     importance = IMPORTANCE_BY_COMP.get(comp_code, "league")
     with conn.cursor() as cur:
         cur.execute(
             "SELECT m.id FROM matches m "
-            "WHERE m.home_goals IS NOT NULL "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "WHERE c.code = %s AND m.home_goals IS NOT NULL "
             "  AND NOT EXISTS (SELECT 1 FROM rating_history rh "
             "                  WHERE rh.match_id = m.id) "
-            "ORDER BY m.match_date ASC", )
+            "ORDER BY m.match_date ASC",
+            (comp_code,))
         pending = [row[0] for row in cur.fetchall()]
     for match_id in pending:
-        apply_match_result(conn, match_id, importance)   # commits per match
+        apply_match_result(conn, match_id, importance)
 
 
 def sync_competition(conn, client, comp_code, comp_name, comp_type, season,
@@ -205,15 +476,24 @@ def sync_teams_and_squads(conn, client, comp_code, team_type="club"):
     its full squad (players + club/national affiliations)."""
     kind = "national" if team_type == "national" else "club"
     teams = client.teams(comp_code)
-    with conn.cursor() as cur:
-        for t in teams:
-            area = t.get("area") or {}
-            country_id = upsert_country(cur, area.get("name"),
-                                        t.get("tla") if kind == "national" else None)
-            team_id = upsert_team(cur, t["name"], team_type, t["id"], country_id)
-            sync_squad(cur, t.get("squad") or [], team_id, kind)
-    conn.commit()
-    return len(teams)
+    for attempt in range(3):
+        try:
+            with conn.cursor() as cur:
+                for t in teams:
+                    area = t.get("area") or {}
+                    country_id = upsert_country(cur, area.get("name"),
+                                                t.get("tla") if kind == "national" else None)
+                    team_id = upsert_team(cur, t["name"], team_type, t["id"], country_id)
+                    sync_squad(cur, t.get("squad") or [], team_id, kind)
+            conn.commit()
+            return len(teams)
+        except Exception as e:
+            conn.rollback()
+            # Concurrent matchday sync can deadlock on teams; retry briefly.
+            if attempt < 2 and isinstance(e, DeadlockDetected):
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            raise
 
 
 # ----------------------------------------------------------------------
@@ -226,7 +506,7 @@ def sync_squad(cur, squad, team_id, kind):
     today = date.today()
     for p in squad:
         nationality_id = upsert_country(cur, p.get("nationality"))
-        pos = normalize_position(p.get("position"))
+        pos = _player_position_raw(p)
         cur.execute(
             "INSERT INTO players (name, external_id, birth_date, nationality, position) "
             "VALUES (%s,%s,%s,%s,%s) "
@@ -275,7 +555,7 @@ def _edition_id(cur, comp_code, season):
 def upsert_player_row(cur, p, team_id, kind):
     """Upsert one API player object; ensure affiliation to team_id."""
     nationality_id = upsert_country(cur, p.get("nationality"))
-    pos = normalize_position(p.get("position") or p.get("section"))
+    pos = _player_position_raw(p)
     ext = p.get("id")
     if ext is None:
         return None
@@ -306,12 +586,21 @@ def upsert_player_row(cur, p, team_id, kind):
     return player_id
 
 
-def sync_scorers(conn, client, comp_code, season, team_type="club"):
+def sync_scorers(conn, client, comp_code, season, team_type="club",
+                 comp_name=None, comp_type=None):
     """Pull competition top scorers -> player_edition_stats."""
+    # football-data.org returns career international totals for WC scorers, not
+    # tournament stats — use match/ESPN aggregation for national competitions.
+    if team_type == "national":
+        return 0
     kind = "national" if team_type == "national" else "club"
-    rows = client.scorers(comp_code)
+    year = int(season.split("/")[0]) if "/" in season else int(season)
+    rows = client.scorers(comp_code, season=year)
     with conn.cursor() as cur:
-        edition_id = _edition_id(cur, comp_code, season)
+        if comp_name and comp_type:
+            edition_id = get_or_create_edition(cur, comp_code, comp_name, comp_type, season)
+        else:
+            edition_id = _edition_id(cur, comp_code, season)
         if edition_id is None:
             return 0
         n = 0
@@ -367,7 +656,7 @@ def _sync_side_lineup(cur, match_id, team_side, team_type, kind):
             player_id = _resolve_player_id(cur, p, team_id, kind)
             if not player_id:
                 continue
-            pos = normalize_position(p.get("position"))
+            pos = _player_position_raw(p)
             cur.execute(
                 "INSERT INTO match_lineup_players "
                 "(match_id, team_id, player_id, role, shirt_number, position) "
@@ -431,6 +720,64 @@ def _sync_match_events(cur, match_id, m, team_type, kind):
              (sub.get("playerIn") or {}).get("name")))
 
 
+def refresh_knockout_scores(conn, client, comp_code: str = "WC", limit: int = 24) -> int:
+    """Re-fetch finished knockout matches to correct scores from goal timelines."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT m.id, m.external_id, t.type "
+            "FROM matches m "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "JOIN teams t ON t.id = m.home_team_id "
+            "WHERE c.code = %s "
+            "  AND m.stage NOT IN ('regular_season', 'group', 'third_place') "
+            "  AND m.home_goals IS NOT NULL "
+            "  AND m.external_id IS NOT NULL "
+            "ORDER BY m.match_date DESC LIMIT %s",
+            (comp_code, limit))
+        rows = cur.fetchall()
+    updated = 0
+    for match_id, external_id, team_type in rows:
+        try:
+            m = client.match(external_id)
+        except Exception:
+            continue
+        if (m.get("status") or "") not in FINISHED_STATUSES:
+            continue
+        parsed = _parse_fdo_scores(m)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT home_team_id, away_team_id, advancing_team_id FROM matches "
+                "WHERE id = %s",
+                (match_id,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            adv_id = _advancing_team_id(parsed["winner"], row[0], row[1]) or row[2]
+            adv_home = True if adv_id == row[0] else False if adv_id == row[1] else None
+            home_pens, away_pens = _resolve_pen_shootout_scores(
+                m, m.get("score") or {}, adv_is_home=adv_home)
+            if adv_id is None:
+                adv_id = _advancing_from_pen_scores(
+                    home_pens, away_pens, row[0], row[1])
+            cur.execute(
+                "UPDATE matches SET "
+                "  home_goals = %s, away_goals = %s, "
+                "  went_to_et = %s, went_to_pens = %s, "
+                "  home_pens = %s, away_pens = %s, "
+                "  reg_home_goals = %s, reg_away_goals = %s, "
+                "  advancing_team_id = COALESCE(%s, advancing_team_id) "
+                "WHERE id = %s",
+                (parsed["home_goals"], parsed["away_goals"],
+                 parsed["went_to_et"], parsed["went_to_pens"],
+                 home_pens, away_pens,
+                 parsed["reg_home"], parsed["reg_away"],
+                 adv_id, match_id))
+        conn.commit()
+        updated += 1
+    return updated
+
+
 def sync_match_details(conn, client, limit=20):
     """Fetch /matches/{id} for finished games missing detail sync.
 
@@ -461,6 +808,37 @@ def sync_match_details(conn, client, limit=20):
         with conn.cursor() as cur:
             if has_detail:
                 _sync_match_events(cur, match_id, m, team_type, kind)
+            if (m.get("status") or "") in FINISHED_STATUSES:
+                cur.execute(
+                    "SELECT home_team_id, away_team_id, advancing_team_id "
+                    "FROM matches WHERE id = %s",
+                    (match_id,))
+                row = cur.fetchone()
+                if row:
+                    parsed = _parse_fdo_scores(m)
+                    adv_id = _advancing_team_id(
+                        parsed["winner"], row[0], row[1]) or row[2]
+                    adv_home = (
+                        True if adv_id == row[0]
+                        else False if adv_id == row[1] else None)
+                    home_pens, away_pens = _resolve_pen_shootout_scores(
+                        m, m.get("score") or {}, adv_is_home=adv_home)
+                    if adv_id is None:
+                        adv_id = _advancing_from_pen_scores(
+                            home_pens, away_pens, row[0], row[1])
+                    cur.execute(
+                        "UPDATE matches SET "
+                        "  home_goals = %s, away_goals = %s, "
+                        "  went_to_et = %s, went_to_pens = %s, "
+                        "  home_pens = %s, away_pens = %s, "
+                        "  reg_home_goals = %s, reg_away_goals = %s, "
+                        "  advancing_team_id = COALESCE(%s, advancing_team_id) "
+                        "WHERE id = %s",
+                        (parsed["home_goals"], parsed["away_goals"],
+                         parsed["went_to_et"], parsed["went_to_pens"],
+                         home_pens, away_pens,
+                         parsed["reg_home"], parsed["reg_away"],
+                         adv_id, match_id))
             cur.execute("UPDATE matches SET details_synced = TRUE WHERE id = %s",
                         (match_id,))
         conn.commit()

@@ -132,13 +132,24 @@ def load_hybrid(conn, name="production_hybrid", use_cache=True):
 
 def select_and_deploy(conn, edition_ids, test_start, half_lives=(90, 180, 365),
                       credibilities=(5, 10, 20), refit_every_days=14,
-                      importance="league", name="production_hybrid"):
+                      importance="league", name="production_hybrid",
+                      min_history=60,
+                      default_half_life=180, default_credibility=10):
     """The capstone: sweep -> pick lowest-RPS config -> retrain on all data ->
     store -> warm the cache. Returns the full sweep result for inspection."""
-    result = sweep_from_db(conn, edition_ids, test_start, half_lives=half_lives,
-                           credibilities=credibilities,
-                           refit_every_days=refit_every_days, importance=importance)
-    best = result["best"]
+    try:
+        result = sweep_from_db(conn, edition_ids, test_start, half_lives=half_lives,
+                               credibilities=credibilities,
+                               refit_every_days=refit_every_days,
+                               importance=importance, min_history=min_history)
+        best = result["best"]
+    except ValueError as exc:
+        # Early tournaments (e.g. WC group stage) may lack pre-test training folds.
+        best = {"half_life_days": default_half_life,
+                "full_credibility": default_credibility,
+                "mean_rps": None, "n": 0}
+        result = {"best": best, "grid": [], "target": "hybrid",
+                  "backtest_skipped": str(exc)}
     train_and_store(conn, edition_ids, best["half_life_days"],
                     best["full_credibility"], backtest_rps=best["mean_rps"], name=name)
     return result

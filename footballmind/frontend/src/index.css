@@ -12,3 +12,12 @@ body {
   margin: 0;
   background: #0b1413; /* matches the component's floodlit-pitch palette */
 }
+
+@keyframes fm-typing-dot {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+
+.fm-typing-dot {
+  animation: fm-typing-dot 1.2s ease-in-out infinite;
+}

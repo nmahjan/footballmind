@@ -92,6 +92,8 @@ class DixonColes:
 # Loading training data from the schema + exponential time weights
 # ----------------------------------------------------------------------
 def load_training_data(conn, edition_ids, half_life_days=180, as_of=None):
+    from footballmind_db import release_transaction
+
     as_of = as_of or date.today()
     xi = np.log(2) / half_life_days            # weight halves every half_life_days
     with conn.cursor() as cur:
@@ -100,6 +102,7 @@ def load_training_data(conn, edition_ids, half_life_days=180, as_of=None):
             "FROM matches WHERE edition_id = ANY(%s) AND home_goals IS NOT NULL "
             "ORDER BY match_date", (list(edition_ids),))
         rows = cur.fetchall()
+    release_transaction(conn)
     teams = sorted({r[0] for r in rows} | {r[1] for r in rows})
     index = {t: k for k, t in enumerate(teams)}
     days_ago = np.array([max((as_of - r[4].date()).days, 0) for r in rows], float)

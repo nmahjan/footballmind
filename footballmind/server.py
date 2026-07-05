@@ -66,14 +66,16 @@ def predict_match(
     stage: str = "regular_season",
     neutral: bool | None = None,
     session_id: str | None = None,
+    comp: str | None = None,
 ) -> dict:
     """Predict W/D/L probabilities and expected goals for a football match.
     stage: regular_season, group, round_of_16, quarter_final, semi_final, final.
+    comp: PL, PD, BL1, SA, FL1, CL, DED, WC — improves stakes context.
     Set neutral=True for World Cup / neutral-venue games."""
     with get_connection() as conn:
         return _predict_match(
             conn, home_team, away_team, match_date, stage,
-            session_id=session_id, neutral=neutral,
+            session_id=session_id, neutral=neutral, comp=comp,
         )
 
 
@@ -149,6 +151,14 @@ def get_player_profile(name: str, comp: str | None = None) -> dict:
         if profile is None:
             return {"error": f"No player found matching {name!r}"}
         return profile
+
+
+@mcp.tool()
+def compare_players(player_a: str, player_b: str, comp: str | None = None) -> dict:
+    """Compare two players side-by-side: stats, position, team, age."""
+    from footballmind_services import compare_players as do_compare
+    with get_connection() as conn:
+        return do_compare(conn, player_a, player_b, comp)
 
 
 @mcp.tool()
