@@ -1,9 +1,8 @@
 """
 FootballMind — predicted lineups and availability.
 
-Builds a most-likely XI from squad depth + form scores, prefers recent
-confirmed formations when synced, and excludes players suspended (red cards)
-or flagged injured/doubtful in player_availability.
+Prefers recent confirmed lineups/formations when synced; otherwise builds XI from
+squad depth weighted by comp appearances and recent starts (not goals alone).
 """
 
 from __future__ import annotations
@@ -11,110 +10,554 @@ from __future__ import annotations
 from footballmind_services import (
     _affil_kind_for_comp,
     _compute_standout_rating,
+    _player_age,
     get_team_formations,
 )
+from footballmind_roles import resolve_player_line_role
 
 FORMATION_SLOTS: dict[str, list[str]] = {
-    "4-3-3": ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "FWD", "FWD", "FWD"],
-    "4-4-2": ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "FWD", "FWD"],
-    "4-2-3-1": ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID", "FWD"],
-    "3-5-2": ["GK", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID", "FWD", "FWD"],
-    "5-3-2": ["GK", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "FWD", "FWD"],
-    "3-4-3": ["GK", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "FWD", "FWD", "FWD"],
+    "4-3-3": ["GK", "LB", "CB", "CB", "RB", "CDM", "CM", "CM", "WING", "ST", "WING"],
+    "4-4-2": ["GK", "LB", "CB", "CB", "RB", "CM", "CM", "WING", "WING", "ST", "ST"],
+    "4-2-3-1": ["GK", "LB", "CB", "CB", "RB", "CDM", "CDM", "WING", "CAM", "WING", "ST"],
+    "4-3-2-1": ["GK", "LB", "CB", "CB", "RB", "CDM", "CM", "CAM", "WING", "WING", "ST"],
+    "4-1-4-1": ["GK", "LB", "CB", "CB", "RB", "CDM", "WING", "CM", "CM", "WING", "ST"],
+    "3-5-2": ["GK", "CB", "CB", "CB", "LB", "CDM", "CM", "CM", "RB", "ST", "ST"],
+    "5-3-2": ["GK", "LB", "CB", "CB", "CB", "RB", "CM", "CM", "CM", "ST", "ST"],
+    "3-4-3": ["GK", "CB", "CB", "CB", "WING", "CM", "CM", "WING", "WING", "ST", "WING"],
+}
+
+# When no synced formation, try these first for club sides (modern default shapes).
+_CLUB_FORMATION_PREF = (
+    "4-2-3-1", "4-3-3", "4-3-2-1", "3-4-3", "4-4-2", "4-1-4-1", "3-5-2", "5-3-2",
+)
+
+# National sides rarely play five at the back without synced evidence — prefer wide shapes.
+_NATIONAL_FORMATION_PREF = (
+    "4-3-3", "4-2-3-1", "4-4-2", "4-1-4-1", "4-3-2-1", "3-4-3", "3-5-2", "5-3-2",
+)
+
+# Known shapes when API lineups are unavailable (comp, team) -> formation.
+_TEAM_FORMATION_HINT: dict[tuple[str, str], str] = {
+    ("PL", "Arsenal FC"): "4-2-3-1",
+}
+
+_FORMATION_ALIASES = {
+    "4321": "4-3-2-1",
+    "4312": "4-3-1-2",
+    "4231": "4-2-3-1",
+    "433": "4-3-3",
+    "442": "4-4-2",
+    "4141": "4-1-4-1",
+    "343": "3-4-3",
+    "352": "3-5-2",
+    "532": "5-3-2",
 }
 
 
-def _ranked_squad(cur, team_id: int, kind: str) -> list[dict]:
+def normalize_formation(raw: str | None) -> str | None:
+    """Map API formation strings to our template keys."""
+    if not raw:
+        return None
+    s = raw.strip()
+    compact = s.replace("-", "").replace(" ", "")
+    if compact in _FORMATION_ALIASES:
+        return _FORMATION_ALIASES[compact]
+    if s in FORMATION_SLOTS:
+        return s
+    if len(compact) == 4 and compact.isdigit():
+        return "-".join(compact)  # e.g. 4321 -> 4-3-2-1
+    return s
+
+
+def _recent_starter_counts(cur, team_id: int, comp: str, matches: int = 5) -> dict[int, int]:
+    """How often each player started in the last N comp matches with lineup data."""
     cur.execute(
-        "SELECT p.id, p.name, p.position, tr.rating, "
-        "       COALESCE(cs.goals, 0), COALESCE(cs.assists, 0), "
-        "       COALESCE(cs.appearances, 0), cs.club_team "
+        "SELECT mlp.player_id, COUNT(*)::int "
+        "FROM match_lineup_players mlp "
+        "JOIN matches m ON m.id = mlp.match_id "
+        "JOIN competition_editions e ON e.id = m.edition_id "
+        "JOIN competitions c ON c.id = e.competition_id "
+        "WHERE mlp.team_id = %s AND mlp.role = 'starter' AND c.code = %s "
+        "  AND m.home_goals IS NOT NULL "
+        "  AND m.id IN ("
+        "    SELECT m2.id FROM matches m2 "
+        "    JOIN competition_editions e2 ON e2.id = m2.edition_id "
+        "    JOIN competitions c2 ON c2.id = e2.competition_id "
+        "    WHERE c2.code = %s AND (m2.home_team_id = %s OR m2.away_team_id = %s) "
+        "      AND m2.home_goals IS NOT NULL "
+        "    ORDER BY m2.match_date DESC NULLS LAST LIMIT %s"
+        "  ) "
+        "GROUP BY mlp.player_id",
+        (team_id, comp, comp, team_id, team_id, matches))
+    return {row[0]: row[1] for row in cur.fetchall()}
+
+
+def _eligible_starter(player: dict) -> bool:
+    """Block academy call-ups from model-picked slots unless they have real minutes."""
+    age = _player_age(player.get("birth_date"))
+    apps = int(player.get("appearances") or 0)
+    score = float(player.get("score") or 0)
+    if age is not None and age < 18:
+        # Established teens (e.g. Yamal) — not raw academy trialists.
+        if apps >= 5 or score >= 85:
+            return True
+        return False
+    if age is not None and age < 20 and apps < 8:
+        if score >= 85:
+            return True
+        return False
+    return True
+
+
+def _last_match_starters(cur, team_id: int, comp: str) -> tuple[str | None, list[dict], dict | None]:
+    """Most recent confirmed XI + formation for this team in comp."""
+    cur.execute(
+        "SELECT m.id, mtl.formation, m.match_date, "
+        "       CASE WHEN m.home_team_id = %s THEN ta.name ELSE th.name END AS opponent, "
+        "       m.home_goals, m.away_goals "
+        "FROM matches m "
+        "JOIN match_team_lineups mtl ON mtl.match_id = m.id AND mtl.team_id = %s "
+        "JOIN teams th ON th.id = m.home_team_id "
+        "JOIN teams ta ON ta.id = m.away_team_id "
+        "JOIN competition_editions e ON e.id = m.edition_id "
+        "JOIN competitions c ON c.id = e.competition_id "
+        "WHERE c.code = %s AND m.home_goals IS NOT NULL "
+        "  AND EXISTS ("
+        "    SELECT 1 FROM match_lineup_players mlp "
+        "    WHERE mlp.match_id = m.id AND mlp.team_id = %s AND mlp.role = 'starter'"
+        "  ) "
+        "ORDER BY m.match_date DESC NULLS LAST LIMIT 1",
+        (team_id, team_id, comp, team_id))
+    row = cur.fetchone()
+    if not row:
+        return None, [], None
+    match_id, formation, match_date, opponent, hg, ag = row
+    cur.execute(
+        "SELECT p.id, p.name, COALESCE(mlp.position, p.position, '?'), mlp.shirt_number "
+        "FROM match_lineup_players mlp "
+        "JOIN players p ON p.id = mlp.player_id "
+        "WHERE mlp.match_id = %s AND mlp.team_id = %s AND mlp.role = 'starter' "
+        "ORDER BY mlp.shirt_number NULLS LAST, p.name",
+        (match_id, team_id))
+    starters = [
+        {"player_id": pid, "name": name, "position": pos or "?", "shirt_number": num}
+        for pid, name, pos, num in cur.fetchall()
+    ]
+    meta = {
+        "match_id": match_id,
+        "match_date": match_date.isoformat() if match_date else None,
+        "opponent": opponent,
+        "score": f"{hg}-{ag}" if hg is not None and ag is not None else None,
+    }
+    return normalize_formation(formation), starters, meta
+
+
+def _ranked_squad(cur, team_id: int, kind: str, comp: str | None,
+                  recent_starts: dict[int, int]) -> list[dict]:
+    comp_join = ""
+    comp_params: list = []
+    if comp:
+        comp_join = (
+            "LEFT JOIN LATERAL ("
+            "  SELECT pes.goals, pes.assists, pes.appearances "
+            "  FROM player_edition_stats pes "
+            "  JOIN competition_editions e ON e.id = pes.edition_id "
+            "  JOIN competitions c ON c.id = e.competition_id "
+            "  WHERE pes.player_id = p.id AND c.code = %s "
+            "  ORDER BY e.start_date DESC NULLS LAST LIMIT 1"
+            ") comp_stats ON true "
+            "LEFT JOIN LATERAL ("
+            "  SELECT pes.goals, pes.assists, pes.appearances "
+            "  FROM player_edition_stats pes "
+            "  JOIN competition_editions e ON e.id = pes.edition_id "
+            "  JOIN competitions c ON c.id = e.competition_id "
+            "  WHERE pes.player_id = p.id AND c.code = %s "
+            "    AND pes.appearances > 0 "
+            "  ORDER BY e.start_date DESC NULLS LAST LIMIT 1"
+            ") prior_comp ON true "
+        )
+        comp_params = [comp, comp]
+
+    cur.execute(
+        "SELECT p.id, p.name, p.position, p.line_role, p.birth_date, tr.rating, "
+        "       COALESCE(comp_stats.goals, 0), "
+        "       COALESCE(comp_stats.assists, 0), "
+        "       COALESCE(comp_stats.appearances, 0), "
+        "       COALESCE(prior_comp.goals, cs.goals, 0), "
+        "       COALESCE(prior_comp.assists, cs.assists, 0), "
+        "       COALESCE(prior_comp.appearances, cs.appearances, 0), "
+        "       COALESCE(team_career.career_apps, 0), "
+        "       cs.club_team, "
+        "       COALESCE(pa.is_captain, FALSE) "
         "FROM player_affiliations pa "
         "JOIN players p ON p.id = pa.player_id "
         "LEFT JOIN team_ratings tr ON tr.team_id = pa.team_id "
         "LEFT JOIN LATERAL ("
+        "  SELECT COALESCE(SUM(pes.appearances), 0)::int AS career_apps "
+        "  FROM player_edition_stats pes "
+        "  WHERE pes.player_id = p.id AND pes.team_id = pa.team_id"
+        ") team_career ON true "
+        f"LEFT JOIN LATERAL ("
         "  SELECT pes.goals, pes.assists, pes.appearances, t2.name AS club_team "
         "  FROM player_edition_stats pes "
         "  JOIN teams t2 ON t2.id = pes.team_id "
         "  WHERE pes.player_id = p.id "
-        "  ORDER BY (pes.goals + pes.assists * 0.6) DESC, pes.appearances DESC "
+        "  ORDER BY pes.appearances DESC, (pes.goals + pes.assists) DESC "
         "  LIMIT 1"
         ") cs ON true "
+        f"{comp_join}"
         "WHERE pa.team_id = %s AND pa.end_date IS NULL AND pa.kind = %s "
         "ORDER BY p.name",
-        (team_id, kind))
+        (*comp_params, team_id, kind))
     squad = []
-    for pid, name, pos, rating, goals, ast, apps, club in cur.fetchall():
+    for (pid, name, pos, stored_role, dob, rating, c_goals, c_ast, c_apps,
+         goals, ast, apps, career_apps, club, is_captain) in cur.fetchall():
         position = pos or "?"
-        score = _compute_standout_rating(rating, goals, ast, apps, position)
+        if c_apps > 0:
+            goals, ast, apps = c_goals, c_ast, c_apps
+        line_role = resolve_player_line_role(
+            name=name,
+            db_line_role=stored_role,
+            db_position=pos,
+            goals=goals,
+            assists=ast,
+        )
+        if is_captain and line_role in ("CM", "CDM", "MID"):
+            line_role = "CAM"
+        base = _compute_standout_rating(rating, goals, ast, apps, position)
+        if c_apps == 0 and apps > 0:
+            # Prior-season fallback — slight penalty for not featuring yet this campaign.
+            base = round(base * 0.88, 1)
+        elif c_apps == 0 and apps == 0:
+            age = _player_age(dob)
+            if age and age >= 23 and line_role in ("CM", "CAM", "CDM", "WING", "ST", "MID"):
+                # Senior outfielder with no synced stats (e.g. long injury) — stay in contention.
+                base = max(base, _compute_standout_rating(rating, 2, 3, 20, position) * 0.85)
+        starts = recent_starts.get(pid, 0)
+        # Recent starters and regulars in this comp rank above raw goal scorers.
+        score = base + starts * 12 + min(apps, 30) * 0.35
+        if is_captain:
+            score += 25
+        if is_captain and c_apps == 0 and line_role in ("CAM", "ST", "CM", "WING"):
+            # Captain / talisman with no synced tournament minutes yet (e.g. Messi).
+            score = max(score, base + 35)
+        if line_role == "GK" or position == "GK":
+            score += min(career_apps, 80) * 0.4 + starts * 8
         squad.append({
             "player_id": pid,
             "name": name,
             "position": position,
-            "score": score,
+            "line_role": line_role,
+            "goals": goals,
+            "assists": ast,
+            "score": round(score, 1),
             "club_team": club,
+            "recent_starts": starts,
+            "appearances": apps,
+            "career_apps": career_apps,
+            "birth_date": dob,
+            "is_captain": is_captain,
         })
     squad.sort(key=lambda p: (-p["score"], p["name"]))
     return squad
 
 
-def _pools_by_position(squad: list[dict]) -> dict[str, list[dict]]:
-    pools: dict[str, list[dict]] = {"GK": [], "DEF": [], "MID": [], "FWD": [], "?": []}
+def _apply_team_captain_boost(squad: list[dict], comp: str, team_name: str) -> None:
+    """Apply manual captain flags when DB sync has not set them yet."""
+    try:
+        from footballmind_jobs import TEAM_CAPTAINS
+    except ImportError:
+        return
+    captain = TEAM_CAPTAINS.get((comp, team_name))
+    if not captain:
+        return
     for p in squad:
-        pools.setdefault(p["position"], []).append(p)
-    for pos in pools:
-        pools[pos].sort(key=lambda x: (-x["score"], x["name"]))
-    return pools
+        if p["name"] != captain and captain not in p["name"]:
+            continue
+        p["is_captain"] = True
+        if p.get("line_role") == "WING" and (p.get("goals") or 0) + (p.get("assists") or 0) == 0:
+            p["line_role"] = "CAM"
+        if (p.get("appearances") or 0) == 0:
+            p["score"] = round(max(float(p["score"]), 90) + 25, 1)
+        else:
+            p["score"] = round(float(p["score"]) + 25, 1)
+    squad.sort(key=lambda p: (-p["score"], p["name"]))
 
 
-def _can_fill(slots: list[str], pools: dict[str, list[dict]]) -> bool:
-    need: dict[str, int] = {}
-    for pos in slots:
-        need[pos] = need.get(pos, 0) + 1
-    return all(len(pools.get(pos, [])) >= n for pos, n in need.items())
+def _slot_matches_player(slot: str, player: dict) -> bool:
+    lr = player.get("line_role") or player.get("position") or "?"
+    if slot == lr:
+        return True
+    if slot == "WING" and lr == "WING":
+        return True
+    if slot == "ST" and lr == "ST":
+        return True
+    if slot == "CM" and lr in ("CM", "CDM", "CAM"):
+        return True
+    if slot == "CDM" and lr in ("CDM", "CM"):
+        return True
+    if slot == "CAM" and lr in ("CAM", "CM"):
+        return True
+    if slot == "CB" and lr == "CB":
+        return True
+    if slot in ("LB", "RB") and lr == slot:
+        return True
+    # Legacy coarse slots (older formations / synced data)
+    if slot == "MID" and lr in ("MID", "CM", "CDM", "CAM", "?"):
+        return True
+    if slot == "DEF" and lr in ("DEF", "CB", "LB", "RB"):
+        return True
+    if slot == "FWD" and lr in ("ST", "WING"):
+        return True
+    return False
 
 
-def _formation_score(slots: list[str], pools: dict[str, list[dict]]) -> float:
-    if not _can_fill(slots, pools):
+def _sorted_candidates(candidates: list[dict], key_fn) -> list[dict]:
+    candidates.sort(key=key_fn)
+    return candidates
+
+
+def _prefer_senior(candidates: list[dict], min_age: int = 20) -> list[dict]:
+    """Prefer established players over academy names when scores are close."""
+    if not candidates:
+        return candidates
+    ranked = sorted(candidates, key=lambda p: (-p["score"], p["name"]))
+    if _eligible_starter(ranked[0]):
+        return ranked
+    senior = [p for p in ranked if (_player_age(p.get("birth_date")) or 99) >= min_age]
+    return senior if senior else ranked
+
+
+def _gk_rank_key(player: dict) -> tuple:
+    age = _player_age(player.get("birth_date")) or 0
+    youth = age < 21
+    return (
+        -(player.get("recent_starts") or 0),
+        -(player.get("career_apps") or 0),
+        -(player.get("appearances") or 0),
+        1 if youth else 0,
+        -player["score"],
+        player["name"],
+    )
+
+
+def _candidates_for_slot(slot: str, squad: list[dict], taken: set[int]) -> list[dict]:
+    """Best-fit players for a lineup slot (role-aware)."""
+    avail = [p for p in squad if p["player_id"] not in taken]
+    if slot != "GK":
+        eligible = [p for p in avail if _eligible_starter(p)]
+        if eligible:
+            avail = eligible
+    score_key = lambda p: (-p["score"], p["name"])
+    if slot == "ST":
+        primary = [p for p in avail if p.get("line_role") == "ST"]
+        primary.sort(key=lambda p: (-(p.get("goals") or 0), -p["score"], p["name"]))
+        if primary:
+            return _prefer_senior(primary)
+        fwd = [p for p in avail if p.get("position") == "FWD"]
+        fwd.sort(key=lambda p: (-(p.get("goals") or 0), -p["score"], p["name"]))
+        return _prefer_senior(fwd)
+    if slot == "WING":
+        primary = [p for p in avail if p.get("line_role") == "WING"]
+        primary.sort(key=lambda p: (-(p.get("assists") or 0), -p["score"], p["name"]))
+        if primary:
+            return _prefer_senior(primary)
+        wide = [p for p in avail if p.get("position") == "FWD" and p.get("line_role") != "ST"]
+        wide.sort(key=lambda p: (-(p.get("assists") or 0), -p["score"], p["name"]))
+        mids = [p for p in avail if p.get("position") == "MID"]
+        mids.sort(key=lambda p: (-(p.get("assists") or 0), -p["score"], p["name"]))
+        return _prefer_senior(wide + mids)
+    if slot == "CAM":
+        primary = [p for p in avail if p.get("line_role") == "CAM"]
+        primary.sort(key=lambda p: (-(p.get("assists") or 0), -p["score"], p["name"]))
+        if primary:
+            return _prefer_senior(primary)
+        cms = [p for p in avail if p.get("line_role") == "CM"]
+        cms.sort(key=lambda p: (-(p.get("assists") or 0), -p["score"], p["name"]))
+        return _prefer_senior(cms)
+    if slot == "CDM":
+        primary = [p for p in avail if p.get("line_role") in ("CDM", "CM")]
+        # No.10 types belong in the CAM row, not the pivot.
+        primary = [
+            p for p in primary
+            if p.get("line_role") != "CAM"
+            and not (p.get("line_role") == "CM" and p["score"] >= 72
+                     and (p.get("assists") or 0) >= 2)
+        ]
+        primary.sort(key=lambda p: (
+            0 if p.get("line_role") == "CDM" else 1,
+            -(p["score"]),
+            (p.get("assists") or 0),
+            p["name"],
+        ))
+        eligible = _prefer_senior([p for p in primary if _eligible_starter(p)])
+        if eligible:
+            return eligible
+        if primary:
+            return _prefer_senior(primary)
+        mids = [p for p in avail if p.get("line_role") == "CAM"]
+        return _sorted_candidates(mids, score_key)
+    if slot == "CM":
+        primary = [p for p in avail if p.get("line_role") == "CM"]
+        primary.sort(key=score_key)
+        eligible = _prefer_senior([p for p in primary if _eligible_starter(p)])
+        if eligible:
+            return eligible
+        if primary:
+            return primary
+        mids = [p for p in avail if p.get("line_role") in ("CDM", "CAM")]
+        eligible = _prefer_senior([p for p in mids if _eligible_starter(p)])
+        return _sorted_candidates(eligible or mids, score_key)
+    if slot == "LB":
+        primary = [p for p in avail if p.get("line_role") == "LB"]
+        if primary:
+            return _sorted_candidates(_prefer_senior(primary), score_key)
+        fallback = [p for p in avail if p.get("line_role") == "RB"]
+        if fallback:
+            return _sorted_candidates(_prefer_senior(fallback), score_key)
+        wide_defs = [p for p in avail if p.get("line_role") in ("CB", "DEF")
+                     or p.get("position") == "DEF"]
+        return _sorted_candidates(_prefer_senior(wide_defs), score_key)
+    if slot == "RB":
+        primary = [p for p in avail if p.get("line_role") == "RB"]
+        if primary:
+            return _sorted_candidates(_prefer_senior(primary), score_key)
+        fallback = [p for p in avail if p.get("line_role") == "LB"]
+        if fallback:
+            return _sorted_candidates(_prefer_senior(fallback), score_key)
+        wide_defs = [p for p in avail if p.get("line_role") in ("CB", "DEF")
+                     or p.get("position") == "DEF"]
+        return _sorted_candidates(_prefer_senior(wide_defs), score_key)
+    if slot == "CB":
+        primary = [p for p in avail if p.get("line_role") == "CB"]
+        if primary:
+            return _sorted_candidates(primary, score_key)
+        defs = [p for p in avail if p.get("position") == "DEF" and p.get("line_role") not in ("LB", "RB")]
+        return _sorted_candidates(defs, score_key)
+    if slot == "MID":
+        primary = [p for p in avail if p.get("line_role") in ("CM", "CDM", "CAM", "MID")]
+        if primary:
+            return _sorted_candidates(primary, score_key)
+        return _sorted_candidates(avail, score_key)
+    if slot == "DEF":
+        defs = [p for p in avail if p.get("line_role") in ("CB", "LB", "RB", "DEF")
+                or p.get("position") == "DEF"]
+        return _sorted_candidates(defs, score_key)
+    if slot == "GK":
+        gks = [p for p in avail if p.get("line_role") == "GK" or p.get("position") == "GK"]
+        return _sorted_candidates(gks, _gk_rank_key)
+    return _sorted_candidates(avail, score_key)
+
+
+def _can_fill(slots: list[str], squad: list[dict]) -> bool:
+    taken: set[int] = set()
+    for slot in slots:
+        if not _candidates_for_slot(slot, squad, taken):
+            return False
+        taken.add(_candidates_for_slot(slot, squad, taken)[0]["player_id"])
+    return True
+
+
+def _formation_score(slots: list[str], squad: list[dict]) -> float:
+    if not _can_fill(slots, squad):
         return -1.0
-    used: dict[str, int] = {}
+    taken: set[int] = set()
     total = 0.0
-    for pos in slots:
-        idx = used.get(pos, 0)
-        total += pools[pos][idx]["score"]
-        used[pos] = idx + 1
+    for slot in slots:
+        picked = _candidates_for_slot(slot, squad, taken)[0]
+        total += picked["score"]
+        taken.add(picked["player_id"])
+    wing_slots = slots.count("WING")
+    elite_wings = [p for p in squad if p.get("line_role") == "WING"][:2]
+    if len(elite_wings) >= 2 and wing_slots < 2:
+        total -= sum(p["score"] for p in elite_wings) * 0.12
+    if wing_slots >= 2 and len(elite_wings) >= 2:
+        total += min(elite_wings[0]["score"], elite_wings[1]["score"]) * 0.08
     return total
 
 
-def _pick_formation(pools: dict[str, list[dict]], preferred: str | None) -> str:
-    if preferred and preferred in FORMATION_SLOTS and _can_fill(FORMATION_SLOTS[preferred], pools):
+def _pick_formation(squad: list[dict], preferred: str | None, kind: str) -> str:
+    preferred = normalize_formation(preferred)
+    if preferred and preferred in FORMATION_SLOTS and _can_fill(FORMATION_SLOTS[preferred], squad):
         return preferred
+    order = (
+        list(_CLUB_FORMATION_PREF) if kind == "club"
+        else list(_NATIONAL_FORMATION_PREF)
+    )
     best_f, best_s = "4-3-3", -1.0
-    for fname, slots in FORMATION_SLOTS.items():
-        score = _formation_score(slots, pools)
+    scores: dict[str, float] = {}
+    for fname in order:
+        if fname not in FORMATION_SLOTS:
+            continue
+        score = _formation_score(FORMATION_SLOTS[fname], squad)
+        scores[fname] = score
         if score > best_s:
             best_s, best_f = score, fname
+    pref_list = _CLUB_FORMATION_PREF if kind == "club" else _NATIONAL_FORMATION_PREF
+    if best_s > 0:
+        for fname in pref_list:
+            if scores.get(fname, -1) >= best_s * 0.97:
+                return fname
     return best_f
 
 
-def _pick_xi(slots: list[str], pools: dict[str, list[dict]], unavailable: set[int]) -> list[dict]:
-    used: dict[str, int] = {}
-    xi: list[dict] = []
+def _slot_fill_order(slots: list[str]) -> list[int]:
+    """Fill attacking slots before pivots so creative mids land in CAM/WING, not CDM."""
+    priority = {
+        "ST": 0, "WING": 1, "CAM": 2, "CM": 3, "CDM": 4,
+        "RB": 5, "LB": 5, "CB": 6, "DEF": 6, "GK": 7,
+    }
+    return sorted(range(len(slots)), key=lambda i: (priority.get(slots[i], 9), i))
+
+
+def _pick_xi(slots: list[str], squad: list[dict], unavailable: set[int],
+             last_starters: list[dict] | None = None) -> list[dict]:
+    """Fill XI; prefer last-match starters when still available."""
+    last_starters = last_starters or []
+    avail = [p for p in squad if p["player_id"] not in unavailable]
+    # Enrich last starters with line_role from squad roster when possible.
+    roster = {p["player_id"]: p for p in avail}
+    for s in last_starters:
+        if s["player_id"] in roster:
+            s["line_role"] = roster[s["player_id"]].get("line_role")
+            s["goals"] = roster[s["player_id"]].get("goals")
+            s["assists"] = roster[s["player_id"]].get("assists")
+
+    xi: list[dict | None] = [None] * len(slots)
     taken: set[int] = set()
-    for i, pos in enumerate(slots):
-        idx = used.get(pos, 0)
-        picked = None
-        while idx < len(pools.get(pos, [])):
-            cand = pools[pos][idx]
-            idx += 1
-            if cand["player_id"] not in unavailable and cand["player_id"] not in taken:
-                picked = {**cand, "slot": i + 1, "line_pos": pos}
-                taken.add(cand["player_id"])
+
+    # Pass 1: keep recent starters in matching slots.
+    for i, slot in enumerate(slots):
+        for s in last_starters:
+            pid = s["player_id"]
+            if pid in unavailable or pid in taken:
+                continue
+            if not _slot_matches_player(slot, s):
+                continue
+            pool_match = roster.get(pid)
+            if pool_match:
+                xi[i] = {**pool_match, "slot": i + 1, "line_pos": slot}
+                taken.add(pid)
                 break
+
+    # Pass 2: fill remaining slots by role fit (attack-first so CAM isn't lost to CDM).
+    for i in _slot_fill_order(slots):
+        slot = slots[i]
+        if xi[i] is not None:
+            continue
+        cands = _candidates_for_slot(slot, avail, taken)
+        if cands:
+            picked = cands[0]
+        else:
+            # Last resort — still respect senior/eligibility for model fill-ins.
+            fallback = [p for p in avail if p["player_id"] not in taken and _eligible_starter(p)]
+            fallback.sort(key=lambda p: (-p["score"], p["name"]))
+            picked = fallback[0] if fallback else None
         if picked:
-            xi.append(picked)
-        used[pos] = idx
-    return xi
+            xi[i] = {**picked, "slot": i + 1, "line_pos": slot}
+            taken.add(picked["player_id"])
+
+    return [p for p in xi if p is not None]
 
 
 def _team_last_and_next_match(cur, team_id: int, comp: str) -> tuple[int | None, int | None]:
@@ -158,14 +601,15 @@ def _card_suspensions(cur, team_id: int, comp: str) -> list[dict]:
 
 def _manual_unavailable(cur, team_id: int, comp: str) -> list[dict]:
     cur.execute(
-        "SELECT p.id, p.name, pa.status, pa.reason "
+        "SELECT p.id, p.name, pa.status, pa.reason, pa.source "
         "FROM player_availability pa "
         "JOIN players p ON p.id = pa.player_id "
         "WHERE pa.team_id = %s AND pa.comp_code = %s",
         (team_id, comp))
     return [
-        {"player_id": pid, "name": name, "status": status, "reason": reason or status}
-        for pid, name, status, reason in cur.fetchall()
+        {"player_id": pid, "name": name, "status": status,
+         "reason": reason or status, "source": source or "manual"}
+        for pid, name, status, reason, source in cur.fetchall()
     ]
 
 
@@ -188,30 +632,187 @@ def _next_opponent(cur, team_id: int, comp: str) -> str | None:
     return away if home_id == team_id else home
 
 
-def _formation_rows(xi: list[dict], formation: str) -> list[dict]:
-    if formation == "4-2-3-1":
-        groups = [("FWD", 1), ("MID", 3), ("MID", 2), ("DEF", 4), ("GK", 1)]
-    elif formation == "3-5-2":
-        groups = [("FWD", 2), ("MID", 5), ("DEF", 3), ("GK", 1)]
-    elif formation == "5-3-2":
-        groups = [("FWD", 2), ("MID", 3), ("DEF", 5), ("GK", 1)]
-    elif formation == "4-4-2":
-        groups = [("FWD", 2), ("MID", 4), ("DEF", 4), ("GK", 1)]
-    elif formation == "3-4-3":
-        groups = [("FWD", 3), ("MID", 4), ("DEF", 3), ("GK", 1)]
-    else:
-        groups = [("FWD", 3), ("MID", 3), ("DEF", 4), ("GK", 1)]
+_FORMATION_ROW_SLOTS: dict[str, list[tuple[str, list[int]]]] = {
+    "4-3-2-1": [
+        ("ST", [11]), ("WING", [9, 10]), ("CAM", [8]), ("MID", [7, 6]),
+        ("DEF", [2, 3, 4, 5]), ("GK", [1]),
+    ],
+    "4-3-3": [
+        ("ST", [10]), ("WING", [9, 11]), ("MID", [7, 6, 8]),
+        ("DEF", [2, 3, 4, 5]), ("GK", [1]),
+    ],
+    "4-2-3-1": [
+        ("ST", [11]), ("WING", [8, 10]), ("CAM", [9]), ("MID", [6, 7]),
+        ("DEF", [2, 3, 4, 5]), ("GK", [1]),
+    ],
+    "4-4-2": [
+        ("ST", [10, 11]), ("MID", [8, 6, 7, 9]),
+        ("DEF", [2, 3, 4, 5]), ("GK", [1]),
+    ],
+    "4-1-4-1": [
+        ("ST", [11]), ("MID", [7, 8, 9, 10]), ("CDM", [6]),
+        ("DEF", [2, 3, 4, 5]), ("GK", [1]),
+    ],
+    "3-5-2": [
+        ("ST", [10, 11]), ("MID", [5, 6, 7, 8, 9]),
+        ("DEF", [2, 3, 4]), ("GK", [1]),
+    ],
+    "5-3-2": [
+        ("ST", [10, 11]), ("MID", [7, 8, 9]),
+        ("DEF", [2, 3, 4, 5, 6]), ("GK", [1]),
+    ],
+    "3-4-3": [
+        ("ST", [10]), ("WING", [8, 11]), ("MID", [6, 7, 9]),
+        ("DEF", [2, 3, 4]), ("GK", [1]),
+    ],
+}
 
-    by_pos: dict[str, list] = {"GK": [], "DEF": [], "MID": [], "FWD": []}
-    for p in xi:
-        by_pos.setdefault(p["line_pos"], []).append(p)
 
+def _formation_rows(xi: list[dict], formation: str,
+                    ratings: dict[int, float] | None = None) -> list[dict]:
+    ratings = ratings or {}
+    by_slot = {p["slot"]: p for p in xi}
+    specs = _FORMATION_ROW_SLOTS.get(formation, _FORMATION_ROW_SLOTS["4-3-3"])
     rows = []
-    for pos, count in groups:
-        chunk = by_pos.get(pos, [])[:count]
-        by_pos[pos] = by_pos.get(pos, [])[count:]
-        rows.append({"line": pos, "players": [{"name": p["name"], "score": p["score"]} for p in chunk]})
+    for line, slots in specs:
+        players = []
+        for s in slots:
+            if s not in by_slot:
+                continue
+            p = by_slot[s]
+            pid = p.get("player_id")
+            rating = ratings.get(pid) if pid else None
+            players.append({
+                "name": p["name"],
+                "score": p["score"],
+                "position": p.get("line_pos") or line,
+                "rating": rating,
+            })
+        if players:
+            rows.append({"line": line, "players": players})
     return list(reversed(rows))
+
+
+def _line_bucket(line_role: str, position: str) -> str:
+    lr = (line_role or "?").upper()
+    pos = (position or "?").upper()
+    if lr == "GK" or pos == "GK":
+        return "GK"
+    if lr in ("LB", "RB", "CB", "DEF") or pos == "DEF":
+        return "DEF"
+    if lr == "ST" or (pos == "FWD" and lr not in ("WING", "CAM")):
+        return "ST"
+    if lr == "WING":
+        return "WING"
+    if lr == "CAM":
+        return "CAM"
+    if lr == "CDM":
+        return "CDM"
+    return "MID"
+
+
+def _sort_defenders(players: list[dict]) -> list[dict]:
+    order = {"LB": 0, "CB": 1, "DEF": 1, "RB": 2}
+    return sorted(
+        players,
+        key=lambda p: (
+            order.get((p.get("position") or "?").upper(), 1),
+            p.get("shirt_number") or 99,
+            p.get("name") or "",
+        ),
+    )
+
+
+def _rows_from_confirmed_starters(
+    starters: list[dict],
+    roster: dict[int, dict],
+    ratings: dict[int, float] | None = None,
+) -> list[dict]:
+    """Build pitch rows from synced starters (don't re-pick XI slots)."""
+    ratings = ratings or {}
+    buckets: dict[str, list[dict]] = {
+        "ST": [], "WING": [], "CAM": [], "MID": [], "CDM": [], "DEF": [], "GK": [],
+    }
+    for s in starters:
+        pid = s["player_id"]
+        r = roster.get(pid, {})
+        pos = s.get("position") or r.get("position") or "?"
+        lr = resolve_player_line_role(
+            name=s.get("name") or r.get("name", "?"),
+            db_line_role=r.get("line_role"),
+            db_position=pos,
+            goals=r.get("goals") or 0,
+            assists=r.get("assists") or 0,
+        )
+        bucket = _line_bucket(lr, pos)
+        if bucket == "MID" and lr == "CM":
+            bucket = "MID"
+        entry = {
+            "name": s.get("name") or r.get("name", "?"),
+            "score": r.get("score"),
+            "position": lr if lr != "?" else pos,
+            "rating": ratings.get(pid),
+            "shirt_number": s.get("shirt_number"),
+            "player_id": pid,
+        }
+        buckets[bucket].append(entry)
+
+    for key in buckets:
+        buckets[key].sort(key=lambda p: (p.get("shirt_number") or 99, p.get("name") or ""))
+
+    rows: list[dict] = []
+    if buckets["ST"]:
+        rows.append({"line": "ST", "players": buckets["ST"]})
+    attack_mid = buckets["WING"] + buckets["CAM"]
+    if attack_mid:
+        rows.append({"line": "WING" if buckets["WING"] else "CAM", "players": attack_mid})
+    mid = buckets["MID"] + buckets["CDM"]
+    if mid:
+        rows.append({"line": "MID", "players": mid})
+    if buckets["DEF"]:
+        rows.append({"line": "DEF", "players": _sort_defenders(buckets["DEF"])})
+    if buckets["GK"]:
+        rows.append({"line": "GK", "players": buckets["GK"]})
+    return list(reversed(rows))
+
+
+def _confirmed_from_starters(
+    last_starters: list[dict],
+    roster: dict[int, dict],
+    formation: str | None,
+    last_match: dict | None,
+    last_ratings: dict[int, float],
+    unavailable_ids: set[int],
+) -> dict | None:
+    if len(last_starters) < 9:
+        return None
+    cf = normalize_formation(formation) or "4-3-3"
+    active = [s for s in last_starters if s["player_id"] not in unavailable_ids]
+    if len(active) < 9:
+        return None
+    starters_out = []
+    for s in active:
+        r = roster.get(s["player_id"], {})
+        lr = resolve_player_line_role(
+            name=s.get("name") or r.get("name", "?"),
+            db_line_role=r.get("line_role"),
+            db_position=s.get("position") or r.get("position"),
+            goals=r.get("goals") or 0,
+            assists=r.get("assists") or 0,
+        )
+        starters_out.append({
+            "name": s.get("name") or r.get("name", "?"),
+            "position": lr,
+            "shirt_number": s.get("shirt_number"),
+            "score": r.get("score"),
+            "rating": last_ratings.get(s["player_id"]),
+        })
+    return {
+        "formation": cf,
+        "match": last_match,
+        "starters": starters_out,
+        "rows": _rows_from_confirmed_starters(active, roster, last_ratings),
+    }
 
 
 def get_predicted_lineup(conn, team_name: str, comp: str | None = "WC") -> dict:
@@ -225,36 +826,73 @@ def get_predicted_lineup(conn, team_name: str, comp: str | None = "WC") -> dict:
         cur.execute("SELECT name FROM teams WHERE id = %s", (team_id,))
         resolved = cur.fetchone()[0]
 
-        squad = _ranked_squad(cur, team_id, kind)
+        recent_starts = _recent_starter_counts(cur, team_id, comp)
+        last_formation, last_starters, last_match = _last_match_starters(cur, team_id, comp)
+        squad = _ranked_squad(cur, team_id, kind, comp, recent_starts)
+        _apply_team_captain_boost(squad, comp, resolved)
         if not squad:
             return {"team": resolved, "comp": comp, "error": "No squad on file for this team."}
 
         unavailable_list = _card_suspensions(cur, team_id, comp) + _manual_unavailable(cur, team_id, comp)
         unavailable_ids = {u["player_id"] for u in unavailable_list}
-        pools = _pools_by_position([p for p in squad if p["player_id"] not in unavailable_ids])
+        avail_squad = [p for p in squad if p["player_id"] not in unavailable_ids]
         opponent = _next_opponent(cur, team_id, comp)
 
     recent = get_team_formations(conn, resolved, comp, limit=3)
-    preferred = recent[0]["formation"] if recent else None
-    formation = _pick_formation(pools, preferred)
-    xi = _pick_xi(FORMATION_SLOTS[formation], pools, unavailable_ids)
+    hint = _TEAM_FORMATION_HINT.get((comp, resolved))
+    preferred = last_formation or (recent[0]["formation"] if recent else None) or hint
+    preferred = normalize_formation(preferred)
+    formation = _pick_formation(avail_squad, preferred, kind)
+    xi = _pick_xi(FORMATION_SLOTS[formation], avail_squad, unavailable_ids, last_starters)
 
+    used_recent = len(last_starters) >= 9 and formation == preferred
+    confirmed = None
+    last_ratings: dict[int, float] = {}
+    if last_match and last_match.get("match_id"):
+        from footballmind_enrich import get_match_ratings
+        last_ratings = get_match_ratings(conn, last_match["match_id"])
+    roster = {p["player_id"]: p for p in avail_squad}
+    if len(last_starters) >= 9 and last_formation:
+        confirmed = _confirmed_from_starters(
+            last_starters, roster, last_formation, last_match,
+            last_ratings, unavailable_ids,
+        )
     xi_ids = {p["player_id"] for p in xi}
-    bench = [p for p in squad if p["player_id"] not in xi_ids and p["player_id"] not in unavailable_ids][:7]
+    pool = [p for p in squad if p["player_id"] not in xi_ids
+            and p["player_id"] not in unavailable_ids]
+    outfield = [p for p in pool if p.get("line_role") != "GK" and p.get("position") != "GK"]
+    keepers = sorted(
+        [p for p in pool if p.get("line_role") == "GK" or p.get("position") == "GK"],
+        key=_gk_rank_key,
+    )
+    bench = outfield[:6 if keepers else 7]
+    if keepers:
+        # One backup GK on the bench — never four keepers.
+        starter_gk = next((p["player_id"] for p in xi if p.get("line_pos") == "GK"), None)
+        backups = [k for k in keepers if k["player_id"] != starter_gk]
+        if backups:
+            bench.append(backups[0])
+        elif len(bench) < 7:
+            bench.extend(outfield[6:7])
 
     return {
         "team": resolved,
         "comp": comp,
         "formation": formation,
-        "source": "recent_lineup" if preferred and preferred == formation else "predicted",
-        "recent_formations": [r["formation"] for r in recent if r.get("formation")],
+        "source": "recent_lineup" if used_recent else (
+            "recent_formation" if preferred and preferred == formation else "predicted"),
+        "recent_formations": [
+            normalize_formation(r["formation"]) or r["formation"]
+            for r in recent if r.get("formation")
+        ],
         "next_opponent": opponent,
         "starters": [
             {"name": p["name"], "position": p["line_pos"], "score": p["score"],
              "club_team": p.get("club_team")}
             for p in xi
         ],
-        "rows": _formation_rows(xi, formation),
+        "rows": _formation_rows(xi, formation, last_ratings if used_recent else None),
+        "confirmed": confirmed,
         "bench": [{"name": p["name"], "position": p["position"], "score": p["score"]} for p in bench],
         "unavailable": unavailable_list,
     }

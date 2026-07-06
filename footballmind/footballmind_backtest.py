@@ -176,7 +176,7 @@ def backtest_from_db(conn, edition_ids, test_start, **kwargs):
 # ----------------------------------------------------------------------
 def sweep(matches, test_start, half_lives=(90, 180, 365),
           credibilities=(5, 10, 20), refit_every_days=14,
-          importance="league", target="hybrid"):
+          importance="league", target="hybrid", min_history=60):
     """Backtest every (half_life_days, full_credibility) combination and rank
     them by the target model's mean RPS (lowest first). Returns the best cell
     plus the full grid so you can see the whole surface."""
@@ -186,14 +186,20 @@ def sweep(matches, test_start, half_lives=(90, 180, 365),
             res = backtest_matches(matches, test_start, half_life_days=hl,
                                    full_credibility=fc,
                                    refit_every_days=refit_every_days,
-                                   importance=importance)
+                                   importance=importance,
+                                   min_history=min_history)
             grid.append({"half_life_days": hl, "full_credibility": fc,
                          "mean_rps": res[target]["mean_rps"], "n": res[target]["n"]})
-    grid.sort(key=lambda r: r["mean_rps"])
-    return {"best": grid[0], "grid": grid, "target": target}
+    viable = [r for r in grid if r["mean_rps"] is not None]
+    if not viable:
+        raise ValueError("no backtest folds scored (insufficient match history)")
+    viable.sort(key=lambda r: r["mean_rps"])
+    return {"best": viable[0], "grid": grid, "target": target}
 
 
 def _load_matches(conn, edition_ids):
+    from footballmind_db import release_transaction
+
     with conn.cursor() as cur:
         cur.execute(
             "SELECT home_team_id, away_team_id, home_goals, away_goals, "
@@ -201,6 +207,7 @@ def _load_matches(conn, edition_ids):
             "WHERE edition_id = ANY(%s) AND home_goals IS NOT NULL "
             "ORDER BY match_date", (list(edition_ids),))
         rows = cur.fetchall()
+    release_transaction(conn)
     return [{"home": r[0], "away": r[1], "hg": r[2], "ag": r[3],
              "date": r[4].date(), "neutral": r[5] != "regular_season"}
             for r in rows]
