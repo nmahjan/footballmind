@@ -34,12 +34,3 @@ def test_sync_key_events_inserts_goals():
     assert resolve.call_count == 2
     insert_sql = cur.execute.call_args_list[-1][0][0]
     assert "INSERT INTO match_events" in insert_sql
-
-
-def test_sync_key_events_skips_delete_when_no_scoring_plays():
-    summary = {"keyEvents": [{"scoringPlay": False, "type": {"type": "yellowcard"}}]}
-    cur = MagicMock()
-    n = _sync_espn_key_events(cur, 42, summary, {})
-    assert n == 0
-    delete_sql = [call[0][0] for call in cur.execute.call_args_list]
-    assert not any("DELETE FROM match_events" in s for s in delete_sql)

@@ -1,0 +1,11 @@
+{
+  "name": "footballmind-dev",
+  "build": { "dockerfile": "Dockerfile" },
+  "forwardPorts": [5000, 5173, 5432],
+  "postCreateCommand": "pip install -r requirements.txt && npm install --prefix frontend",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "esbenp.prettier-vscode"]
+    }
+  }
+}

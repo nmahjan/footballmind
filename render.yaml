@@ -2,6 +2,7 @@ services:
   - type: web
     name: footballmind
     runtime: python
+    rootDir: footballmind
     buildCommand: pip install --timeout 120 --retries 5 -r requirements.txt
     startCommand: uvicorn footballmind_asgi:app --host 0.0.0.0 --port $PORT
     envVars:
