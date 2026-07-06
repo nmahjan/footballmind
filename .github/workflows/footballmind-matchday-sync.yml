@@ -46,6 +46,11 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python footballmind_jobs.py regrade
 
+
+      - name: Quick model refit
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python footballmind_jobs.py quick-refit
       - name: Failure summary
         if: failure()
         run: |
