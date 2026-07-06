@@ -30,7 +30,7 @@ from footballmind_sync import (TokenBucket, FootballDataClient,
                                sync_competition, sync_teams_and_squads,
                                sync_scorers, sync_match_details,
                                refresh_knockout_scores, apply_team_captains)
-from footballmind_production import select_and_deploy
+from footballmind_production import select_and_deploy, train_and_store
 from footballmind_seed_elo import seed_national_elo
 from footballmind_grading import grade_predictions, link_orphan_predictions
 from footballmind_enrich import sync_enrichment
@@ -496,6 +496,33 @@ def _print_wikipedia_stats(stats: dict) -> None:
                 print(f"[sync-wikipedia:{label}] error: {err}", flush=True)
 
 
+
+
+def cmd_quick_refit():
+    """Re-fit Dixon-Coles on latest data using the already-tuned hyperparameters.
+    No parameter sweep -- fast enough to run after every matchday sync."""
+    domains = [
+        ([c[0] for c in COMPETITIONS if c[3] == "club"],     "production_club",          180, 10),
+        ([c[0] for c in COMPETITIONS if c[3] == "national"], "production_international", 180,  5),
+    ]
+    with _connect() as conn:
+        for codes, name, default_hl, default_cred in domains:
+            editions = _editions_for(conn, codes)
+            if not editions:
+                print(f"[quick-refit] {name}: no editions, skipping", flush=True)
+                continue
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT half_life_days, full_credibility FROM model_artifacts WHERE name = %s",
+                    (name,))
+                row = cur.fetchone()
+            hl   = row[0] if row else default_hl
+            cred = row[1] if row else default_cred
+            try:
+                train_and_store(conn, editions, hl, cred, name=name)
+                print(f"[quick-refit] {name}: done (half_life={hl}d cred={cred})", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[quick-refit] {name}: skipped ({e})", file=__import__('sys').stderr)
 def cmd_regrade():
     """Re-link orphan predictions and re-grade all finished matches."""
     with _connect() as conn:
@@ -569,6 +596,8 @@ if __name__ == "__main__":
         cmd_sync_matchday(force="--force" in sys.argv)
     elif cmd == "retrain":
         cmd_retrain()
+    elif cmd == "quick-refit":
+        cmd_quick_refit()
     elif cmd == "seed-elo":
         cmd_seed_elo()
     elif cmd == "sync-enrich":
@@ -589,5 +618,5 @@ if __name__ == "__main__":
     else:
         print("usage: footballmind_jobs.py "
               "[sync|sync-matchday|sync-enrich|sync-espn-wc|sync-sofifa|"
-              "sync-footballdata-io|sync-wikipedia|regrade|backfill-scorers|retrain|seed-elo]")
+              "sync-footballdata-io|sync-wikipedia|regrade|backfill-scorers|retrain|quick-refit|seed-elo]")
         sys.exit(1)
