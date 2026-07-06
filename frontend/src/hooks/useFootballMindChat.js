@@ -150,6 +150,24 @@ export function useFootballMindChat(apiBase) {
     send(text);
   }, [send]);
 
+  function restoreSharePredictionMessages(link) {
+    const cached = loadPredictionCache(link?.query);
+    if (!cached?.prediction) return null;
+    const p = cached.prediction;
+    const text = `${p.prediction} (${pct(p.confidence)} confidence). ${p.reasoning || ""}`.trim();
+    return [
+      { role: "user", text: link.query },
+      {
+        role: "bot",
+        text,
+        prediction: cached.prediction,
+        teams: cached.teams,
+        comp: cached.comp,
+        neutral: cached.neutral,
+      },
+    ];
+  }
+
   useEffect(() => {
     saveAdminKeyFromUrl();
   }, []);
@@ -188,7 +206,10 @@ export function useFootballMindChat(apiBase) {
     historyBlockedRef.current = true;
     const sig = deepLinkSignature();
     if (deepLinkAlreadyHandled(sig)) {
+      const restored = restoreSharePredictionMessages(link);
+      if (restored) setMessages(restored);
       clearDeepLinkParams();
+      historyBlockedRef.current = false;
       return;
     }
     markDeepLinkHandled(sig);

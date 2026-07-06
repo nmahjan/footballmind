@@ -6,7 +6,7 @@ name: deploy-pages
 on:
   push:
     branches: [main]
-    paths: ["footballmind/frontend/**", ".github/workflows/pages.yml"]
+    paths: ["frontend/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: footballmind/frontend
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,7 +37,7 @@ jobs:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: footballmind/frontend/dist
+          path: frontend/dist
 
   deploy:
     needs: build

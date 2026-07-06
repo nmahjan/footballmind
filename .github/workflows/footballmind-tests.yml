@@ -5,7 +5,9 @@ on:
   push:
     branches: [main]
     paths:
-      - "footballmind/**"
+      - "**/*.py"
+      - "frontend/**"
+      - "requirements.txt"
       - ".github/workflows/**"
   pull_request:
     branches: [main]
@@ -19,11 +21,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r footballmind/requirements.txt
-      - run: python -m pytest tests/test_*.py -q
-        working-directory: footballmind
+      - run: pip install -r requirements.txt
+      - run: python -m pytest tests/ -q
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - run: npm ci && npm test
-        working-directory: footballmind/frontend
+        working-directory: frontend
