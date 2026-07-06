@@ -1,6 +1,6 @@
 # FootballMind
 
-The project lives in [`footballmind/`].
+The project lives in [`footballmind/`](footballmind/).
 
 ```bash
 cd footballmind
