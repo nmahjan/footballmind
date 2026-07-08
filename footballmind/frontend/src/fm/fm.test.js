@@ -48,6 +48,13 @@ describe("theme flags", () => {
     expect(flagCode("Argentina")).toBe("ar");
     expect(flagCode("United States")).toBe("us");
     expect(flagCode("England")).toBe("gb-eng");
+    expect(flagCode("Austria")).toBe("at");
+    expect(flagCode("Congo DR")).toBe("cd");
+    expect(flagCode("Curaçao")).toBe("cw");
+    expect(flagCode("Iraq")).toBe("iq");
+    expect(flagCode("Jordan")).toBe("jo");
+    expect(flagCode("Tunisia")).toBe("tn");
+    expect(flagCode("Uzbekistan")).toBe("uz");
   });
 });
 
