@@ -9,11 +9,11 @@ KNOCKOUT_STAGES = frozenset({
     "round_of_32", "round_of_16", "quarter_final", "semi_final", "final", "third_place",
 })
 BRACKET_DISPLAY_ORDER = ["round_of_32", "round_of_16", "quarter_final", "semi_final", "final"]
-# football-data.org numbers these late rounds by SCHEDULE, not by vertical bracket
-# position (e.g. WC quarter-finals come back as [top, 3rd, 2nd, bottom]), so ordering
-# them by external_id transposes the middle matches. They must instead be ordered by
-# their feeder matches in the round above. The large early rounds ARE numbered in
-# bracket order, so they stay in external_id order.
+# football-data.org's late-round match order (by matchday/kickoff) does not match the
+# vertical bracket -- WC quarter-finals come back as [top, 3rd, 2nd, bottom], so the
+# two middle QFs are transposed. These rounds are instead ordered by their feeder
+# matches in the round above. round_of_32/round_of_16 keep their existing ordering
+# (their feeder pairs are already adjacent), so the R16/R32 display is unchanged.
 FEEDER_ORDERED_STAGES = frozenset({"quarter_final", "semi_final", "final"})
 BRACKET_SIZES_BY_COMP = {
     "WC": {
@@ -1598,7 +1598,7 @@ def _reorder_round_by_feeders(prev_matches: list[dict],
                               matches: list[dict]) -> list[dict]:
     """Order a round by bracket position: a match fed by previous-round slots s and s'
     sits at slot min(s, s') // 2. Matches whose feeders can't be traced yet (both teams
-    TBD/unplayed) fall into the remaining slots keeping their external_id order. This is
+    TBD/unplayed) fall into the remaining slots keeping their original order. This is
     what fixes the transposed middle quarter-finals."""
     wslot = _winner_slot_map(prev_matches)
     slotted: dict[int, dict] = {}
@@ -1638,7 +1638,8 @@ def get_bracket(conn, comp: str = "WC") -> list:
             "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
             "WHERE c.code = %s "
             "  AND m.stage NOT IN ('regular_season', 'group', 'third_place') "
-            "ORDER BY m.stage, COALESCE(m.external_id::INTEGER, 0) ASC, m.id",
+            "ORDER BY m.stage, COALESCE(m.matchday, 9999), "
+            "         m.match_date ASC NULLS LAST, m.id",
             (comp,))
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
@@ -1662,7 +1663,7 @@ def get_bracket(conn, comp: str = "WC") -> list:
     for stage in BRACKET_DISPLAY_ORDER:
         if stage not in sizes:
             continue
-        matches = rounds.get(stage) or []           # external_id order from the query
+        matches = rounds.get(stage) or []           # query order (matchday/kickoff)
         if stage in FEEDER_ORDERED_STAGES and prev_display:
             matches = _reorder_round_by_feeders(prev_display, matches)
         prev_display = matches
