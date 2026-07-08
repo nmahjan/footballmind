@@ -9,12 +9,16 @@ KNOCKOUT_STAGES = frozenset({
     "round_of_32", "round_of_16", "quarter_final", "semi_final", "final", "third_place",
 })
 BRACKET_DISPLAY_ORDER = ["round_of_32", "round_of_16", "quarter_final", "semi_final", "final"]
-# football-data.org's late-round match order (by matchday/kickoff) does not match the
-# vertical bracket -- WC quarter-finals come back as [top, 3rd, 2nd, bottom], so the
-# two middle QFs are transposed. These rounds are instead ordered by their feeder
-# matches in the round above. round_of_32/round_of_16 keep their existing ordering
-# (their feeder pairs are already adjacent), so the R16/R32 display is unchanged.
+# football-data.org's kickoff order does not match the vertical tournament bracket.
+# The 2026 WC R32/R16 display is fixed from FIFA match-number feeder order; later
+# rounds can then be derived from the winners feeding forward.
 FEEDER_ORDERED_STAGES = frozenset({"quarter_final", "semi_final", "final"})
+WC_BRACKET_INDEX_ORDER = {
+    # Query order is kickoff/date order. Display order groups official feeder
+    # matches so each pair connects to the correct R16/QF path.
+    "round_of_32": [0, 3, 2, 5, 11, 10, 9, 8, 1, 4, 6, 7, 14, 13, 12, 15],
+    "round_of_16": [0, 1, 4, 5, 2, 3, 6, 7],
+}
 BRACKET_SIZES_BY_COMP = {
     "WC": {
         "round_of_32": 16, "round_of_16": 8, "quarter_final": 4,
@@ -1624,6 +1628,13 @@ def _reorder_round_by_feeders(prev_matches: list[dict],
     return result
 
 
+def _reorder_wc_round_by_seed(stage: str, matches: list[dict]) -> list[dict]:
+    order = WC_BRACKET_INDEX_ORDER.get(stage)
+    if not order or len(matches) != len(order):
+        return matches
+    return [matches[i] for i in order]
+
+
 def get_bracket(conn, comp: str = "WC") -> list:
     with conn.cursor() as cur:
         cur.execute(
@@ -1664,6 +1675,8 @@ def get_bracket(conn, comp: str = "WC") -> list:
         if stage not in sizes:
             continue
         matches = rounds.get(stage) or []           # query order (matchday/kickoff)
+        if comp == "WC":
+            matches = _reorder_wc_round_by_seed(stage, matches)
         if stage in FEEDER_ORDERED_STAGES and prev_display:
             matches = _reorder_round_by_feeders(prev_display, matches)
         prev_display = matches
