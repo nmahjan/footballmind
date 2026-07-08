@@ -9,6 +9,7 @@ python-dotenv>=1.0        # loads .env for local dev (footballmind_db.py)
 flask-limiter>=3.5        # per-IP rate limit on /api/chat (LLM cost guard)
 gunicorn>=21.0            # production WSGI server (legacy; see footballmind_asgi.py)
 uvicorn>=0.30             # ASGI server (Flask + MCP on Render)
+starlette>=0.37,<1.0      # ASGI wrapper for Flask + MCP on Render
 litellm>=1.40             # LLM gateway (footballmind_llm.py, needs ANTHROPIC_API_KEY)
 mcp>=1.0                  # MCP server SDK (server.py)
 lxml>=5.0                 # SoFIFA profile HTML parsing (footballmind_sofifa.py)
