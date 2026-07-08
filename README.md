@@ -181,6 +181,12 @@ POST /api/chat
 
 ## Project structure
 
+> **Everything lives at the repository root** — this is the single source of truth and
+> exactly what gets deployed: Render runs `uvicorn footballmind_asgi:app` and GitHub
+> Actions run `python footballmind_jobs.py`, both from the root. The `render.yaml` and
+> workflow paths are root-relative, so do **not** nest the app in a subdirectory — a
+> duplicate copy there will not deploy and will silently drift from what's live.
+
 ```
 ├── frontend/                  # Vite + React UI (GitHub Pages)
 ├── migrations/                # Ordered SQL schema migrations
@@ -199,7 +205,7 @@ POST /api/chat
 ├── footballmind_lineup.py     # Predicted XI + availability logic
 ├── footballmind_mcp_predict.py
 ├── footballmind_sync.py       # football-data.org ingestion
-├── footballmind_jobs.py       # CLI: sync, sync-matchday, sync-wikipedia, retrain, …
+├── footballmind_jobs.py       # CLI: sync, sync-matchday, quick-refit, retrain, sync-wikipedia, …
 ├── scrape_squads.py           # Local CSV export for Wikipedia club squads (optional)
 ├── footballmind_elo.py
 ├── footballmind_dixoncoles.py

@@ -13,12 +13,26 @@ Env:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import unicodedata
 from datetime import date, datetime, timezone
 
 import requests
+
+_log = logging.getLogger("footballmind.enrich")
+
+
+def _feed_error(conn, label: str, exc: Exception) -> None:
+    """Log a swallowed enrichment-feed failure and roll back so the aborted
+    transaction does not cascade-fail every later feed on the same connection."""
+    _log.warning("[enrich] %s failed: %s: %s", label, type(exc).__name__, exc)
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
 
 FPL_BASE = "https://fantasy.premierleague.com/api"
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
@@ -267,6 +281,43 @@ def _find_match_for_fixture(cur, comp_code: str, home_name: str, away_name: str,
     return None
 
 
+def _build_match_index(cur, comp_code: str) -> dict:
+    """Prefetch every finished match for a competition once, indexed by date, so an
+    enrichment loop over hundreds of provider fixtures does an in-memory lookup instead
+    of one SELECT per fixture (the N+1 that dominated Understat / API-Football ratings).
+    Names are pre-normalized to match _find_match_for_fixture's comparison exactly."""
+    cur.execute(
+        "SELECT m.id, m.match_date::date, th.name, ta.name "
+        "FROM matches m "
+        "JOIN teams th ON th.id = m.home_team_id "
+        "JOIN teams ta ON ta.id = m.away_team_id "
+        "JOIN competition_editions e ON e.id = m.edition_id "
+        "JOIN competitions c ON c.id = e.competition_id "
+        "WHERE c.code = %s AND m.home_goals IS NOT NULL "
+        "ORDER BY m.id",
+        (comp_code,))
+    index: dict = {}
+    for mid, mdate, th, ta in cur.fetchall():
+        index.setdefault(mdate, []).append((mid, _norm(th), _norm(ta)))
+    return index
+
+
+def _lookup_match(index: dict, fixture_date: str, home_name: str,
+                  away_name: str) -> int | None:
+    """In-memory equivalent of _find_match_for_fixture against a _build_match_index."""
+    try:
+        d = date.fromisoformat((fixture_date or "")[:10])
+    except ValueError:
+        return None
+    nh, na = _norm(home_name), _norm(away_name)
+    for mid, th, ta in index.get(d, ()):     # id-ordered -> same first-match semantics
+        if th == nh and ta == na:
+            return mid
+        if nh in th and na in ta:
+            return mid
+    return None
+
+
 def sync_api_football_injuries(conn, client: ApiFootballClient,
                                comp_code: str) -> int:
     cfg = API_FOOTBALL_LEAGUES.get(comp_code)
@@ -315,19 +366,21 @@ def sync_api_football_ratings(conn, client: ApiFootballClient,
     league_id, season = cfg
     n = 0
     with conn.cursor() as cur:
+        match_index = _build_match_index(cur, comp_code)
         for fix in client.fixtures_last(league_id, season, last=last_n):
             fid = fix["fixture"]["id"]
             fdate = (fix["fixture"].get("date") or "")[:10]
             home = (fix.get("teams") or {}).get("home") or {}
             away = (fix.get("teams") or {}).get("away") or {}
-            match_id = _find_match_for_fixture(
-                cur, comp_code, home.get("name", ""), away.get("name", ""), fdate)
+            match_id = _lookup_match(
+                match_index, fdate, home.get("name", ""), away.get("name", ""))
             if not match_id:
                 continue
             _store_provider_id(cur, "match", match_id, "api_football", str(fid))
             try:
                 teams_data = client.fixture_players(fid)
-            except RuntimeError:
+            except RuntimeError as exc:
+                _log.info("[enrich] api_football fixture_players(%s) skipped: %s", fid, exc)
                 continue
             for side in teams_data:
                 team_name = (side.get("team") or {}).get("name") or ""
@@ -385,6 +438,7 @@ def sync_understat_xg(conn, comp_code: str) -> int:
     matches = _parse_understat_matches(raw)
     n = 0
     with conn.cursor() as cur:
+        match_index = _build_match_index(cur, comp_code)
         for m in matches:
             if not m.get("isResult"):
                 continue
@@ -398,7 +452,7 @@ def sync_understat_xg(conn, comp_code: str) -> int:
             dt = (m.get("datetime") or "")[:10]
             if not dt:
                 continue
-            match_id = _find_match_for_fixture(cur, comp_code, home, away, dt)
+            match_id = _lookup_match(match_index, dt, home, away)
             if not match_id:
                 continue
             cur.execute(
@@ -538,12 +592,12 @@ def sync_api_football_comp_metadata(conn, client: ApiFootballClient,
     out = {"conferences": 0, "players": 0}
     try:
         out["conferences"] = sync_api_football_conferences(conn, client, comp_code)
-    except Exception:
-        pass
+    except Exception as exc:
+        _feed_error(conn, f"api_football_conferences[{comp_code}]", exc)
     try:
         out["players"] = sync_api_football_squads(conn, client, comp_code)
-    except Exception:
-        pass
+    except Exception as exc:
+        _feed_error(conn, f"api_football_squads[{comp_code}]", exc)
     return out
 
 
@@ -563,17 +617,17 @@ def sync_enrichment(conn, comps: list[str] | None = None) -> dict[str, int]:
                 continue  # FPL is richer for PL injuries
             try:
                 inj_total += sync_api_football_injuries(conn, client, code)
-            except Exception:
-                pass
+            except Exception as exc:
+                _feed_error(conn, f"api_football_injuries[{code}]", exc)
             try:
                 rat_total += sync_api_football_ratings(conn, client, code, last_n=3)
-            except Exception:
-                pass
+            except Exception as exc:
+                _feed_error(conn, f"api_football_ratings[{code}]", exc)
         # PL ratings only (no duplicate injury source)
         try:
             rat_total += sync_api_football_ratings(conn, client, "PL", last_n=5)
-        except Exception:
-            pass
+        except Exception as exc:
+            _feed_error(conn, "api_football_ratings[PL]", exc)
         out["api_football_injuries"] = inj_total
         out["api_football_ratings"] = rat_total
     else:
@@ -586,8 +640,8 @@ def sync_enrichment(conn, comps: list[str] | None = None) -> dict[str, int]:
             continue
         try:
             xg_total += sync_understat_xg(conn, code)
-        except Exception:
-            pass
+        except Exception as exc:
+            _feed_error(conn, f"understat_xg[{code}]", exc)
     out["understat_xg"] = xg_total
 
     fdio_key = os.environ.get("FOOTBALLDATA_IO_KEY", "").strip()
@@ -605,7 +659,8 @@ def sync_enrichment(conn, comps: list[str] | None = None) -> dict[str, int]:
             else:
                 out["footballdata_io_teams"] = 0
                 out["footballdata_io_updated"] = 0
-        except Exception:
+        except Exception as exc:
+            _feed_error(conn, "footballdata_io_line_roles", exc)
             out["footballdata_io_teams"] = 0
             out["footballdata_io_updated"] = 0
     else:
@@ -629,7 +684,8 @@ def sync_enrichment(conn, comps: list[str] | None = None) -> dict[str, int]:
             out["wikipedia_club_matched"] = clubs.get("matched", 0)
             out["wikipedia_club_created"] = clubs.get("created", 0)
             apply_player_line_roles(conn)
-        except Exception:
+        except Exception as exc:
+            _feed_error(conn, "wikipedia_all", exc)
             out["wikipedia_wc_teams"] = 0
             out["wikipedia_wc_matched"] = 0
             out["wikipedia_wc_created"] = 0

@@ -123,9 +123,23 @@ def _score(acc, out, outcome_idx):
 # ----------------------------------------------------------------------
 # Walk-forward backtest
 # ----------------------------------------------------------------------
+def _memo(cache, key, fn):
+    """Return cache[key], computing via fn() on miss. cache=None disables memoization."""
+    if cache is None:
+        return fn()
+    if key not in cache:
+        cache[key] = fn()
+    return cache[key]
+
+
 def backtest_matches(matches, test_start, half_life_days=180,
                      full_credibility=10, refit_every_days=14,
-                     importance="league", min_history=60):
+                     importance="league", min_history=60,
+                     _elo_cache=None, _counts_cache=None, _dc_cache=None):
+    # The _*_cache args let sweep() share per-fold work across grid cells. Elo replay
+    # and match counts depend only on the fold (not on half_life/credibility); the DC
+    # fit depends on (fold, half_life) but not credibility. Passing dicts here computes
+    # each once instead of once per grid cell -- identical results, far less scipy work.
     matches = sorted(matches, key=lambda m: m["date"])
     test = [m for m in matches if m["date"] >= test_start]
     if not test:
@@ -142,9 +156,12 @@ def backtest_matches(matches, test_start, half_life_days=180,
         fold = [m for m in test if fold_start <= m["date"] < fold_end]
         train = [m for m in matches if m["date"] < fold_start]
         if fold and len(train) >= min_history:
-            elo = _elo_replay(train, importance)
-            dc = _fit_dc(train, fold_start, half_life_days)
-            hybrid = HybridLambdas(dc, elo, _counts(train), full_credibility)
+            elo = _memo(_elo_cache, (fold_start, importance),
+                        lambda: _elo_replay(train, importance))
+            dc = _memo(_dc_cache, (fold_start, half_life_days),
+                       lambda: _fit_dc(train, fold_start, half_life_days))
+            counts = _memo(_counts_cache, fold_start, lambda: _counts(train))
+            hybrid = HybridLambdas(dc, elo, counts, full_credibility)
 
             for m in fold:
                 oi = result_index(m["hg"], m["ag"])
@@ -181,13 +198,21 @@ def sweep(matches, test_start, half_lives=(90, 180, 365),
     them by the target model's mean RPS (lowest first). Returns the best cell
     plus the full grid so you can see the whole surface."""
     grid = []
+    # Shared across the whole grid: elo-replay + counts are identical for every cell
+    # of a given fold, and the DC fit is identical across credibilities for a given
+    # (fold, half_life). Compute each once here instead of per cell.
+    elo_cache: dict = {}
+    counts_cache: dict = {}
+    dc_cache: dict = {}
     for hl in half_lives:
         for fc in credibilities:
             res = backtest_matches(matches, test_start, half_life_days=hl,
                                    full_credibility=fc,
                                    refit_every_days=refit_every_days,
                                    importance=importance,
-                                   min_history=min_history)
+                                   min_history=min_history,
+                                   _elo_cache=elo_cache, _counts_cache=counts_cache,
+                                   _dc_cache=dc_cache)
             grid.append({"half_life_days": hl, "full_credibility": fc,
                          "mean_rps": res[target]["mean_rps"], "n": res[target]["n"]})
     viable = [r for r in grid if r["mean_rps"] is not None]

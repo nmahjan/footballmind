@@ -9,6 +9,12 @@ KNOCKOUT_STAGES = frozenset({
     "round_of_32", "round_of_16", "quarter_final", "semi_final", "final", "third_place",
 })
 BRACKET_DISPLAY_ORDER = ["round_of_32", "round_of_16", "quarter_final", "semi_final", "final"]
+# football-data.org's late-round match order (by matchday/kickoff) does not match the
+# vertical bracket -- WC quarter-finals come back as [top, 3rd, 2nd, bottom], so the
+# two middle QFs are transposed. These rounds are instead ordered by their feeder
+# matches in the round above. round_of_32/round_of_16 keep their existing ordering
+# (their feeder pairs are already adjacent), so the R16/R32 display is unchanged.
+FEEDER_ORDERED_STAGES = frozenset({"quarter_final", "semi_final", "final"})
 BRACKET_SIZES_BY_COMP = {
     "WC": {
         "round_of_32": 16, "round_of_16": 8, "quarter_final": 4,
@@ -1578,6 +1584,46 @@ def _propagate_bracket_winners(rounds: list[dict]) -> None:
                 nxt[ni]["home" if slot == 0 else "away"] = winner
 
 
+def _winner_slot_map(prev_matches: list[dict]) -> dict:
+    """Map each winning team name -> the slot index of its match in the previous round."""
+    out = {}
+    for i, f in enumerate(prev_matches):
+        w = _bracket_winner(f)
+        if w and w != "TBD":
+            out[w] = i
+    return out
+
+
+def _reorder_round_by_feeders(prev_matches: list[dict],
+                              matches: list[dict]) -> list[dict]:
+    """Order a round by bracket position: a match fed by previous-round slots s and s'
+    sits at slot min(s, s') // 2. Matches whose feeders can't be traced yet (both teams
+    TBD/unplayed) fall into the remaining slots keeping their original order. This is
+    what fixes the transposed middle quarter-finals."""
+    wslot = _winner_slot_map(prev_matches)
+    slotted: dict[int, dict] = {}
+    untraced: list[dict] = []
+    for f in matches:
+        feeders = [wslot[t] for t in (f.get("home"), f.get("away")) if t in wslot]
+        slot = min(feeders) // 2 if feeders else None
+        if slot is not None and slot not in slotted:
+            slotted[slot] = f
+        else:
+            untraced.append(f)          # untraceable, or a slot collision
+
+    span = max(len(matches), (max(slotted) + 1) if slotted else 0)
+    result: list[dict] = []
+    ui = 0
+    for slot in range(span):
+        if slot in slotted:
+            result.append(slotted[slot])
+        elif ui < len(untraced):
+            result.append(untraced[ui])
+            ui += 1
+    result.extend(untraced[ui:])        # any leftovers
+    return result
+
+
 def get_bracket(conn, comp: str = "WC") -> list:
     with conn.cursor() as cur:
         cur.execute(
@@ -1613,10 +1659,14 @@ def get_bracket(conn, comp: str = "WC") -> list:
 
     sizes = BRACKET_SIZES_BY_COMP.get(comp, BRACKET_SIZES_BY_COMP["WC"])
     out = []
+    prev_display: list[dict] = []
     for stage in BRACKET_DISPLAY_ORDER:
         if stage not in sizes:
             continue
-        matches = rounds.get(stage) or []
+        matches = rounds.get(stage) or []           # query order (matchday/kickoff)
+        if stage in FEEDER_ORDERED_STAGES and prev_display:
+            matches = _reorder_round_by_feeders(prev_display, matches)
+        prev_display = matches
         target = max(sizes[stage], len(matches))
         padded = list(matches)
         while len(padded) < target:

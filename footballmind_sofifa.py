@@ -315,10 +315,13 @@ def _tokens_subsequence(db_tokens: list[str], sofifa_tokens: list[str]) -> bool:
     return True
 
 
-def _score_sofifa_db_name(sofifa_name: str, db_name: str) -> int:
-    if _norm(sofifa_name) == _norm(db_name):
+def _score_sofifa_pre(sof_norm: str, sof_t: list[str], db_name: str) -> int:
+    """Score a DB name against a SoFIFA name whose norm/tokens are precomputed.
+    The SoFIFA side is constant across a squad scan, so hoisting its normalization
+    out of the per-row loop turns an O(n) re-normalize into O(1)."""
+    db_norm = _norm(db_name)
+    if sof_norm == db_norm:
         return 100
-    sof_t = _sofifa_tokens(sofifa_name)
     db_t = _sofifa_tokens(db_name)
     if not sof_t or not db_t:
         return 0
@@ -330,11 +333,13 @@ def _score_sofifa_db_name(sofifa_name: str, db_name: str) -> int:
         return 85
     if len(db_t) == 1 and db_t[0] in sof_t:
         return 82
-    db_norm = _norm(db_name)
-    sof_norm = _norm(sofifa_name)
     if db_norm in sof_norm or sof_norm in db_norm:
         return 75
     return 0
+
+
+def _score_sofifa_db_name(sofifa_name: str, db_name: str) -> int:
+    return _score_sofifa_pre(_norm(sofifa_name), _sofifa_tokens(sofifa_name), db_name)
 
 
 def _resolve_sofifa_player_on_team(
@@ -342,8 +347,13 @@ def _resolve_sofifa_player_on_team(
     team_id: int,
     sofifa_name: str,
     sofifa_id: int | None = None,
+    squad: list | None = None,
 ) -> int | None:
-    """Match SoFIFA roster names to our squad (handles extra middle names / mononyms)."""
+    """Match SoFIFA roster names to our squad (handles extra middle names / mononyms).
+
+    ``squad`` (list of (player_id, name)) may be supplied by the caller so the same
+    team's roster is fetched once and reused across all its players, instead of one
+    squad SELECT per roster row."""
     if sofifa_id is not None:
         cur.execute(
             "SELECT entity_id FROM provider_external_ids "
@@ -372,18 +382,21 @@ def _resolve_sofifa_player_on_team(
     if found:
         return found[0]
 
-    cur.execute(
-        "SELECT p.id, p.name FROM players p "
-        "JOIN player_affiliations pa ON pa.player_id = p.id "
-        "WHERE pa.team_id = %s AND pa.end_date IS NULL",
-        (team_id,))
-    squad = cur.fetchall()
+    if squad is None:
+        cur.execute(
+            "SELECT p.id, p.name FROM players p "
+            "JOIN player_affiliations pa ON pa.player_id = p.id "
+            "WHERE pa.team_id = %s AND pa.end_date IS NULL",
+            (team_id,))
+        squad = cur.fetchall()
 
+    sof_norm = _norm(sofifa_name)
+    sof_t = _sofifa_tokens(sofifa_name)
     best_id: int | None = None
     best_score = 0
     best_name = ""
     for pid, db_name in squad:
-        score = _score_sofifa_db_name(sofifa_name, db_name)
+        score = _score_sofifa_pre(sof_norm, sof_t, db_name)
         if score > best_score or (score == best_score and score > 0 and len(db_name) < len(best_name)):
             best_score = score
             best_id = pid
@@ -962,13 +975,23 @@ def _fetch_profile_html(
 
 def _build_sofifa_work_queue(
     roster,
-) -> tuple[list[tuple[int, int, str]], int]:
-    """Match SoFIFA roster rows to DB players on a short-lived connection."""
+    ttl_days: int | None = 90,
+) -> tuple[list[tuple[int, int, str]], int, int]:
+    """Match SoFIFA roster rows to DB players on a short-lived connection.
+
+    Each team's squad is fetched once and reused across its roster rows (was one
+    squad SELECT per player). Players whose player_eafc_attributes were synced within
+    ``ttl_days`` and already carry a rating are dropped -- fetching a SoFIFA profile
+    is the most expensive step in the pipeline (one Selenium page load each) and EA FC
+    attributes change at most once per edition, so re-fetching fresh rows is pure
+    waste. Returns (work, skipped_unmatched, skipped_fresh)."""
     from footballmind_db import get_connection
 
     work: list[tuple[int, int, str]] = []
     skipped = 0
+    skipped_fresh = 0
     seen_players: set[int] = set()
+    squad_cache: dict[int, list] = {}
     with get_connection() as conn:
         with conn.cursor() as cur:
             for sofifa_id, row in roster.iterrows():
@@ -981,14 +1004,35 @@ def _build_sofifa_work_queue(
                 if not team_id:
                     skipped += 1
                     continue
+                squad = squad_cache.get(team_id)
+                if squad is None:
+                    cur.execute(
+                        "SELECT p.id, p.name FROM players p "
+                        "JOIN player_affiliations pa ON pa.player_id = p.id "
+                        "WHERE pa.team_id = %s AND pa.end_date IS NULL",
+                        (team_id,))
+                    squad = cur.fetchall()
+                    squad_cache[team_id] = squad
                 player_id = _resolve_sofifa_player_on_team(
-                    cur, team_id, str(player_name), int(sofifa_id),
+                    cur, team_id, str(player_name), int(sofifa_id), squad=squad,
                 )
                 if not player_id:
                     skipped += 1
                     continue
                 work.append((player_id, int(sofifa_id), str(player_name)))
-    return work, skipped
+
+            if ttl_days and work:
+                player_ids = [w[0] for w in work]
+                cur.execute(
+                    "SELECT player_id FROM player_eafc_attributes "
+                    "WHERE player_id = ANY(%s) AND overall_rating IS NOT NULL "
+                    "  AND synced_at > now() - make_interval(days => %s)",
+                    (player_ids, ttl_days))
+                fresh = {r[0] for r in cur.fetchall()}
+                if fresh:
+                    work = [w for w in work if w[0] not in fresh]
+                    skipped_fresh = len(fresh)
+    return work, skipped, skipped_fresh
 
 
 def sync_sofifa_attributes(
@@ -1000,6 +1044,7 @@ def sync_sofifa_attributes(
     max_players: int | None = None,
     headless: bool = True,
     cloudflare_wait_sec: int = 600,
+    ttl_days: int | None = 90,
 ) -> dict[str, int | str]:
     """Pull SoFIFA profiles for club/national squads and upsert player_eafc_attributes.
 
@@ -1063,11 +1108,12 @@ def sync_sofifa_attributes(
     if roster.empty:
         return {"checked": 0, "synced": 0, "skipped": 0, "fifa_edition": fifa_edition}
 
-    work, skipped = _build_sofifa_work_queue(roster)
+    work, skipped, skipped_fresh = _build_sofifa_work_queue(roster, ttl_days=ttl_days)
 
     print(
         f"[sync-sofifa] roster={len(roster)} db_matched={len(work)} "
-        f"(skipped {skipped} unmatched names)",
+        f"(skipped {skipped} unmatched names, {skipped_fresh} already-fresh "
+        f"within {ttl_days}d)",
         flush=True,
     )
 
