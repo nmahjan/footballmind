@@ -340,6 +340,7 @@ def cmd_sync_sofifa():
     cloudflare_wait_sec = 600
     import_cache = False
     cache_dir = None
+    ttl_days = 90          # skip players synced within this window; --refresh-all disables
     args = sys.argv[2:]
     i = 0
     while i < len(args):
@@ -367,6 +368,12 @@ def cmd_sync_sofifa():
         elif args[i] == "--all-clubs":
             all_clubs = True
             i += 1
+        elif args[i] == "--refresh-all":
+            ttl_days = None
+            i += 1
+        elif args[i] == "--ttl-days" and i + 1 < len(args):
+            ttl_days = int(args[i + 1])
+            i += 2
         elif args[i] == "--cache-dir" and i + 1 < len(args):
             cache_dir = args[i + 1]
             import_cache = True
@@ -410,6 +417,7 @@ def cmd_sync_sofifa():
             max_players=max_players,
             headless=headless,
             cloudflare_wait_sec=cloudflare_wait_sec,
+            ttl_days=ttl_days,
         )
     with _connect() as conn:
         from footballmind_roles import apply_player_line_roles
@@ -517,9 +525,12 @@ def cmd_quick_refit(if_new_results=False):
                 oldest = cur.fetchone()[0]
             if oldest is not None:
                 with conn.cursor() as cur:
+                    # matches has no updated_at column; team_ratings.updated_at is set
+                    # to now() every time a result is applied to Elo, so it is the
+                    # reliable "a new result landed" signal. (The old matches.updated_at
+                    # query threw column-does-not-exist on every matchday run.)
                     cur.execute(
-                        "SELECT 1 FROM matches "
-                        "WHERE home_goals IS NOT NULL AND updated_at > %s LIMIT 1",
+                        "SELECT 1 FROM team_ratings WHERE updated_at > %s LIMIT 1",
                         (oldest,))
                     has_new = cur.fetchone() is not None
                 if not has_new:

@@ -12,6 +12,7 @@ Storage: the model_artifacts table, applied by migrations/004_model_artifacts.sq
 """
 
 import json
+import time
 
 import numpy as np
 
@@ -102,31 +103,66 @@ def train_and_store(conn, edition_ids, half_life_days, full_credibility,
             "ON CONFLICT (name) DO UPDATE SET artifact = EXCLUDED.artifact, "
             "  half_life_days = EXCLUDED.half_life_days, "
             "  full_credibility = EXCLUDED.full_credibility, "
-            "  backtest_rps = EXCLUDED.backtest_rps, trained_at = now()",
+            "  backtest_rps = EXCLUDED.backtest_rps, trained_at = now() "
+            "RETURNING trained_at",
             (name, payload, half_life_days, full_credibility, backtest_rps))
+        trained_at = cur.fetchone()[0]
     conn.commit()
-    _CACHE[name] = hybrid
+    _cache_put(name, hybrid, trained_at)
     return hybrid
 
 
-_CACHE = {}
+# Cache maps name -> (hybrid, trained_at). We revalidate trained_at against the DB
+# at most once per _REVALIDATE_SEC so a long-lived web process picks up a refit
+# (done in a *separate* job process) without a DB round trip on every prediction.
+_CACHE: dict[str, tuple] = {}
+_LAST_CHECK: dict[str, float] = {}
+_REVALIDATE_SEC = 60.0
+
+
+def _cache_put(name, hybrid, trained_at):
+    _CACHE[name] = (hybrid, trained_at)
+    _LAST_CHECK[name] = time.monotonic()
+
+
+def invalidate_cache(name=None):
+    """Drop the in-process model cache (all names, or one). Use after a refit in
+    the same process, or to force the next load to re-read from the DB."""
+    if name is None:
+        _CACHE.clear()
+        _LAST_CHECK.clear()
+    else:
+        _CACHE.pop(name, None)
+        _LAST_CHECK.pop(name, None)
 
 
 def load_hybrid(conn, name="production_hybrid", use_cache=True):
     """Return the deployed hybrid, or None if no model has been trained yet
     (predict_match then falls back to pure Elo)."""
     if use_cache and name in _CACHE:
-        return _CACHE[name]
+        hybrid, cached_trained_at = _CACHE[name]
+        now = time.monotonic()
+        if now - _LAST_CHECK.get(name, 0.0) < _REVALIDATE_SEC:
+            return hybrid                       # recently validated -> trust cache
+        with conn.cursor() as cur:              # cheap PK lookup, throttled to 1/min
+            cur.execute("SELECT trained_at FROM model_artifacts WHERE name = %s", (name,))
+            row = cur.fetchone()
+        _LAST_CHECK[name] = now
+        if row is not None and row[0] == cached_trained_at:
+            return hybrid                       # unchanged -> keep cached model
+        # else: model was retrained (or removed) -> fall through and reload
     with conn.cursor() as cur:
-        cur.execute("SELECT artifact FROM model_artifacts WHERE name = %s", (name,))
+        cur.execute("SELECT artifact, trained_at FROM model_artifacts WHERE name = %s",
+                    (name,))
         row = cur.fetchone()
     if row is None:
+        invalidate_cache(name)
         return None
-    artifact = row[0]
+    artifact, trained_at = row
     if isinstance(artifact, str):           # some drivers hand back raw text
         artifact = json.loads(artifact)
     hybrid = deserialize_hybrid(artifact)
-    _CACHE[name] = hybrid
+    _cache_put(name, hybrid, trained_at)
     return hybrid
 
 

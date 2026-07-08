@@ -16,7 +16,7 @@ from threading import Lock
 import requests
 from psycopg.errors import DeadlockDetected
 
-from footballmind_elo import apply_match_result
+from footballmind_elo import update_elo
 from footballmind_services import normalize_position
 
 # football-data.org stage strings -> our match_stage enum
@@ -34,6 +34,13 @@ KNOCKOUT_STAGES = frozenset({
 })
 # competition code -> Elo importance weight
 IMPORTANCE_BY_COMP = {"PL": "league", "CL": "continental", "WC": "world_cup"}
+
+# Serializes rating application across concurrent job runs. Scheduled sync (:17),
+# matchday sync (:07/:37) and keepalive can overlap near the top of the hour and
+# would otherwise both read the same match as "pending" and double-apply its Elo.
+# A transaction-scoped advisory lock is safe on Neon's pooled (PgBouncer) endpoint;
+# a session-scoped one would not be.
+_RATINGS_LOCK_KEY = 748120593
 
 
 # ----------------------------------------------------------------------
@@ -441,11 +448,21 @@ def upsert_match(cur, edition_id, m, team_type):
 # The two correctness-critical steps
 # ----------------------------------------------------------------------
 def apply_pending_ratings(conn, comp_code):
-    """Apply finished-but-not-yet-rated matches for one competition, oldest first."""
+    """Apply finished-but-not-yet-rated matches for one competition, oldest first.
+
+    Batched replay: instead of 2 SELECT + 2 upsert + 2 insert + commit *per match*
+    (footballmind_elo.apply_match_result), the sequence is replayed in memory from a
+    single seed read, so each match still sees the rating produced by every earlier
+    match, then written with two bulk statements and a single commit. Numerically
+    identical to the per-match path; O(1) commits instead of O(matches)."""
     importance = IMPORTANCE_BY_COMP.get(comp_code, "league")
     with conn.cursor() as cur:
+        # Held until this function's single commit -> the read-compute-write below is
+        # atomic against any other run doing the same, so no match is rated twice.
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (_RATINGS_LOCK_KEY,))
         cur.execute(
-            "SELECT m.id FROM matches m "
+            "SELECT m.id, m.home_team_id, m.away_team_id, m.home_goals, m.away_goals, "
+            "       m.match_date, m.stage FROM matches m "
             "JOIN competition_editions e ON e.id = m.edition_id "
             "JOIN competitions c ON c.id = e.competition_id "
             "WHERE c.code = %s AND m.home_goals IS NOT NULL "
@@ -453,9 +470,42 @@ def apply_pending_ratings(conn, comp_code):
             "                  WHERE rh.match_id = m.id) "
             "ORDER BY m.match_date ASC",
             (comp_code,))
-        pending = [row[0] for row in cur.fetchall()]
-    for match_id in pending:
-        apply_match_result(conn, match_id, importance)
+        pending = cur.fetchall()
+    if not pending:
+        conn.commit()                     # release the advisory lock; nothing to do
+        return 0
+
+    team_ids = {r[1] for r in pending} | {r[2] for r in pending}
+    with conn.cursor() as cur:
+        cur.execute("SELECT team_id, rating FROM team_ratings WHERE team_id = ANY(%s)",
+                    (list(team_ids),))
+        ratings = {tid: rating for tid, rating in cur.fetchall()}
+
+    history_rows = []                     # (team_id, match_id, before, after, as_of)
+    for match_id, home_id, away_id, hg, ag, match_date, stage in pending:
+        neutral = stage != "regular_season"          # tournament venues are neutral
+        home_before = ratings.get(home_id, 1500.0)
+        away_before = ratings.get(away_id, 1500.0)
+        home_after, away_after = update_elo(
+            home_before, away_before, hg, ag, importance, neutral)
+        ratings[home_id] = home_after
+        ratings[away_id] = away_after
+        history_rows.append((home_id, match_id, home_before, home_after, match_date))
+        history_rows.append((away_id, match_id, away_before, away_after, match_date))
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO team_ratings (team_id, rating, updated_at) VALUES (%s, %s, now()) "
+            "ON CONFLICT (team_id) DO UPDATE "
+            "  SET rating = EXCLUDED.rating, updated_at = now()",
+            [(tid, ratings[tid]) for tid in ratings])
+        cur.executemany(
+            "INSERT INTO rating_history "
+            "(team_id, match_id, rating_before, rating_after, as_of) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            history_rows)
+    conn.commit()
+    return len(pending)
 
 
 def sync_competition(conn, client, comp_code, comp_name, comp_type, season,
@@ -634,15 +684,30 @@ def _resolve_player_id(cur, p, team_id, kind):
         return None
     if p.get("id"):
         return upsert_player_row(cur, p, team_id, kind)
-    cur.execute("SELECT id FROM players WHERE lower(name) = lower(%s) LIMIT 1",
-                (p["name"],))
+    name = p["name"]
+    # Prefer a player actually on this team: a global name match can attach an event
+    # to a same-named player on a different squad (common with mononyms / shared
+    # surnames, national-team squads especially). Fall back to the global match so
+    # anything that resolved before still resolves.
+    if team_id:
+        cur.execute(
+            "SELECT p.id FROM players p "
+            "JOIN player_affiliations pa ON pa.player_id = p.id "
+            "WHERE pa.team_id = %s AND pa.end_date IS NULL "
+            "  AND lower(p.name) = lower(%s) LIMIT 1",
+            (team_id, name))
+        row = cur.fetchone()
+        if row:
+            return row[0]
+    cur.execute("SELECT id FROM players WHERE lower(name) = lower(%s) LIMIT 1", (name,))
     row = cur.fetchone()
     return row[0] if row else None
 
 
-def _sync_side_lineup(cur, match_id, team_side, team_type, kind):
+def _sync_side_lineup(cur, match_id, team_side, team_type, kind, team_id_for=None):
     team_api = team_side or {}
-    team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"])
+    team_id = (team_id_for(team_api) if team_id_for is not None
+               else upsert_team(cur, team_api["name"], team_type, team_api["id"]))
     formation = team_api.get("formation")
     if formation:
         cur.execute(
@@ -679,6 +744,21 @@ def _api_match_has_lineup(m: dict) -> bool:
 def _sync_match_events(cur, match_id, m, team_type, kind):
     cur.execute("DELETE FROM match_events WHERE match_id = %s", (match_id,))
 
+    _team_cache: dict = {}
+
+    def team_id_for(team_api):
+        """Resolve+cache a team_id within this match. The same two teams recur across
+        both lineups and every goal/booking/substitution, so this collapses what was
+        one upsert_team round trip per event into two upserts per match."""
+        if not team_api or not team_api.get("name"):
+            return None
+        key = team_api.get("id") or team_api.get("name")
+        tid = _team_cache.get(key)
+        if tid is None:
+            tid = upsert_team(cur, team_api["name"], team_type, team_api.get("id"))
+            _team_cache[key] = tid
+        return tid
+
     # Goals-only responses are common on the free tier (e.g. WC). Do not wipe
     # lineups synced from ESPN or other sources when the API omits XIs.
     if _api_match_has_lineup(m):
@@ -686,12 +766,11 @@ def _sync_match_events(cur, match_id, m, team_type, kind):
         cur.execute("DELETE FROM match_team_lineups WHERE match_id = %s", (match_id,))
         for side in ("homeTeam", "awayTeam"):
             team_api = m.get(side) or {}
-            _sync_side_lineup(cur, match_id, team_api, team_type, kind)
+            _sync_side_lineup(cur, match_id, team_api, team_type, kind,
+                              team_id_for=team_id_for)
 
     for goal in m.get("goals") or []:
-        team_api = goal.get("team") or {}
-        team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"]) \
-            if team_api.get("name") else None
+        team_id = team_id_for(goal.get("team") or {})
         scorer_id = _resolve_player_id(cur, goal.get("scorer"), team_id, kind) \
             if team_id else None
         assist_id = _resolve_player_id(cur, goal.get("assist"), team_id, kind) \
@@ -704,9 +783,7 @@ def _sync_match_events(cur, match_id, m, team_type, kind):
             (match_id, team_id, scorer_id, assist_id, etype, goal.get("minute")))
 
     for booking in m.get("bookings") or []:
-        team_api = booking.get("team") or {}
-        team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"]) \
-            if team_api.get("name") else None
+        team_id = team_id_for(booking.get("team") or {})
         player_id = _resolve_player_id(cur, booking.get("player"), team_id, kind) \
             if team_id else None
         etype = _EVENT_MAP.get(booking.get("card", "YELLOW"), "YELLOW_CARD")
@@ -717,9 +794,7 @@ def _sync_match_events(cur, match_id, m, team_type, kind):
             (match_id, team_id, player_id, etype, booking.get("minute")))
 
     for sub in m.get("substitutions") or []:
-        team_api = sub.get("team") or {}
-        team_id = upsert_team(cur, team_api["name"], team_type, team_api["id"]) \
-            if team_api.get("name") else None
+        team_id = team_id_for(sub.get("team") or {})
         out_id = _resolve_player_id(cur, sub.get("playerOut"), team_id, kind) \
             if team_id else None
         cur.execute(
@@ -731,7 +806,10 @@ def _sync_match_events(cur, match_id, m, team_type, kind):
 
 
 def refresh_knockout_scores(conn, client, comp_code: str = "WC", limit: int = 24) -> int:
-    """Re-fetch finished knockout matches to correct scores from goal timelines."""
+    """Re-fetch UNRESOLVED finished knockout matches to correct scores from goal
+    timelines. Once advancing_team_id is set the tie is fully settled (winner known,
+    ET/pens resolved) and its score can no longer change -- so we stop re-fetching it
+    and never spend throttled quota on matches that are already final."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT m.id, m.external_id, t.type "
@@ -742,6 +820,7 @@ def refresh_knockout_scores(conn, client, comp_code: str = "WC", limit: int = 24
             "WHERE c.code = %s "
             "  AND m.stage NOT IN ('regular_season', 'group', 'third_place') "
             "  AND m.home_goals IS NOT NULL "
+            "  AND m.advancing_team_id IS NULL "
             "  AND m.external_id IS NOT NULL "
             "ORDER BY m.match_date DESC LIMIT %s",
             (comp_code, limit))
