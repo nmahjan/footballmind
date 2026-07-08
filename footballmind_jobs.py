@@ -518,8 +518,7 @@ def cmd_quick_refit(if_new_results=False):
             if oldest is not None:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT 1 FROM matches "
-                        "WHERE home_goals IS NOT NULL AND updated_at > %s LIMIT 1",
+                        "SELECT 1 FROM rating_history WHERE as_of > %s LIMIT 1",
                         (oldest,))
                     has_new = cur.fetchone() is not None
                 if not has_new:

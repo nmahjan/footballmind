@@ -1592,8 +1592,7 @@ def get_bracket(conn, comp: str = "WC") -> list:
             "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
             "WHERE c.code = %s "
             "  AND m.stage NOT IN ('regular_season', 'group', 'third_place') "
-            "ORDER BY m.stage, COALESCE(m.matchday, 9999), "
-            "         m.match_date ASC NULLS LAST, m.id",
+            "ORDER BY m.stage, COALESCE(m.external_id::INTEGER, 0) ASC, m.id",
             (comp,))
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
