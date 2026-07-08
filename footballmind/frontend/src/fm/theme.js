@@ -7,7 +7,7 @@ export const C = {
 };
 
 const FLAGS = {
-  "Argentina": "🇦🇷", "Australia": "🇦🇺", "Belgium": "🇧🇪", "Brazil": "🇧🇷",
+  "Argentina": "🇦🇷", "Australia": "🇦🇺", "Austria": "🇦🇹", "Belgium": "🇧🇪", "Brazil": "🇧🇷",
   "Canada": "🇨🇦", "Chile": "🇨🇱", "Colombia": "🇨🇴", "Croatia": "🇭🇷",
   "Czechia": "🇨🇿", "Czech Republic": "🇨🇿", "Denmark": "🇩🇰", "Ecuador": "🇪🇨",
   "England": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "France": "🇫🇷", "Germany": "🇩🇪", "Ghana": "🇬🇭",
@@ -22,13 +22,16 @@ const FLAGS = {
   "Ukraine": "🇺🇦", "United States": "🇺🇸", "USA": "🇺🇸", "Uruguay": "🇺🇾",
   "Venezuela": "🇻🇪", "Wales": "🏴󠁧󠁢󠁷󠁬󠁳󠁿", "Algeria": "🇩🇿",
   "Ivory Coast": "🇨🇮", "Cameroon": "🇨🇲", "Egypt": "🇪🇬",
-  "Cape Verde Islands": "🇨🇻", "Cape Verde": "🇨🇻", "Costa Rica": "🇨🇷",
+  "Cape Verde Islands": "🇨🇻", "Cape Verde": "🇨🇻", "Congo DR": "🇨🇩",
+  "DR Congo": "🇨🇩", "Democratic Republic of the Congo": "🇨🇩",
+  "Costa Rica": "🇨🇷", "Curaçao": "🇨🇼", "Curacao": "🇨🇼",
   "Bosnia-Herzegovina": "🇧🇦", "New Zealand": "🇳🇿", "Cuba": "🇨🇺",
-  "El Salvador": "🇸🇻", "Guatemala": "🇬🇹", "Trinidad and Tobago": "🇹🇹",
+  "El Salvador": "🇸🇻", "Guatemala": "🇬🇹", "Iraq": "🇮🇶", "Jordan": "🇯🇴",
+  "Trinidad and Tobago": "🇹🇹", "Tunisia": "🇹🇳", "Uzbekistan": "🇺🇿",
 };
 
 const FLAG_CODES = {
-  "Argentina": "ar", "Australia": "au", "Belgium": "be", "Brazil": "br",
+  "Argentina": "ar", "Australia": "au", "Austria": "at", "Belgium": "be", "Brazil": "br",
   "Canada": "ca", "Chile": "cl", "Colombia": "co", "Croatia": "hr",
   "Czechia": "cz", "Czech Republic": "cz", "Denmark": "dk", "Ecuador": "ec",
   "England": "gb-eng", "France": "fr", "Germany": "de", "Ghana": "gh",
@@ -43,9 +46,12 @@ const FLAG_CODES = {
   "Ukraine": "ua", "United States": "us", "USA": "us", "Uruguay": "uy",
   "Venezuela": "ve", "Wales": "gb-wls", "Algeria": "dz",
   "Ivory Coast": "ci", "Cameroon": "cm", "Egypt": "eg",
-  "Cape Verde Islands": "cv", "Cape Verde": "cv", "Costa Rica": "cr",
+  "Cape Verde Islands": "cv", "Cape Verde": "cv", "Congo DR": "cd",
+  "DR Congo": "cd", "Democratic Republic of the Congo": "cd",
+  "Costa Rica": "cr", "Curaçao": "cw", "Curacao": "cw",
   "Bosnia-Herzegovina": "ba", "New Zealand": "nz", "Cuba": "cu",
-  "El Salvador": "sv", "Guatemala": "gt", "Trinidad and Tobago": "tt",
+  "El Salvador": "sv", "Guatemala": "gt", "Iraq": "iq", "Jordan": "jo",
+  "Trinidad and Tobago": "tt", "Tunisia": "tn", "Uzbekistan": "uz",
 };
 
 export function flag(name) {
