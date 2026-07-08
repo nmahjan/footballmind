@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { pct, outcomeColor, localDayKey, dayHeaderLabel, fixtureTeamStyle, fixturePreviewLabel } from "./format.js";
-import { C } from "./theme.js";
+import { C, flagCode } from "./theme.js";
 import { parseVs, buildPredictUrl } from "./deeplink.js";
 import { zoneForRank, rowZone, standingLegend } from "./standings.js";
 
@@ -40,6 +40,14 @@ describe("format", () => {
     const now = new Date();
     const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     expect(dayHeaderLabel(key)).toBe("Today");
+  });
+});
+
+describe("theme flags", () => {
+  it("maps national teams to cross-platform flag image codes", () => {
+    expect(flagCode("Argentina")).toBe("ar");
+    expect(flagCode("United States")).toBe("us");
+    expect(flagCode("England")).toBe("gb-eng");
   });
 });
 

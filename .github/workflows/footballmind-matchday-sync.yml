@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "Sync all competitions even if no fixtures in the next 24h"
+        description: "Sync all competitions even if no fixtures are in the matchday window"
         type: boolean
         default: false
 
@@ -41,18 +41,31 @@ jobs:
           exit 1
 
       - name: Run match-day sync
+        id: matchday
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
-        run: python footballmind_jobs.py sync-matchday ${{ github.event.inputs.force == 'true' && '--force' || '' }}
+        run: |
+          set +e
+          output=$(python footballmind_jobs.py sync-matchday ${{ github.event.inputs.force == 'true' && '--force' || '' }} 2>&1)
+          status=$?
+          printf '%s\n' "$output"
+          if printf '%s\n' "$output" | grep -q "\[sync-matchday\] no fixtures in window"; then
+            echo "active=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "active=true" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
 
       - name: Regrade finished predictions
+        if: steps.matchday.outputs.active == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python footballmind_jobs.py regrade
 
 
       - name: Quick model refit
+        if: steps.matchday.outputs.active == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python footballmind_jobs.py quick-refit --if-new-results

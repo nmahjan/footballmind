@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { C, flag } from "../fm/theme.js";
+import { C, TeamLabel } from "../fm/theme.js";
 import { zoneForRank, WC_GROUP_ZONES } from "../fm/standings.js";
 
 export default function GroupsPanel({ groups }) {
@@ -51,7 +51,7 @@ export default function GroupsPanel({ groups }) {
               }}>
                 <td className="px-3 py-1.5 text-xs" style={{ color: C.chalk }}>
                   <span className="mr-1.5 tabular-nums" style={{ color: zone?.color ?? C.mute }}>{rank}</span>
-                  {flag(r.team)}{r.team}
+                  <TeamLabel name={r.team} />
                   {zone && (
                     <span className="ml-1 text-[10px] font-medium" style={{ color: zone.color }}>{zone.short}</span>
                   )}

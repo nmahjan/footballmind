@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { C, flag } from "../fm/theme.js";
+import { C, Flag } from "../fm/theme.js";
 
 function fmtBracketTime(iso) {
   if (!iso) return "TBD";
@@ -44,7 +44,7 @@ function BracketTeamRow({ name, goals, winner }) {
       style={{ background: winner ? "rgba(52,211,153,0.08)" : "transparent" }}>
       <span className="flex h-4 w-5 shrink-0 items-center justify-center text-[10px] rounded-sm"
         style={{ background: tbd ? C.line : "transparent" }}>
-        {tbd ? "🛡" : flag(name).trim()}
+        {tbd ? "🛡" : <Flag name={name} className="h-3 w-4" />}
       </span>
       <span className="min-w-0 flex-1 truncate text-xs font-medium"
         style={{ color: tbd ? C.mute : C.chalk }}>

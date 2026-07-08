@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { C, flag } from "../fm/theme.js";
+import { C, Flag, TeamLabel } from "../fm/theme.js";
 import { pct, outcomeColor, fmtDate, localDayKey, dayHeaderLabel, fixtureTeamStyle, fixturePreviewLabel } from "../fm/format.js";
 import { STAGE_BADGE, FIXTURE_TABS, COMP_LABELS, demoPredict } from "../fm/demo.js";
 
@@ -24,6 +24,10 @@ function displayTeam(name) {
   return name;
 }
 
+function InlineTeam({ name }) {
+  return <TeamLabel name={name} className="inline-flex" />;
+}
+
 function ResultScoreLine({ r }) {
   if (r.went_to_pens) {
     const rh = r.reg_home_goals ?? r.home_goals;
@@ -35,16 +39,16 @@ function ResultScoreLine({ r }) {
         : " (pens)";
     return (
       <>
-        {flag(r.home)}{r.home}{" "}
+        <InlineTeam name={r.home} />{" "}
         <span className="tabular-nums">{reg}</span>{" "}
-        {flag(r.away)}{r.away}
+        <InlineTeam name={r.away} />
         <span className="font-normal text-xs" style={{ color: C.mute }}>{pens}</span>
       </>
     );
   }
   return (
     <>
-      {flag(r.home)}{r.home} {r.score} {flag(r.away)}{r.away}
+      <InlineTeam name={r.home} /> {r.score} <InlineTeam name={r.away} />
     </>
   );
 }
@@ -67,9 +71,9 @@ function FixtureRow({ f, comp, onClick, offline }) {
         {STAGE_BADGE[f.stage] ?? "GS"}
       </span>
       <span className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium">
-        <span className="truncate" style={homeStyle}>{flag(home)}{home}</span>
+        <span className="truncate" style={homeStyle}><TeamLabel name={home} /></span>
         <span className="shrink-0 text-[10px]" style={{ color: C.mute }}>vs</span>
-        <span className="truncate" style={awayStyle}>{flag(away)}{away}</span>
+        <span className="truncate" style={awayStyle}><TeamLabel name={away} /></span>
       </span>
       {f.live && <span className="shrink-0 animate-pulse text-[9px] font-bold" style={{ color: C.away }}>LIVE</span>}
       {scored ? (
@@ -82,7 +86,7 @@ function FixtureRow({ f, comp, onClick, offline }) {
                 background: pick === "Draw" ? "rgba(154,167,178,0.15)" : "rgba(52,211,153,0.12)",
                 color: pick === "Draw" ? C.draw : C.home,
               }}>
-              {pick === "Draw" ? "Draw" : `${flag(pick)}${pick}`} · {pct(preview.confidence)}
+              {pick === "Draw" ? "Draw" : <><Flag name={pick} /> {pick}</>} · {pct(preview.confidence)}
             </span>
           )}
           <span className="text-[10px] whitespace-nowrap" style={{ color: C.mute }}>{fmtDate(f.match_date)}</span>
@@ -158,14 +162,18 @@ function PredictionResultsView({ apiBase, comp = "WC", onSummary }) {
                 <span style={{ color: C.mute }}>
                   Predicted:{" "}
                   <span className="font-semibold" style={{ color: predColor }}>
-                    {r.predicted === r.home ? `${flag(r.home)}${r.predicted}` : r.predicted === r.away ? `${flag(r.away)}${r.predicted}` : r.predicted}
+                    {r.predicted === r.home || r.predicted === r.away
+                      ? <InlineTeam name={r.predicted} />
+                      : r.predicted}
                     {" "}({pct(r.predicted_confidence)})
                   </span>
                 </span>
                 <span style={{ color: C.mute }}>
                   Actual:{" "}
                   <span className="font-semibold" style={{ color: C.chalk }}>
-                    {r.actual === r.home ? `${flag(r.home)}${r.actual}` : r.actual === r.away ? `${flag(r.away)}${r.actual}` : r.actual}
+                    {r.actual === r.home || r.actual === r.away
+                      ? <InlineTeam name={r.actual} />
+                      : r.actual}
                   </span>
                 </span>
               </div>

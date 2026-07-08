@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { C, flag } from "../fm/theme.js";
+import { C, TeamLabel } from "../fm/theme.js";
 
 export default function RankingsPanel({ apiBase, offline, defaultOpen = false }) {
   const [rows, setRows] = useState([]);
@@ -51,7 +51,7 @@ export default function RankingsPanel({ apiBase, offline, defaultOpen = false })
             <div key={r.rank} className="flex items-center gap-3 px-4 py-1.5"
               style={{ borderTop: r.rank > 1 ? `1px solid ${C.line}` : "none" }}>
               <span className="w-5 shrink-0 text-[11px] tabular-nums text-right" style={{ color: C.mute }}>{r.rank}</span>
-              <span className="flex-1 text-xs" style={{ color: C.chalk }}>{flag(r.team)}{r.team}</span>
+              <span className="flex-1 text-xs" style={{ color: C.chalk }}><TeamLabel name={r.team} /></span>
               <div className="h-1.5 w-20 overflow-hidden rounded-full" style={{ background: C.line }}>
                 <div className="h-full rounded-full" style={{ width: `${Math.round(r.strength * 100)}%`, background: C.home }} />
               </div>
