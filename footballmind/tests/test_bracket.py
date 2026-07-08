@@ -15,7 +15,8 @@ class _FakeCur:
         self._fetch = rows or []
         self.description = [
             ("stage",), ("home",), ("away",), ("match_date",),
-            ("home_goals",), ("away_goals",),
+            ("home_goals",), ("away_goals",), ("matchday",),
+            ("advances",),
         ]
 
     def execute(self, sql, params=None):
@@ -52,6 +53,77 @@ def test_get_bracket_pads_tbd_slots(monkeypatch):
     assert len(r32["matches"]) == 16
     assert r32["matches"][0]["home"] == "South Africa"
     assert r32["matches"][1]["home"] == "TBD"
+
+
+def test_get_bracket_orders_wc_round_of_32_by_feeder_path():
+    # R32 rows arrive in kickoff order. The visual bracket needs FIFA
+    # match-number feeder order: 73/75, 74/77, 83/84, 81/82, etc.
+    kickoff_order = [
+        "M73", "M76", "M74", "M75", "M78", "M77", "M79", "M80",
+        "M82", "M81", "M84", "M83", "M85", "M88", "M86", "M87",
+    ]
+    fake = _FakeCur([
+        ("round_of_32", m, f"{m} away", None, None, None, None, None)
+        for m in kickoff_order
+    ])
+
+    class _Ctx:
+        def __enter__(self):
+            return fake
+
+        def __exit__(self, *a):
+            return False
+
+    class Conn:
+        def cursor(self):
+            return _Ctx()
+
+    bracket = get_bracket(Conn(), "WC")
+    r32 = next(r for r in bracket if r["round"] == "round_of_32")
+    assert [m["home"] for m in r32["matches"]] == [
+        "M73", "M75", "M74", "M77", "M83", "M84", "M81", "M82",
+        "M76", "M78", "M79", "M80", "M86", "M88", "M85", "M87",
+    ]
+
+
+def test_get_bracket_orders_wc_round_of_16_and_quarters_by_feeder_path():
+    r16_kickoff_order = [
+        ("round_of_16", "M89 home", "M89 away", None, 1, 0, None, "W89"),
+        ("round_of_16", "M90 home", "M90 away", None, 1, 0, None, "W90"),
+        ("round_of_16", "M91 home", "M91 away", None, 1, 0, None, "W91"),
+        ("round_of_16", "M92 home", "M92 away", None, 1, 0, None, "W92"),
+        ("round_of_16", "M93 home", "M93 away", None, 1, 0, None, "W93"),
+        ("round_of_16", "M94 home", "M94 away", None, 1, 0, None, "W94"),
+        ("round_of_16", "M95 home", "M95 away", None, 1, 0, None, "W95"),
+        ("round_of_16", "M96 home", "M96 away", None, 1, 0, None, "W96"),
+    ]
+    qf_kickoff_order = [
+        ("quarter_final", "W89", "W90", None, None, None, None, None),
+        ("quarter_final", "W91", "W92", None, None, None, None, None),
+        ("quarter_final", "W93", "W94", None, None, None, None, None),
+        ("quarter_final", "W95", "W96", None, None, None, None, None),
+    ]
+    fake = _FakeCur(r16_kickoff_order + qf_kickoff_order)
+
+    class _Ctx:
+        def __enter__(self):
+            return fake
+
+        def __exit__(self, *a):
+            return False
+
+    class Conn:
+        def cursor(self):
+            return _Ctx()
+
+    bracket = get_bracket(Conn(), "WC")
+    r16 = next(r for r in bracket if r["round"] == "round_of_16")
+    qf = next(r for r in bracket if r["round"] == "quarter_final")
+    assert [m["home"] for m in r16["matches"]] == [
+        "M89 home", "M90 home", "M93 home", "M94 home",
+        "M91 home", "M92 home", "M95 home", "M96 home",
+    ]
+    assert [m["home"] for m in qf["matches"]] == ["W89", "W93", "W91", "W95"]
 
 
 def test_knockout_upsert_uses_tbd_placeholders(monkeypatch):
