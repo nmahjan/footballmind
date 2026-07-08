@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { C, flag } from "../fm/theme.js";
+import { C, flag, TeamLabel } from "../fm/theme.js";
 import { pct, outcomeColor } from "../fm/format.js";
 import { buildPredictUrl } from "../fm/deeplink.js";
 import { readApiError } from "../fm/api.js";
@@ -163,7 +163,7 @@ export default function PredictionCard({ p, home, away, comp = "WC", neutral = n
     <div className="mt-2 rounded-xl border p-4" style={{ borderColor: C.line, background: C.panel, boxShadow: `0 0 0 1px ${C.glow}` }}>
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm font-semibold" style={{ color: C.chalk }}>
-          {flag(home)}{home} <span style={{ color: C.mute }}>vs</span> {flag(away)}{away}
+          <TeamLabel name={home} /> <span style={{ color: C.mute }}>vs</span> <TeamLabel name={away} />
         </div>
         <div className="flex items-center gap-2">
           <div className="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ background: color, color: "#08120F" }}>

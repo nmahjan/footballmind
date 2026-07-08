@@ -2,8 +2,8 @@ services:
   - type: web
     name: footballmind
     runtime: python
-    buildCommand: pip install --timeout 120 --retries 5 -r requirements.txt
-    startCommand: uvicorn footballmind_asgi:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install --timeout 120 --retries 5 -r footballmind/requirements.txt
+    startCommand: cd footballmind && uvicorn footballmind_asgi:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
         sync: false

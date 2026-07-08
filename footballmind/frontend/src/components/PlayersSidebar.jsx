@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { C, flag } from "../fm/theme.js";
+import { C, TeamLabel } from "../fm/theme.js";
 
 const COMP_OPTIONS = [
   ["WC", "🌍 World Cup"], ["PL", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL"], ["PD", "🇪🇸 La Liga"],
@@ -76,7 +76,7 @@ function PlayerCard({ p, onSelect, compact }) {
       </div>
       <div className="flex items-center justify-between gap-1 mt-0.5">
         <span className="text-[10px] truncate" style={{ color: C.mute }}>
-          {flag(p.team)}{p.team}
+          <TeamLabel name={p.team} />
           {p.club_team && p.club_team !== p.team
             ? ` · ${p.club_team}`
             : p.nationality && p.nationality !== p.team ? ` · ${p.nationality}` : ""}
@@ -175,7 +175,7 @@ function MiniLineupColumn({ teamName, data, loading }) {
   if (loading) {
     return (
       <div className="flex-1 min-w-0 text-[10px]" style={{ color: C.mute }}>
-        {flag(teamName)}{teamName.split(" ")[0]}…
+        <TeamLabel name={teamName}>{teamName.split(" ")[0]}…</TeamLabel>
       </div>
     );
   }
@@ -184,7 +184,7 @@ function MiniLineupColumn({ teamName, data, loading }) {
   return (
     <div className="flex-1 min-w-0">
       <div className="text-[10px] font-semibold truncate" style={{ color: C.chalk }}>
-        {flag(teamName)}{teamName.split(" ")[0]} · {data.formation}
+        <TeamLabel name={teamName}>{teamName.split(" ")[0]} · {data.formation}</TeamLabel>
       </div>
       <div className="mt-1 text-[9px] leading-snug" style={{ color: C.mute }}>
         {starters.join(", ")}
@@ -576,7 +576,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-semibold truncate" style={{ color: C.chalk }}>{p.name}</div>
                       <div className="text-[10px] truncate" style={{ color: C.mute }}>
-                        {flag(p.team)}{p.team}
+                        <TeamLabel name={p.team} />
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
@@ -598,7 +598,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
                 style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }}>
                 {teams.length === 0
                   ? <option value="">No teams</option>
-                  : teams.map((t) => <option key={t} value={t}>{flag(t)}{t}</option>)}
+                  : teams.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
               {team && (
                 <button type="button" onClick={() => askTeamLineup(team)}
@@ -635,7 +635,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
                   return (
                     <>
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]" style={{ color: C.mute }}>
-                        <span>{flag(lineup.team)}{lineup.team}</span>
+                        <span><TeamLabel name={lineup.team} /></span>
                         <span>·</span>
                         <span>{
                           showConfirmed
@@ -655,7 +655,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
                         {!showConfirmed && lineup.next_opponent && (
                           <>
                             <span>·</span>
-                            <span>Next: vs {flag(lineup.next_opponent)}{lineup.next_opponent}</span>
+                            <span>Next: vs <TeamLabel name={lineup.next_opponent} /></span>
                           </>
                         )}
                       </div>
@@ -735,7 +735,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
                 style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }}>
                 {teams.length === 0
                   ? <option value="">No teams</option>
-                  : teams.map((t) => <option key={t} value={t}>{flag(t)}{t}</option>)}
+                  : teams.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
               {team && (
                 <button type="button" onClick={() => askTeamSquad(team)}
@@ -754,7 +754,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
             ) : (
               <>
                 <div className="flex items-center justify-between text-[10px]" style={{ color: C.mute }}>
-                  <span>{flag(squad.team)}{squad.team}</span>
+                  <span><TeamLabel name={squad.team} /></span>
                   <span>{squad.squad_size} players{squad.team_rating ? ` · Elo ${squad.team_rating}` : ""}</span>
                 </div>
                 {["GK", "DEF", "MID", "FWD"].map((pos) => {

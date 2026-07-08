@@ -74,8 +74,12 @@ def _connect():
     return get_connection()
 
 
-def _comps_with_activity(conn, hours_before=12, hours_ahead=72):
-    """Competition codes with a fixture in the live window (recent kickoffs + today)."""
+def _comps_with_activity(conn, hours_before=6, hours_ahead=30):
+    """Competition codes with a fixture in the matchday window.
+
+    Keep this tight so the 30-minute workflow wakes up for matchday work, not
+    every day that has a fixture sitting two or three days out.
+    """
     with conn.cursor() as cur:
         cur.execute(
             "SELECT DISTINCT c.code "
@@ -91,7 +95,8 @@ def _comps_with_activity(conn, hours_before=12, hours_ahead=72):
 def cmd_sync_matchday(force=False):
     """Light sync for match days: fixtures + details + grading only (no squads/scorers).
 
-    Skips when nothing is scheduled in the next 24h unless --force (manual run).
+    Skips when nothing is scheduled in the matchday window unless --force
+    (manual run).
     """
     bucket = TokenBucket(10)
     client = FootballDataClient(os.environ["FOOTBALL_DATA_API_KEY"], bucket)
