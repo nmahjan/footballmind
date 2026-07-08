@@ -498,14 +498,33 @@ def _print_wikipedia_stats(stats: dict) -> None:
 
 
 
-def cmd_quick_refit():
+def cmd_quick_refit(if_new_results=False):
     """Re-fit Dixon-Coles on latest data using the already-tuned hyperparameters.
-    No parameter sweep -- fast enough to run after every matchday sync."""
+    No parameter sweep -- fast enough to run after every matchday sync.
+
+    --if-new-results: skip if no match results arrived since the model was last trained."""
     domains = [
         ([c[0] for c in COMPETITIONS if c[3] == "club"],     "production_club",          180, 10),
         ([c[0] for c in COMPETITIONS if c[3] == "national"], "production_international", 180,  5),
     ]
     with _connect() as conn:
+        if if_new_results:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT MIN(trained_at) FROM model_artifacts "
+                    "WHERE name = ANY(%s)",
+                    (["production_club", "production_international"],))
+                oldest = cur.fetchone()[0]
+            if oldest is not None:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT 1 FROM matches "
+                        "WHERE home_goals IS NOT NULL AND updated_at > %s LIMIT 1",
+                        (oldest,))
+                    has_new = cur.fetchone() is not None
+                if not has_new:
+                    print("[quick-refit] no new results since last training — skipped", flush=True)
+                    return
         for codes, name, default_hl, default_cred in domains:
             editions = _editions_for(conn, codes)
             if not editions:
@@ -597,7 +616,7 @@ if __name__ == "__main__":
     elif cmd == "retrain":
         cmd_retrain()
     elif cmd == "quick-refit":
-        cmd_quick_refit()
+        cmd_quick_refit(if_new_results="--if-new-results" in sys.argv)
     elif cmd == "seed-elo":
         cmd_seed_elo()
     elif cmd == "sync-enrich":
