@@ -92,6 +92,26 @@ def _comps_with_activity(conn, hours_before=6, hours_ahead=30):
         return {row[0] for row in cur.fetchall()}
 
 
+def _wc_has_unresolved_knockouts(conn) -> bool:
+    """True when a finished WC knockout still lacks advancing_team_id.
+
+    These ties need refresh_knockout_scores even when the next fixture is
+    outside the tight matchday activity window (common between rounds).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM matches m "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "WHERE c.code = 'WC' "
+            "  AND m.stage NOT IN ('regular_season', 'group', 'third_place') "
+            "  AND m.home_goals IS NOT NULL "
+            "  AND m.advancing_team_id IS NULL "
+            "  AND m.external_id IS NOT NULL "
+            "LIMIT 1")
+        return cur.fetchone() is not None
+
+
 def cmd_sync_matchday(force=False):
     """Light sync for match days: fixtures + details + grading only (no squads/scorers).
 
@@ -103,6 +123,8 @@ def cmd_sync_matchday(force=False):
     since = (date.today() - timedelta(days=3)).isoformat()
     with _connect() as conn:
         active = _comps_with_activity(conn)
+        if _wc_has_unresolved_knockouts(conn):
+            active = active | {"WC"}
         if not active and not force:
             print("[sync-matchday] no fixtures in window — skipping", flush=True)
             return
@@ -207,6 +229,12 @@ def cmd_sync(full=False):
         print("[sync] match details...", flush=True)
         detail_n = sync_match_details(conn, client, limit=50 if full else 15)
         print(f"[sync] match details: {detail_n} checked", flush=True)
+        try:
+            n = refresh_knockout_scores(conn, client, "WC", limit=32)
+            if n:
+                print(f"[sync] WC knockout scores refreshed: {n}", flush=True)
+        except Exception as e:
+            print(f"[sync] WC score refresh FAILED: {e}", file=sys.stderr, flush=True)
         nc = apply_team_captains(conn, TEAM_CAPTAINS)
         print(f"[sync] captains: {nc} flags set", flush=True)
         try:
