@@ -4,16 +4,18 @@ from unittest.mock import patch
 
 import requests
 
-from footballmind_grading import grade_predictions
+from footballmind_grading import _bulk_link_predictions_by_teams, grade_predictions
 
 
 class _FakeCursor:
     def __init__(self):
         self.executed = []
         self._fetch = []
+        self.rowcount = 0
 
     def execute(self, sql, params=None):
         self.executed.append((sql.strip(), params))
+        self.rowcount = 0
         if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
             self._fetch = [
                 # pid, hw, dw, aw, hg, ag, stage, adv_id, home_tid,
@@ -21,6 +23,9 @@ class _FakeCursor:
                 (1, 0.2, 0.6, 0.2, 1, 1, "regular_season", None, 10,
                  False, None, None, 20),
             ]
+        elif "WITH nearest AS" in sql:
+            self.rowcount = 2
+            self._fetch = []
         else:
             self._fetch = []
 
@@ -55,6 +60,20 @@ def test_grade_predictions_regrades_when_scores_differ():
     updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
     assert updates
     assert updates[0][1] == (1, 1, True, 1)
+
+
+def test_bulk_link_predictions_skips_duplicate_session_match_links():
+    conn = _FakeConn()
+    n = _bulk_link_predictions_by_teams(conn, "WC")
+    assert n == 2
+    assert conn.committed
+    sql, params = conn.cur.executed[0]
+    assert params == ["WC"]
+    assert "row_number() OVER" in sql
+    assert "PARTITION BY nearest.session_id, nearest.match_id" in sql
+    assert "NOT EXISTS" in sql
+    assert "existing.session_id IS NOT DISTINCT FROM nearest.session_id" in sql
+    assert "ranked.link_rank = 1" in sql
 
 
 def test_grade_predictions_uses_pen_shootout_winner():
