@@ -110,9 +110,10 @@ def _bulk_link_predictions_by_teams(conn, comp_code: str | None = None) -> int:
         params.append(comp_code)
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE predictions p SET match_id = sub.match_id "
-            "FROM ("
-            "  SELECT DISTINCT ON (p2.id) p2.id AS pid, m.id AS match_id "
+            "WITH nearest AS ("
+            "  SELECT DISTINCT ON (p2.id) "
+            "         p2.id AS pid, p2.session_id, p2.created_at, "
+            "         m.id AS match_id "
             "  FROM predictions p2 "
             "  JOIN matches m ON m.home_team_id = p2.home_team_id "
             "                AND m.away_team_id = p2.away_team_id "
@@ -126,8 +127,25 @@ def _bulk_link_predictions_by_teams(conn, comp_code: str | None = None) -> int:
             f"  {comp_filter}"
             "  ORDER BY p2.id, "
             "    abs(extract(epoch FROM (m.match_date - p2.created_at)))"
-            ") sub "
-            "WHERE p.id = sub.pid",
+            "), ranked AS ("
+            "  SELECT nearest.*, "
+            "         row_number() OVER ("
+            "           PARTITION BY nearest.session_id, nearest.match_id "
+            "           ORDER BY nearest.created_at DESC, nearest.pid DESC"
+            "         ) AS link_rank "
+            "  FROM nearest "
+            "  WHERE NOT EXISTS ("
+            "    SELECT 1 FROM predictions existing "
+            "    WHERE existing.session_id IS NOT DISTINCT FROM nearest.session_id "
+            "      AND existing.match_id = nearest.match_id "
+            "      AND existing.was_correct IS NULL "
+            "      AND existing.id <> nearest.pid"
+            "  )"
+            ") "
+            "UPDATE predictions p SET match_id = ranked.match_id "
+            "FROM ranked "
+            "WHERE p.id = ranked.pid "
+            "  AND ranked.link_rank = 1",
             params,
         )
         n = cur.rowcount
@@ -177,10 +195,18 @@ def link_orphan_predictions(conn, *, comp_code: str | None = None):
             if not match_id:
                 continue
             cur.execute(
-                "UPDATE predictions SET match_id = %s WHERE id = %s",
-                (match_id, pid),
+                "UPDATE predictions p SET match_id = %s "
+                "WHERE p.id = %s "
+                "  AND NOT EXISTS ("
+                "    SELECT 1 FROM predictions existing "
+                "    WHERE existing.session_id IS NOT DISTINCT FROM p.session_id "
+                "      AND existing.match_id = %s "
+                "      AND existing.was_correct IS NULL "
+                "      AND existing.id <> p.id"
+                "  )",
+                (match_id, pid, match_id),
             )
-            linked += 1
+            linked += cur.rowcount
 
     conn.commit()
     return linked
