@@ -44,36 +44,41 @@ export default function ChatPanel({
   }, [messages, busy, loadPhase]);
 
   const stretched = stretchHeight != null && stretchHeight > 0;
+  const panelHeight = stretched ? Math.max(stretchHeight, 560) : null;
+  const mobilePanelHeight = "min(760px, calc(100svh - 8.25rem))";
 
   return (
     <section
-      className="flex w-full shrink-0 flex-col rounded-xl border md:min-h-0"
+      className="flex w-full shrink-0 flex-col rounded-lg border md:min-h-0"
       style={{
         borderColor: C.line,
         background: C.panel2,
+        boxShadow: "0 18px 60px rgba(0,0,0,0.18)",
         ...(stretched ? {
-          minHeight: stretchHeight,
-          height: stretchHeight,
-          maxHeight: stretchHeight,
-        } : {}),
+          minHeight: panelHeight,
+          height: panelHeight,
+          maxHeight: panelHeight,
+        } : {
+          minHeight: mobilePanelHeight,
+        }),
       }}>
-      <div className="flex items-center justify-between border-b px-4 py-2" style={{ borderColor: C.line }}>
-        <span className="text-[10px] font-medium" style={{ color: C.mute }}>Chat</span>
+      <div className="flex items-center justify-between border-b px-4 py-2.5" style={{ borderColor: C.line }}>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: C.mute }}>Command Chat</span>
         <button
           type="button"
           onClick={startNewChat}
           disabled={busy}
           title="Start a fresh conversation"
-          className="rounded-md border px-2.5 py-1 text-[10px] font-semibold transition-opacity hover:opacity-80 disabled:opacity-40"
-          style={{ borderColor: C.line, color: C.chalk, background: C.panel }}>
+          className="rounded border px-2.5 py-1 text-[10px] font-semibold transition-opacity hover:opacity-80 disabled:opacity-40"
+          style={{ borderColor: C.line, color: C.chalk, background: C.elevated }}>
           New chat
         </button>
       </div>
 
       <div
         ref={scroller}
-        className={`space-y-4 overflow-y-auto p-4 ${stretched ? "min-h-0 flex-1" : ""} ${stretched && messages.length === 0 ? "flex flex-col justify-center" : ""}`}
-        style={stretched ? undefined : { maxHeight: "min(420px, 52vh)" }}>
+        className={`min-h-0 flex-1 space-y-4 overflow-y-auto p-4 ${messages.length === 0 ? "flex flex-col justify-center" : ""}`}
+        style={stretched ? undefined : { maxHeight: "min(720px, 72svh)" }}>
         {messages.length === 0 && (
           <div className={`text-center ${stretched ? "" : "mt-6"}`}>
             <div className="text-sm" style={{ color: C.chalk }}>
@@ -91,8 +96,12 @@ export default function ChatPanel({
         {messages.map((m, i) => (
           <div key={i} className={m.role === "user" ? "flex justify-end" : ""}>
             <div className="max-w-[85%]">
-              <div className="rounded-xl px-3.5 py-2 text-sm"
-                style={{ background: m.role === "user" ? C.home : C.panel, color: m.role === "user" ? "#08120F" : C.chalk }}>
+              <div className="rounded-lg border px-3.5 py-2 text-sm"
+                style={{
+                  borderColor: m.role === "user" ? "transparent" : C.lineSoft,
+                  background: m.role === "user" ? C.home : C.panel,
+                  color: m.role === "user" ? "#003919" : C.chalk,
+                }}>
                 {m.role === "user" ? m.text : <MarkdownBody text={m.text} />}
               </div>
               {m.prediction && m.teams && (
@@ -106,7 +115,7 @@ export default function ChatPanel({
                 />
               )}
               {m.bracket && (
-                <div className="mt-2 w-full min-w-0 max-w-full overflow-hidden rounded-xl border p-1"
+                <div className="mt-2 w-full min-w-0 max-w-full overflow-hidden rounded-lg border p-1"
                   style={{ borderColor: C.line, background: C.panel }}>
                   <BracketTree rounds={normaliseBracket(m.bracket)} />
                 </div>
@@ -121,8 +130,8 @@ export default function ChatPanel({
         <div className="flex flex-wrap gap-2 px-3 pt-2 pb-0">
           {chips.map((c) => (
             <button key={c} onClick={() => send(c)}
-              className="rounded-full border px-3 py-1 text-[11px] font-medium transition-opacity hover:opacity-70"
-              style={{ borderColor: C.line, color: C.chalk, background: C.panel }}>
+              className="rounded-md border px-3 py-1 text-[11px] font-medium transition-opacity hover:opacity-70"
+              style={{ borderColor: C.line, color: C.chalk, background: C.elevated }}>
               {c}
             </button>
           ))}
@@ -144,8 +153,8 @@ export default function ChatPanel({
               onClick={() => setVenueMode(val)}
               className="rounded px-2 py-0.5 text-[10px] font-semibold transition-colors"
               style={{
-                background: venueMode === val ? (val === false ? C.away : val === true ? C.home : C.mute) : C.line,
-                color: venueMode === val ? "#08120F" : C.mute,
+                background: venueMode === val ? (val === false ? C.warning : val === true ? C.home : C.elevated) : C.line,
+                color: venueMode === val ? "#0D1117" : C.mute,
               }}>
               {label}
             </button>
@@ -158,11 +167,11 @@ export default function ChatPanel({
             placeholder={sidebarMode === "players"
               ? "Who are Brazil's key players?"
               : "Predict Mexico vs South Korea in Mexico"}
-            className="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
+            className="flex-1 rounded-md px-3 py-2 text-sm outline-none transition-shadow focus:shadow-[0_0_0_2px_rgba(0,255,133,0.20)]"
             style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }} />
           <button onClick={() => send()} disabled={busy}
-            className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
-            style={{ background: C.home, color: "#08120F" }}>Ask</button>
+            className="rounded-md px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            style={{ background: C.home, color: "#003919" }}>Ask</button>
         </div>
       </div>
     </section>

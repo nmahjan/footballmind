@@ -57,6 +57,36 @@ def _match_actual_outcome(home, away, hg, ag, stage, advances=None, *,
     if hg == ag:
         return "Draw"
     return away
+
+
+def _prediction_outcome_for_match(
+    home: str,
+    away: str,
+    stage: str | None,
+    home_win_prob,
+    draw_prob,
+    away_win_prob,
+    home_advance_prob=None,
+) -> tuple[str, float, int]:
+    """Return the displayed prediction label, confidence, and outcome index.
+
+    Knockout cards predict who advances, not who wins in regulation. Finished
+    result rows should therefore use home_advance_prob when it is available.
+    """
+    if stage in KNOCKOUT_STAGES and home_advance_prob is not None:
+        home_adv = float(home_advance_prob or 0.0)
+        away_adv = max(0.0, 1.0 - home_adv)
+        if home_adv >= away_adv:
+            return home, home_adv, 0
+        return away, away_adv, 2
+
+    probs = [home_win_prob or 0.0, draw_prob or 0.0, away_win_prob or 0.0]
+    idx = probs.index(max(probs))
+    if idx == 0:
+        return home, probs[idx], idx
+    if idx == 1:
+        return "Draw", probs[idx], idx
+    return away, probs[idx], idx
 POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3, "?": 9}
 
 SUPPORTED_COMP_CODES = frozenset({"PL", "PD", "BL1", "SA", "FL1", "CL", "DED", "WC", "MLS"})
@@ -673,7 +703,8 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             "       m.reg_home_goals, m.reg_away_goals, "
             "       tw.name AS advances, "
             "       p.id AS prediction_id, "
-            "       p.home_win_prob, p.draw_prob, p.away_win_prob, p.was_correct "
+            "       p.home_win_prob, p.draw_prob, p.away_win_prob, "
+            "       p.home_advance_prob, p.was_correct "
             "FROM matches m "
             "JOIN competition_editions e ON e.id = m.edition_id "
             "JOIN competitions c ON c.id = e.competition_id "
@@ -681,7 +712,8 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             "JOIN teams ta ON ta.id = m.away_team_id "
             "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
             "LEFT JOIN LATERAL ("
-            "  SELECT p2.id, p2.home_win_prob, p2.draw_prob, p2.away_win_prob, p2.was_correct "
+            "  SELECT p2.id, p2.home_win_prob, p2.draw_prob, p2.away_win_prob, "
+            "         p2.home_advance_prob, p2.was_correct "
             "  FROM predictions p2 "
             "  WHERE p2.match_id = m.id "
             "     OR (p2.match_id IS NULL "
@@ -736,9 +768,9 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
         }
         _enrich_fixture_display(item, labels)
         if r.get("prediction_id"):
-            probs = [r["home_win_prob"] or 0, r["draw_prob"] or 0, r["away_win_prob"] or 0]
-            predicted = _outcome_label(home, away, r["home_win_prob"],
-                                       r["draw_prob"], r["away_win_prob"])
+            predicted, confidence, pred_idx = _prediction_outcome_for_match(
+                home, away, stage, r["home_win_prob"], r["draw_prob"],
+                r["away_win_prob"], r.get("home_advance_prob"))
             actual = _match_actual_outcome(
                 home, away, hg, ag, stage, advances=advances,
                 went_to_pens=bool(r.get("went_to_pens")),
@@ -757,7 +789,7 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             item.update({
                 "id": r["prediction_id"],
                 "predicted": predicted,
-                "predicted_confidence": round(max(probs), 3),
+                "predicted_confidence": round(confidence, 3),
                 "actual": actual,
                 "was_correct": pred_idx == act_idx,
             })
@@ -1571,6 +1603,69 @@ def _bracket_winner(f: dict) -> str | None:
     return None
 
 
+def _strip_advance_label(label: str | None) -> str | None:
+    if not label:
+        return None
+    return label[:-8] if label.endswith(" advance") else label
+
+
+def _bracket_projected_winner(conn, comp: str, stage: str, home: str, away: str) -> tuple[str | None, dict | None]:
+    from footballmind_mcp_predict import _predict_match
+
+    if not _fixture_team_resolved(home) or not _fixture_team_resolved(away):
+        return None, None
+    try:
+        prev = _predict_match(
+            conn, home, away, None, stage,
+            session_id=None, neutral=None, comp=comp, persist=False,
+        )
+    except Exception:
+        return None, None
+    winner = _strip_advance_label(prev.get("prediction"))
+    preview = {
+        "prediction": prev.get("prediction"),
+        "confidence": prev.get("confidence"),
+        "home_win_prob": prev.get("home_win_prob"),
+        "draw_prob": prev.get("draw_prob"),
+        "away_win_prob": prev.get("away_win_prob"),
+        "home_advance_prob": (prev.get("progression") or {}).get("home_advance"),
+        "is_knockout": bool(prev.get("is_knockout")),
+    }
+    return winner, preview
+
+
+def _add_bracket_projection(conn, rounds: list[dict], comp: str) -> None:
+    """Attach predicted winners and projected slots without changing factual labels."""
+    for ri, round_data in enumerate(rounds):
+        stage = round_data["round"]
+        for mi, f in enumerate(round_data["matches"]):
+            f.setdefault("projected_home", f.get("home"))
+            f.setdefault("projected_away", f.get("away"))
+
+            winner = _bracket_winner(f)
+            if winner:
+                f["projected_winner"] = winner
+            else:
+                winner, preview = _bracket_projected_winner(
+                    conn, comp, stage, f.get("projected_home"), f.get("projected_away"))
+                if winner:
+                    f["projected_winner"] = winner
+                if preview:
+                    f["preview"] = preview
+
+            projected = f.get("projected_winner")
+            if not projected or ri >= len(rounds) - 1:
+                continue
+            ni, slot = divmod(mi, 2)
+            nxt = rounds[ri + 1]["matches"]
+            if ni >= len(nxt):
+                continue
+            key = "projected_home" if slot == 0 else "projected_away"
+            cur = nxt[ni].get(key) or nxt[ni].get("home" if slot == 0 else "away")
+            if cur in (None, "TBD"):
+                nxt[ni][key] = projected
+
+
 def _propagate_bracket_winners(rounds: list[dict]) -> None:
     """Fill next-round TBD slots from finished feeder matches."""
     for ri in range(len(rounds) - 1):
@@ -1689,6 +1784,7 @@ def get_bracket(conn, comp: str = "WC") -> list:
             })
         out.append({"round": stage, "matches": padded})
     _propagate_bracket_winners(out)
+    _add_bracket_projection(conn, out, comp)
     return out
 
 
@@ -1718,16 +1814,21 @@ def get_prediction_results(conn, limit: int = 30) -> list[dict]:
             "       COALESCE(thm.name, thp.name) AS home, "
             "       COALESCE(tam.name, tap.name) AS away, "
             "       p.home_win_prob, p.draw_prob, p.away_win_prob, "
+            "       p.home_advance_prob, "
             "       p.confidence, "
             "       m.home_goals AS hg, "
             "       m.away_goals AS ag, "
-            "       p.was_correct, m.match_date, p.match_id "
+            "       p.was_correct, m.match_date, p.match_id, m.stage, "
+            "       m.advancing_team_id, m.home_team_id, m.away_team_id, "
+            "       m.went_to_pens, m.home_pens, m.away_pens, "
+            "       tw.name AS advances "
             "FROM predictions p "
             "LEFT JOIN matches m ON m.id = p.match_id "
             "LEFT JOIN teams thp ON thp.id = p.home_team_id "
             "LEFT JOIN teams tap ON tap.id = p.away_team_id "
             "LEFT JOIN teams thm ON thm.id = m.home_team_id "
             "LEFT JOIN teams tam ON tam.id = m.away_team_id "
+            "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
             "WHERE m.home_goals IS NOT NULL "
             "  AND COALESCE(thm.name, thp.name) IS NOT NULL "
             "ORDER BY COALESCE(p.match_id, p.id), p.created_at DESC")
@@ -1738,17 +1839,25 @@ def get_prediction_results(conn, limit: int = 30) -> list[dict]:
     for r in rows[:limit]:
         home, away = r["home"], r["away"]
         hg, ag = r["hg"], r["ag"]
-        predicted = _outcome_label(home, away, r["home_win_prob"],
-                                   r["draw_prob"], r["away_win_prob"])
-        if hg > ag:
-            actual = home
-        elif hg == ag:
-            actual = "Draw"
+        stage = r.get("stage")
+        advances = _bracket_team_label(r.get("advances"))
+        predicted, confidence, pred_idx = _prediction_outcome_for_match(
+            home, away, stage, r["home_win_prob"], r["draw_prob"],
+            r["away_win_prob"], r.get("home_advance_prob"))
+        actual = _match_actual_outcome(
+            home, away, hg, ag, stage, advances=advances,
+            went_to_pens=bool(r.get("went_to_pens")),
+            home_pens=r.get("home_pens"),
+            away_pens=r.get("away_pens"),
+        )
+        if stage in KNOCKOUT_STAGES and advances and advances != "TBD":
+            act_idx = 0 if advances == home else 2
+        elif (r.get("went_to_pens") and r.get("home_pens") is not None
+              and r.get("away_pens") is not None
+              and r["home_pens"] != r["away_pens"]):
+            act_idx = 0 if r["home_pens"] > r["away_pens"] else 2
         else:
-            actual = away
-        probs = [r["home_win_prob"] or 0, r["draw_prob"] or 0, r["away_win_prob"] or 0]
-        pred_idx = probs.index(max(probs))
-        act_idx = 0 if hg > ag else (1 if hg == ag else 2)
+            act_idx = 0 if hg > ag else (1 if hg == ag else 2)
         was = pred_idx == act_idx
         md = r["match_date"]
         out.append({
@@ -1759,7 +1868,7 @@ def get_prediction_results(conn, limit: int = 30) -> list[dict]:
             "home_goals": hg,
             "away_goals": ag,
             "predicted": predicted,
-            "predicted_confidence": round(max(probs), 3),
+            "predicted_confidence": round(confidence, 3),
             "actual": actual,
             "was_correct": was,
             "match_date": md.isoformat() if md else None,

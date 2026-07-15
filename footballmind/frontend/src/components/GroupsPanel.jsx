@@ -9,7 +9,7 @@ export default function GroupsPanel({ groups }) {
   if (letters.length === 0) return null;
 
   return (
-    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+    <div className="rounded-lg border" style={{ borderColor: C.line, background: C.panel }}>
       <div className="border-b px-4 py-2.5 text-xs font-semibold uppercase tracking-wider"
         style={{ borderColor: C.line, color: C.mute }}>
         WC Group Standings
@@ -19,7 +19,7 @@ export default function GroupsPanel({ groups }) {
         {letters.map((g) => (
           <button key={g} onClick={() => setOpen(g)}
             className="rounded px-2 py-0.5 text-[11px] font-semibold transition-colors"
-            style={{ background: g === open ? C.home : C.line, color: g === open ? "#08120F" : C.mute }}>
+            style={{ background: g === open ? C.home : C.line, color: g === open ? "#003919" : C.mute }}>
             {g}
           </button>
         ))}

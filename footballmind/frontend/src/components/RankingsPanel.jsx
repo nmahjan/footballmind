@@ -21,7 +21,7 @@ export default function RankingsPanel({ apiBase, offline, defaultOpen = false })
   if (!open) {
     return (
       <button onClick={() => { setOpen(true); load(); }}
-        className="flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left transition-opacity hover:opacity-70"
+        className="flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition-opacity hover:opacity-70"
         style={{ borderColor: C.line, background: C.panel }}>
         <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
           🏆 WC Power Rankings
@@ -32,7 +32,7 @@ export default function RankingsPanel({ apiBase, offline, defaultOpen = false })
   }
 
   return (
-    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+    <div className="rounded-lg border" style={{ borderColor: C.line, background: C.panel }}>
       <button onClick={() => setOpen(false)}
         className="flex w-full items-center justify-between border-b px-4 py-2.5 text-left transition-opacity hover:opacity-70"
         style={{ borderColor: C.line }}>

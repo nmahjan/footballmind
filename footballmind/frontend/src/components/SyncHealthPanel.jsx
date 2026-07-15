@@ -18,7 +18,7 @@ function fmtWhen(iso) {
 
 function statusColor(status) {
   if (status === "ok") return C.home;
-  if (status === "partial") return C.away;
+  if (status === "partial") return C.warning;
   if (status === "failed") return "#f87171";
   return C.mute;
 }
@@ -42,7 +42,7 @@ export default function SyncHealthPanel({ apiBase, offline }) {
   const jobs = health?.jobs ?? [];
 
   return (
-    <div className="rounded-xl border p-4" style={{ borderColor: C.line, background: C.panel }}>
+    <div className="rounded-lg border p-4" style={{ borderColor: C.line, background: C.panel }}>
       <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
         Sync health
       </div>
@@ -67,7 +67,7 @@ export default function SyncHealthPanel({ apiBase, offline }) {
       )}
       {health?.jobs?.some((j) => j.summary?.alert) && (
         <div className="mt-3 rounded-md border px-2.5 py-2 text-[11px]"
-          style={{ borderColor: C.away, color: C.away, background: "rgba(244,161,82,0.08)" }}>
+          style={{ borderColor: C.warning, color: C.warning, background: "rgba(248,151,29,0.10)" }}>
           {health.jobs.filter((j) => j.summary?.alert).map((j) => (
             <div key={j.job}>{j.summary.alert}</div>
           ))}

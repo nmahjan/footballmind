@@ -18,9 +18,9 @@ class _FakeCursor:
         self.rowcount = 0
         if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
             self._fetch = [
-                # pid, hw, dw, aw, hg, ag, stage, adv_id, home_tid,
+                # pid, hw, dw, aw, ha, hg, ag, stage, adv_id, home_tid,
                 # went_to_pens, home_pens, away_pens, away_tid
-                (1, 0.2, 0.6, 0.2, 1, 1, "regular_season", None, 10,
+                (1, 0.2, 0.6, 0.2, None, 1, 1, "regular_season", None, 10,
                  False, None, None, 20),
             ]
         elif "WITH nearest AS" in sql:
@@ -82,7 +82,7 @@ def test_grade_predictions_uses_pen_shootout_winner():
             self.executed.append((sql.strip(), params))
             if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
                 self._fetch = [
-                    (2, 0.16, 0.0, 0.84, 1, 1, "round_of_32", None, 10,
+                    (2, 0.16, 0.0, 0.84, None, 1, 1, "round_of_32", None, 10,
                      True, 2, 3, 20),
                 ]
 
@@ -100,7 +100,7 @@ def test_grade_predictions_home_wins_pen_shootout():
             self.executed.append((sql.strip(), params))
             if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
                 self._fetch = [
-                    (3, 0.55, 0.0, 0.45, 1, 1, "quarter_final", None, 10,
+                    (3, 0.55, 0.0, 0.45, None, 1, 1, "quarter_final", None, 10,
                      True, 4, 3, 20),
                 ]
 
@@ -112,13 +112,33 @@ def test_grade_predictions_home_wins_pen_shootout():
     assert updates[0][1] == (1, 1, True, 3)  # predicted home, home won pens
 
 
+def test_grade_predictions_uses_knockout_advance_probability():
+    class _AdvanceCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            self.executed.append((sql.strip(), params))
+            if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
+                self._fetch = [
+                    # Home has only 38% regulation win probability, but 71%
+                    # advance probability. The knockout prediction is home advances.
+                    (9, 0.38, 0.33, 0.29, 0.71, 0, 2, "semi_final", 10, 10,
+                     False, None, None, 20),
+                ]
+
+    conn = _FakeConn()
+    conn.cur = _AdvanceCursor()
+    n = grade_predictions(conn)
+    assert n == 1
+    updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
+    assert updates[0][1] == (0, 2, True, 9)  # home advanced despite losing at 90'
+
+
 def test_grade_predictions_advancing_team_overrides_pens():
     class _AdvCursor(_FakeCursor):
         def execute(self, sql, params=None):
             self.executed.append((sql.strip(), params))
             if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
                 self._fetch = [
-                    (4, 0.2, 0.0, 0.8, 1, 1, "semi_final", 20, 10,
+                    (4, 0.2, 0.0, 0.8, None, 1, 1, "semi_final", 20, 10,
                      True, 3, 3, 20),
                 ]
 
@@ -136,7 +156,7 @@ def test_grade_predictions_force_regrades_all():
             self.executed.append((sql.strip(), params))
             if "SELECT p.id" in sql:
                 self._fetch = [
-                    (5, 0.5, 0.3, 0.2, 2, 0, "regular_season", None, 10,
+                    (5, 0.5, 0.3, 0.2, None, 2, 0, "regular_season", None, 10,
                      False, None, None, 20),
                 ]
 
@@ -153,7 +173,7 @@ def test_grade_knockout_regulation_draw():
             self.executed.append((sql.strip(), params))
             if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
                 self._fetch = [
-                    (6, 0.2, 0.55, 0.25, 1, 1, "quarter_final", None, 10,
+                    (6, 0.2, 0.55, 0.25, None, 1, 1, "quarter_final", None, 10,
                      False, None, None, 20),
                 ]
 
@@ -172,7 +192,7 @@ def test_grade_knockout_extra_time_still_uses_regulation_score():
             self.executed.append((sql.strip(), params))
             if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
                 self._fetch = [
-                    (7, 0.15, 0.25, 0.60, 2, 2, "semi_final", None, 10,
+                    (7, 0.15, 0.25, 0.60, None, 2, 2, "semi_final", None, 10,
                      False, None, None, 20),
                 ]
 
@@ -190,7 +210,7 @@ def test_grade_two_leg_aggregate_uses_advancing_team():
             self.executed.append((sql.strip(), params))
             if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
                 self._fetch = [
-                    (8, 0.75, 0.0, 0.25, 0, 0, "semi_final", 10, 10,
+                    (8, 0.75, 0.0, 0.25, None, 0, 0, "semi_final", 10, 10,
                      False, None, None, 20),
                 ]
 

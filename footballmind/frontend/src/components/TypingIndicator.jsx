@@ -1,4 +1,5 @@
 import { C } from "../fm/theme.js";
+import AIOrb from "./visuals/AIOrb.jsx";
 
 const LOAD_MESSAGES = {
   waking: "Waking up backend…",
@@ -25,17 +26,21 @@ export default function TypingIndicator({ phase }) {
   const msg = LOAD_MESSAGES[phase] || LOAD_MESSAGES.thinking;
   return (
     <div className="flex justify-start">
-      <div className="rounded-xl px-3.5 py-2.5 text-sm" style={{ background: C.panel, color: C.mute }}>
+      <div className="rounded-lg px-3.5 py-2.5 text-sm" style={{ background: C.panel, color: C.mute }}>
         <div className="flex items-center gap-2.5">
-          <span className="flex items-center gap-1" aria-hidden="true">
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                className="fm-typing-dot inline-block h-1.5 w-1.5 rounded-full"
-                style={{ background: C.home, animationDelay: `${i * 0.18}s` }}
-              />
-            ))}
-          </span>
+          {phase === "predict" || phase === "still_thinking"
+            ? <AIOrb size={26} active label="" />
+            : (
+              <span className="flex items-center gap-1" aria-hidden="true">
+                {[0, 1, 2].map((i) => (
+                  <span
+                    key={i}
+                    className="fm-typing-dot inline-block h-1.5 w-1.5 rounded-full"
+                    style={{ background: C.home, animationDelay: `${i * 0.18}s` }}
+                  />
+                ))}
+              </span>
+            )}
           <span className="text-xs leading-snug">{msg}</span>
         </div>
       </div>
