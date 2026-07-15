@@ -68,7 +68,7 @@ export default function StandingsPanel({ apiBase, offline, onCompChange }) {
   const label = LEAGUES.find((l) => l.code === activeComp)?.label ?? activeComp;
 
   return (
-    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+    <div className="rounded-lg border" style={{ borderColor: C.line, background: C.panel }}>
       {/* Header + league tabs */}
       <div className="border-b px-4 pt-3 pb-0" style={{ borderColor: C.line }}>
         <div className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
@@ -81,7 +81,7 @@ export default function StandingsPanel({ apiBase, offline, onCompChange }) {
               className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
               style={{
                 background: l.code === activeComp ? C.home : C.line,
-                color: l.code === activeComp ? "#08120F" : C.mute,
+                color: l.code === activeComp ? "#003919" : C.mute,
               }}>
               {l.short}
             </button>

@@ -1,6 +1,10 @@
 """Score display formatting."""
 
-from footballmind_services import _format_match_score, _match_actual_outcome
+from footballmind_services import (
+    _format_match_score,
+    _match_actual_outcome,
+    _prediction_outcome_for_match,
+)
 
 
 def test_pen_shootout_shows_regulation_score():
@@ -31,3 +35,23 @@ def test_pen_shootout_actual_outcome():
         went_to_pens=True, home_pens=2, away_pens=3,
     )
     assert actual == "Morocco"
+
+
+def test_knockout_prediction_display_uses_advance_probability():
+    predicted, confidence, idx = _prediction_outcome_for_match(
+        "Spain", "France", "semi_final",
+        0.38, 0.33, 0.29, home_advance_prob=0.71,
+    )
+    assert predicted == "Spain"
+    assert confidence == 0.71
+    assert idx == 0
+
+
+def test_group_prediction_display_uses_regulation_probability():
+    predicted, confidence, idx = _prediction_outcome_for_match(
+        "Spain", "France", "group",
+        0.38, 0.33, 0.29, home_advance_prob=0.71,
+    )
+    assert predicted == "Spain"
+    assert confidence == 0.38
+    assert idx == 0

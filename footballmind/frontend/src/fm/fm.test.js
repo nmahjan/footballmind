@@ -3,6 +3,7 @@ import { pct, outcomeColor, localDayKey, dayHeaderLabel, fixtureTeamStyle, fixtu
 import { C, flagCode } from "./theme.js";
 import { parseVs, buildPredictUrl } from "./deeplink.js";
 import { zoneForRank, rowZone, standingLegend } from "./standings.js";
+import { bracketDisplayTeam, bracketDisplayWinner } from "../components/BracketPanel.jsx";
 
 describe("format", () => {
   it("pct rounds to whole percent", () => {
@@ -84,5 +85,25 @@ describe("standings", () => {
 
   it("standingLegend returns PL zones", () => {
     expect(standingLegend("PL").length).toBeGreaterThan(0);
+  });
+});
+
+describe("bracket projection", () => {
+  it("uses projected teams and winner only when predictions are on", () => {
+    const match = {
+      home: "TBD",
+      away: "TBD",
+      projected_home: "Spain",
+      projected_away: "Brazil",
+      projected_winner: "Spain",
+      home_goals: null,
+      away_goals: null,
+    };
+
+    expect(bracketDisplayTeam(match, "home", false)).toBe("TBD");
+    expect(bracketDisplayWinner(match, "TBD", "TBD", false)).toBeNull();
+    expect(bracketDisplayTeam(match, "home", true)).toBe("Spain");
+    expect(bracketDisplayTeam(match, "away", true)).toBe("Brazil");
+    expect(bracketDisplayWinner(match, "Spain", "Brazil", true)).toBe("Spain");
   });
 });

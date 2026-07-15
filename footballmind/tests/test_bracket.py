@@ -1,6 +1,7 @@
 """Bracket API and knockout sync helpers."""
 
 from footballmind_services import (
+    _add_bracket_projection,
     _bracket_team_label,
     _enrich_fixture_display,
     _propagate_bracket_winners,
@@ -167,6 +168,41 @@ def test_propagate_bracket_winners():
     r16 = rounds[1]["matches"][0]
     assert r16["home"] == "Canada"
     assert r16["away"] == "Morocco"
+
+
+def test_add_bracket_projection_carries_model_winners_forward(monkeypatch):
+    def fake_predict(conn, home, away, match_date, stage, session_id=None,
+                     neutral=None, comp=None, *, persist=True):
+        winner = home if home in ("Spain", "Brazil") else away
+        return {
+            "prediction": f"{winner} advance",
+            "confidence": 0.71,
+            "home_win_prob": 0.38,
+            "draw_prob": 0.33,
+            "away_win_prob": 0.29,
+            "progression": {"home_advance": 0.71 if winner == home else 0.29},
+            "is_knockout": True,
+        }
+
+    monkeypatch.setattr("footballmind_mcp_predict._predict_match", fake_predict)
+    rounds = [
+        {"round": "quarter_final", "matches": [
+            {"home": "Spain", "away": "France", "home_goals": None, "away_goals": None},
+            {"home": "Brazil", "away": "Argentina", "home_goals": None, "away_goals": None},
+        ]},
+        {"round": "semi_final", "matches": [
+            {"home": "TBD", "away": "TBD", "home_goals": None, "away_goals": None},
+        ]},
+    ]
+
+    _add_bracket_projection(object(), rounds, "WC")
+
+    assert rounds[0]["matches"][0]["projected_winner"] == "Spain"
+    assert rounds[0]["matches"][1]["projected_winner"] == "Brazil"
+    semi = rounds[1]["matches"][0]
+    assert semi["projected_home"] == "Spain"
+    assert semi["projected_away"] == "Brazil"
+    assert semi["projected_winner"] == "Spain"
 
 
 def test_enrich_fixture_display_uses_bracket_labels():

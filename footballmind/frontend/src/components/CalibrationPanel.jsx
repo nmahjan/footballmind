@@ -17,7 +17,7 @@ export default function CalibrationPanel({ summary, apiBase, offline }) {
   const bins = (cal?.bins ?? []).filter((b) => b.count > 0);
 
   return (
-    <div className="rounded-xl border p-4" style={{ borderColor: C.line, background: C.panel }}>
+    <div className="rounded-lg border p-4" style={{ borderColor: C.line, background: C.panel }}>
       <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
         Prediction accuracy & calibration
       </div>

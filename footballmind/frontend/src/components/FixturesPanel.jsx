@@ -217,13 +217,13 @@ export default function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onC
   const waitingParent = (tab === "WC" || tab === "PL") && apiBase && !sidebarLoaded;
 
   return (
-    <div className="rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+    <div className="rounded-lg border" style={{ borderColor: C.line, background: C.panel }}>
       <div className="border-b px-4 pt-3 pb-0" style={{ borderColor: C.line }}>
         <div className="mb-2 flex gap-1">
           {[["upcoming", "📅 Upcoming"], ["results", "✅ Results"]].map(([k, lbl]) => (
             <button key={k} onClick={() => setView(k)}
               className="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-              style={{ background: view === k ? C.home : C.line, color: view === k ? "#08120F" : C.mute }}>
+              style={{ background: view === k ? C.home : C.line, color: view === k ? "#003919" : C.mute }}>
               {lbl}
             </button>
           ))}
@@ -242,7 +242,7 @@ export default function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onC
               {FIXTURE_TABS.map(({ code, label }) => (
                 <button key={code} onClick={() => switchTab(code)}
                   className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                  style={{ background: code === tab ? C.home : C.line, color: code === tab ? "#08120F" : C.mute }}>
+                  style={{ background: code === tab ? C.home : C.line, color: code === tab ? "#003919" : C.mute }}>
                   {label}
                 </button>
               ))}
@@ -258,7 +258,7 @@ export default function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onC
               {FIXTURE_TABS.map(({ code, label }) => (
                 <button key={code} onClick={() => switchTab(code)}
                   className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                  style={{ background: code === tab ? C.home : C.line, color: code === tab ? "#08120F" : C.mute }}>
+                  style={{ background: code === tab ? C.home : C.line, color: code === tab ? "#003919" : C.mute }}>
                   {label}
                 </button>
               ))}

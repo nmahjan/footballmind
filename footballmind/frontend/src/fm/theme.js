@@ -1,9 +1,22 @@
 import { createElement } from "react";
 
 export const C = {
-  bg: "#0B1413", panel: "#10201C", panel2: "#0E1A18", line: "#1E322C",
-  chalk: "#E9EFEA", mute: "#7E938B", home: "#34D399", draw: "#9AA7B2",
-  away: "#F4A152", glow: "rgba(52,211,153,0.10)",
+  bg: "#0D1117",
+  panel: "#161B22",
+  panel2: "#10141A",
+  elevated: "#21262D",
+  line: "#30363D",
+  lineSoft: "rgba(125,133,144,0.24)",
+  chalk: "#DFE2EB",
+  mute: "#7D8590",
+  home: "#00FF85",
+  draw: "#D7DFEB",
+  away: "#F85149",
+  blue: "#2F81F7",
+  warning: "#F8971D",
+  success: "#238636",
+  glow: "rgba(0,255,133,0.14)",
+  blueGlow: "rgba(47,129,247,0.16)",
 };
 
 const FLAGS = {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { C, Flag } from "../fm/theme.js";
+import { pct } from "../fm/format.js";
 
 function fmtBracketTime(iso) {
   if (!iso) return "TBD";
@@ -37,7 +38,22 @@ function bracketMatchCenterY(roundIndex, matchIndex) {
   return BRACKET_HEADER_H + bracketMatchTop(roundIndex, matchIndex) + BRACKET_MATCH_H / 2;
 }
 
-function BracketTeamRow({ name, goals, winner }) {
+export function bracketDisplayTeam(f, side, showPredictions = false) {
+  if (!showPredictions) return f?.[side] || "TBD";
+  const projected = side === "home" ? f?.projected_home : f?.projected_away;
+  return projected || f?.[side] || "TBD";
+}
+
+export function bracketDisplayWinner(f, home, away, showPredictions = false) {
+  if (showPredictions && f?.projected_winner && f.projected_winner !== "TBD") {
+    return f.projected_winner;
+  }
+  if (f?.advances && f.advances !== "TBD") return f.advances;
+  if (f?.home_goals == null || f?.away_goals == null || f.home_goals === f.away_goals) return null;
+  return f.home_goals > f.away_goals ? home : away;
+}
+
+function BracketTeamRow({ name, goals, winner, projected }) {
   const tbd = !name || name === "TBD";
   return (
     <div className="flex items-center gap-2 px-2.5 py-1.5"
@@ -50,6 +66,12 @@ function BracketTeamRow({ name, goals, winner }) {
         style={{ color: tbd ? C.mute : C.chalk }}>
         {tbd ? "TBD" : name}
       </span>
+      {projected && !tbd && (
+        <span className="shrink-0 rounded px-1 py-0.5 text-[9px] font-bold uppercase"
+          style={{ background: "rgba(52,211,153,0.12)", color: C.home }}>
+          pred
+        </span>
+      )}
       {goals != null && (
         <span className="shrink-0 text-xs font-bold tabular-nums" style={{ color: C.chalk }}>{goals}</span>
       )}
@@ -57,20 +79,29 @@ function BracketTeamRow({ name, goals, winner }) {
   );
 }
 
-function BracketMatchCard({ f }) {
+function BracketMatchCard({ f, showPredictions = false }) {
   const finished = f.home_goals != null && f.away_goals != null;
-  const homeWin = finished && f.home_goals > f.away_goals;
-  const awayWin = finished && f.away_goals > f.home_goals;
+  const home = bracketDisplayTeam(f, "home", showPredictions);
+  const away = bracketDisplayTeam(f, "away", showPredictions);
+  const winner = bracketDisplayWinner(f, home, away, showPredictions);
+  const homeWin = winner === home;
+  const awayWin = winner === away;
+  const projected = showPredictions && !finished;
+  const status = projected && f.preview?.confidence
+    ? `Pred ${pct(f.preview.confidence)}`
+    : finished ? "Full time" : fmtBracketTime(f.match_date);
   return (
     <div className="w-[168px] shrink-0 overflow-hidden rounded-lg border"
       style={{ borderColor: C.line, background: C.panel2 }}>
       <div className="px-2.5 py-1 text-[10px] font-medium truncate" style={{ color: C.mute }}>
-        {finished ? "Full time" : fmtBracketTime(f.match_date)}
+        {status}
       </div>
       <div style={{ borderTop: `1px solid ${C.line}` }}>
-        <BracketTeamRow name={f.home} goals={finished ? f.home_goals : null} winner={homeWin} />
+        <BracketTeamRow name={home} goals={finished ? f.home_goals : null} winner={homeWin}
+          projected={projected && homeWin} />
         <div style={{ borderTop: `1px solid ${C.line}` }} />
-        <BracketTeamRow name={f.away} goals={finished ? f.away_goals : null} winner={awayWin} />
+        <BracketTeamRow name={away} goals={finished ? f.away_goals : null} winner={awayWin}
+          projected={projected && awayWin} />
       </div>
     </div>
   );
@@ -123,7 +154,7 @@ export function normaliseBracket(data) {
   return BRACKET_ORDER.filter((k) => b[k]?.length).map((k) => ({ round: k, matches: b[k] }));
 }
 
-export function BracketTree({ rounds, scrollRef: externalRef }) {
+export function BracketTree({ rounds, scrollRef: externalRef, showPredictions = false }) {
   const internalRef = useRef(null);
   const scrollRef = externalRef || internalRef;
   const firstCount = rounds[0]?.matches?.length ?? 0;
@@ -176,7 +207,7 @@ export function BracketTree({ rounds, scrollRef: externalRef }) {
                   {matches.map((f, mi) => (
                     <div key={mi} className="absolute left-0 right-0"
                       style={{ top: bracketMatchTop(ri, mi) }}>
-                      <BracketMatchCard f={f} />
+                      <BracketMatchCard f={f} showPredictions={showPredictions} />
                     </div>
                   ))}
                 </div>
@@ -193,6 +224,7 @@ export default function BracketPanel({ apiBase, offline, defaultComp = "WC" }) {
   const [bracket, setBracket] = useState(null);
   const [open, setOpen] = useState(true);
   const [comp, setComp] = useState(defaultComp);
+  const [showPredictions, setShowPredictions] = useState(false);
   const scrollRef = useRef(null);
 
   function load(c) {
@@ -214,7 +246,7 @@ export default function BracketPanel({ apiBase, offline, defaultComp = "WC" }) {
   const rounds = bracket ?? [];
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-xl border" style={{ borderColor: C.line, background: C.panel }}>
+    <div className="min-w-0 overflow-hidden rounded-lg border" style={{ borderColor: C.line, background: C.panel }}>
       <button type="button" onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between px-4 py-2.5 text-left transition-opacity hover:opacity-70"
         style={{ borderBottom: open ? `1px solid ${C.line}` : "none" }}>
@@ -226,20 +258,30 @@ export default function BracketPanel({ apiBase, offline, defaultComp = "WC" }) {
 
       {open && (
         <div className="min-w-0 overflow-hidden">
-          <div className="flex gap-1 overflow-x-auto px-3 pt-2 pb-1" style={{ scrollbarWidth: "none" }}>
-            {[["WC", "🌍 World Cup"], ["CL", "⭐ Champions League"]].map(([c, lbl]) => (
-              <button key={c} type="button" onClick={() => { setComp(c); setBracket(null); load(c); }}
-                className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                style={{ background: c === comp ? C.home : C.line, color: c === comp ? "#08120F" : C.mute }}>
-                {lbl}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-2 overflow-x-auto px-3 pt-2 pb-1" style={{ scrollbarWidth: "none" }}>
+            <div className="flex shrink-0 gap-1">
+              {[["WC", "🌍 World Cup"], ["CL", "⭐ Champions League"]].map(([c, lbl]) => (
+                <button key={c} type="button" onClick={() => { setComp(c); setBracket(null); load(c); }}
+                  className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                  style={{ background: c === comp ? C.home : C.line, color: c === comp ? "#003919" : C.mute }}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setShowPredictions((v) => !v)}
+              className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+              style={{
+                background: showPredictions ? C.home : C.line,
+                color: showPredictions ? "#003919" : C.mute,
+              }}>
+              Pred: {showPredictions ? "On" : "Off"}
+            </button>
           </div>
 
           {bracket === null ? (
             <div className="px-4 py-5 text-center text-xs" style={{ color: C.mute }}>Loading…</div>
           ) : (
-            <BracketTree rounds={rounds} scrollRef={scrollRef} />
+            <BracketTree rounds={rounds} scrollRef={scrollRef} showPredictions={showPredictions} />
           )}
         </div>
       )}

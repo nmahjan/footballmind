@@ -5,6 +5,7 @@ import { buildPredictUrl } from "../fm/deeplink.js";
 import { readApiError } from "../fm/api.js";
 import { CardPredictedLineups } from "./PlayersSidebar.jsx";
 import MarkdownBody from "./MarkdownBody.jsx";
+import AIOrb from "./visuals/AIOrb.jsx";
 
 function ProbBar({ home, draw, away, homeName, awayName }) {
   const seg = [
@@ -18,7 +19,7 @@ function ProbBar({ home, draw, away, homeName, awayName }) {
         {seg.map((s, i) => (
           <div key={i} className="flex items-center justify-center"
             style={{ width: pct(s.v), background: s.c, minWidth: s.v > 0.06 ? undefined : 0 }}>
-            <span className="px-1 text-[11px] font-semibold tabular-nums" style={{ color: "#08120F" }}>
+            <span className="px-1 text-[11px] font-semibold tabular-nums" style={{ color: "#003919" }}>
               {s.v > 0.12 ? pct(s.v) : ""}
             </span>
           </div>
@@ -49,7 +50,7 @@ function AdvanceBar({ prog, homeName, awayName }) {
         {seg.map((s, i) => (
           <div key={i} className="flex items-center justify-center"
             style={{ width: pct(s.v), background: s.c, minWidth: s.v > 0.06 ? undefined : 0 }}>
-            <span className="px-1 text-[11px] font-semibold tabular-nums" style={{ color: "#08120F" }}>
+            <span className="px-1 text-[11px] font-semibold tabular-nums" style={{ color: "#003919" }}>
               {s.v > 0.12 ? pct(s.v) : ""}
             </span>
           </div>
@@ -79,7 +80,7 @@ function FormDots({ results, label }) {
       <span className="text-[10px]" style={{ color: C.mute }}>{label}</span>
       {results.map((r, i) => (
         <span key={i} className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-[9px] font-bold"
-          style={{ background: FORM_COLOR[r] ?? C.line, color: "#08120F" }}>
+          style={{ background: FORM_COLOR[r] ?? C.line, color: "#003919" }}>
           {r}
         </span>
       ))}
@@ -160,13 +161,16 @@ export default function PredictionCard({ p, home, away, comp = "WC", neutral = n
   const hasH2h = h2h?.played > 0;
 
   return (
-    <div className="mt-2 rounded-xl border p-4" style={{ borderColor: C.line, background: C.panel, boxShadow: `0 0 0 1px ${C.glow}` }}>
+    <div className="mt-2 rounded-lg border p-4" style={{ borderColor: C.line, background: C.panel, boxShadow: `0 0 0 1px ${C.glow}` }}>
       <div className="flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold" style={{ color: C.chalk }}>
-          <TeamLabel name={home} /> <span style={{ color: C.mute }}>vs</span> <TeamLabel name={away} />
+        <div className="flex min-w-0 items-center gap-3">
+          <AIOrb size={46} active />
+          <div className="min-w-0 text-sm font-semibold" style={{ color: C.chalk }}>
+            <TeamLabel name={home} /> <span style={{ color: C.mute }}>vs</span> <TeamLabel name={away} />
+          </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ background: color, color: "#08120F" }}>
+          <div className="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ background: color, color: "#003919" }}>
             {p.prediction} · {pct(p.confidence)}
           </div>
           <button onClick={share} title="Copy prediction summary + link"
@@ -246,15 +250,16 @@ export default function PredictionCard({ p, home, away, comp = "WC", neutral = n
           className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border py-1.5 text-xs font-medium transition-opacity hover:opacity-70 disabled:opacity-40"
           style={{ borderColor: C.line, color: C.mute }}>
           {analyzing
-            ? <><span className="animate-spin">⟳</span> Analyzing match…</>
-            : <>✨ Deep analysis</>}
+            ? <><AIOrb size={24} active label="" /> Analyzing match…</>
+            : <><AIOrb size={22} label="" /> Deep analysis</>}
         </button>
       )}
       {analysis && (
         <div className="mt-3 rounded-lg border-l-2 pl-3 pr-2 py-2.5 text-xs leading-relaxed"
           style={{ borderColor: color, background: C.panel2, color: C.chalk }}>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
-            ✨ AI Analysis
+          <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
+            <AIOrb size={24} active label="" />
+            AI Analysis
           </div>
           <MarkdownBody text={analysis} size="xs" />
         </div>

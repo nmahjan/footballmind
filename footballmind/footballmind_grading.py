@@ -71,6 +71,7 @@ def grade_predictions(conn, *, force: bool = False):
             )
         cur.execute(
             "SELECT p.id, p.home_win_prob, p.draw_prob, p.away_win_prob, "
+            "       p.home_advance_prob, "
             "       m.home_goals, m.away_goals, m.stage, "
             "       m.advancing_team_id, m.home_team_id, "
             "       m.went_to_pens, m.home_pens, m.away_pens, m.away_team_id "
@@ -81,10 +82,13 @@ def grade_predictions(conn, *, force: bool = False):
         knockout = {
             "round_of_32", "round_of_16", "quarter_final", "semi_final", "final",
         }
-        for (pid, hw, dw, aw, hg, ag, stage, adv_id, home_tid,
+        for (pid, hw, dw, aw, ha, hg, ag, stage, adv_id, home_tid,
              went_to_pens, home_pens, away_pens, away_tid) in rows:
-            probs = [hw or 0.0, dw or 0.0, aw or 0.0]
-            predicted = probs.index(max(probs))                 # 0 home, 1 draw, 2 away
+            if stage in knockout and ha is not None:
+                predicted = 0 if (ha or 0.0) >= 0.5 else 2      # advances
+            else:
+                probs = [hw or 0.0, dw or 0.0, aw or 0.0]
+                predicted = probs.index(max(probs))             # 0 home, 1 draw, 2 away
             if stage in knockout and adv_id:
                 actual = 0 if adv_id == home_tid else 2
             elif (stage in knockout and went_to_pens

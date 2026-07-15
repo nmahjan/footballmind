@@ -10,7 +10,16 @@ body,
 
 body {
   margin: 0;
-  background: #0b1413; /* matches the component's floodlit-pitch palette */
+  background: #0d1117;
+  font-family: Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-feature-settings: "tnum" 1, "ss01" 1;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
 }
 
 @keyframes fm-typing-dot {
@@ -20,4 +29,253 @@ body {
 
 .fm-typing-dot {
   animation: fm-typing-dot 1.2s ease-in-out infinite;
+}
+
+.shader-waves {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.shader-waves::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(13, 17, 23, 0.14), rgba(13, 17, 23, 0.88)),
+    radial-gradient(circle at 50% 40%, transparent 0 18rem, rgba(13, 17, 23, 0.62) 46rem);
+}
+
+.shader-waves-layer {
+  position: absolute;
+  inset: -24%;
+  filter: blur(13px) contrast(1.92) saturate(1.55);
+  transform-origin: center;
+  background:
+    radial-gradient(ellipse at 16% 72%, #000 0 15%, transparent 26%),
+    radial-gradient(ellipse at 72% 20%, color-mix(in srgb, var(--wave-color-b) 72%, black) 0 24%, transparent 45%),
+    radial-gradient(ellipse at 85% 72%, color-mix(in srgb, var(--wave-color-a) 42%, #17133f) 0 18%, transparent 36%),
+    radial-gradient(ellipse at 34% 18%, transparent 0 14%, #020403 19% 26%, transparent 34%),
+    radial-gradient(ellipse at 48% 78%, transparent 0 11%, color-mix(in srgb, var(--wave-color-a) 58%, #050607) 15% 22%, transparent 31%),
+    repeating-linear-gradient(105deg,
+      #020403 0 8%,
+      color-mix(in srgb, var(--wave-color-b) 78%, #10141a) 9% 14%,
+      #050607 16% 21%,
+      color-mix(in srgb, var(--wave-color-a) 64%, #10141a) 22% 26%,
+      #010201 28% 34%);
+  mask-image: radial-gradient(ellipse at 48% 48%, black 0 64%, transparent 82%);
+}
+
+.shader-waves-layer-a {
+  animation: shader-wave-drift-a 16s ease-in-out infinite alternate;
+}
+
+.shader-waves-layer-b {
+  opacity: 0.48;
+  mix-blend-mode: screen;
+  animation: shader-wave-drift-b 21s ease-in-out infinite alternate;
+}
+
+.shader-waves-layer-c {
+  opacity: 0.34;
+  filter: blur(20px) contrast(2.2) saturate(1.75);
+  mix-blend-mode: screen;
+  background:
+    radial-gradient(ellipse at 18% 18%, #000 0 16%, transparent 31%),
+    radial-gradient(ellipse at 62% 58%, color-mix(in srgb, var(--wave-color-a) 76%, #10141a) 0 18%, transparent 36%),
+    repeating-radial-gradient(ellipse at 30% 54%,
+      #020403 0 7%,
+      color-mix(in srgb, var(--wave-color-b) 54%, #10141a) 9% 12%,
+      #050607 15% 19%,
+      color-mix(in srgb, var(--wave-color-a) 62%, #10141a) 21% 26%);
+  animation: shader-wave-drift-c 26s ease-in-out infinite alternate;
+}
+
+@keyframes shader-wave-drift-a {
+  from { transform: translate3d(-4%, -2%, 0) rotate(-8deg) scale(1.05); }
+  to { transform: translate3d(4%, 5%, 0) rotate(5deg) scale(1.14); }
+}
+
+@keyframes shader-wave-drift-b {
+  from { transform: translate3d(5%, 4%, 0) rotate(9deg) scale(1.12); }
+  to { transform: translate3d(-4%, -5%, 0) rotate(-5deg) scale(1.04); }
+}
+
+@keyframes shader-wave-drift-c {
+  from { transform: translate3d(-6%, 5%, 0) rotate(16deg) scale(1.18) skewX(-8deg); }
+  to { transform: translate3d(6%, -5%, 0) rotate(-11deg) scale(1.08) skewX(7deg); }
+}
+
+.ai-orb {
+  position: relative;
+  display: inline-grid;
+  width: var(--ai-orb-size);
+  height: var(--ai-orb-size);
+  place-items: center;
+  isolation: isolate;
+  flex: 0 0 auto;
+}
+
+.ai-orb-core,
+.ai-orb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+}
+
+.ai-orb-core {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.96) 0 9%, #5ffcff 11% 19%, rgba(47, 129, 247, 0.55) 22%, transparent 34%),
+    radial-gradient(circle at 42% 42%, rgba(255, 255, 255, 0.08), transparent 0 38%),
+    radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.98) 0 56%, transparent 62%),
+    conic-gradient(from 208deg,
+      rgba(47, 129, 247, 0.12),
+      #6f7dff 12%,
+      #ff4df3 22%,
+      rgba(0, 0, 0, 0.98) 38%,
+      rgba(0, 0, 0, 0.98) 58%,
+      #00ff85 70%,
+      #21f3ff 84%,
+      rgba(47, 129, 247, 0.18));
+  box-shadow:
+    0 0 14px rgba(33, 243, 255, 0.42),
+    0 0 28px rgba(0, 255, 133, 0.24),
+    inset 0 0 22px rgba(0, 0, 0, 0.96),
+    inset 0 0 38px rgba(13, 17, 23, 0.92);
+  animation: ai-orb-morph 7s ease-in-out infinite;
+}
+
+.ai-orb-ring {
+  inset: -5%;
+  border: 1px solid rgba(33, 243, 255, 0.36);
+  box-shadow:
+    0 0 10px rgba(111, 125, 255, 0.34),
+    inset 0 0 10px rgba(0, 255, 133, 0.2);
+  opacity: 0.86;
+  animation: ai-orb-spin 11s linear infinite;
+}
+
+.ai-orb-label {
+  position: relative;
+  z-index: 1;
+  color: #003919;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.ai-orb-active .ai-orb-core {
+  animation-duration: 2.8s;
+}
+
+.ai-orb-active .ai-orb-ring {
+  animation-duration: 4.5s;
+}
+
+@keyframes ai-orb-morph {
+  0%, 100% { border-radius: 58% 42% 50% 50% / 45% 52% 48% 55%; transform: rotate(0deg) scale(1); }
+  40% { border-radius: 45% 55% 40% 60% / 56% 43% 57% 44%; transform: rotate(18deg) scale(1.04); }
+  70% { border-radius: 54% 46% 62% 38% / 42% 58% 44% 56%; transform: rotate(-12deg) scale(0.98); }
+}
+
+@keyframes ai-orb-spin {
+  from { transform: rotate(0deg) scale(1); }
+  to { transform: rotate(360deg) scale(1.05); }
+}
+
+.data-preloader {
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(0, 255, 133, 0.12), transparent 18rem),
+    rgba(13, 17, 23, 0.92);
+  backdrop-filter: blur(10px);
+}
+
+.data-preloader-fixed {
+  position: fixed;
+}
+
+.data-preloader-absolute {
+  position: absolute;
+}
+
+.data-preloader-panel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: min(360px, calc(100vw - 48px));
+  border: 1px solid rgba(48, 54, 61, 0.92);
+  border-radius: 8px;
+  padding: 18px;
+  background: rgba(22, 27, 34, 0.86);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.38);
+}
+
+.data-preloader-mark {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+}
+
+.data-preloader-mark span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--preloader-accent) 60%, transparent);
+  transform: rotate(calc(var(--i) * 22.5deg)) scale(calc(0.42 + var(--i) * 0.052));
+  opacity: calc(0.18 + var(--i) * 0.08);
+  animation: preloader-ring 1.45s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 70ms);
+}
+
+.data-preloader-title {
+  color: #dfe2eb;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.data-preloader-copy {
+  margin-top: 2px;
+  color: #7d8590;
+  font-size: 12px;
+}
+
+.data-preloader-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  transform-origin: left;
+  background: linear-gradient(90deg, transparent, var(--preloader-accent), #2f81f7);
+  animation: preloader-progress 1.6s ease-in-out infinite;
+}
+
+@keyframes preloader-ring {
+  0%, 100% { filter: brightness(0.9); transform: rotate(calc(var(--i) * 22.5deg)) scale(calc(0.42 + var(--i) * 0.052)); }
+  50% { filter: brightness(1.6); transform: rotate(calc(var(--i) * 22.5deg + 14deg)) scale(calc(0.50 + var(--i) * 0.052)); }
+}
+
+@keyframes preloader-progress {
+  0% { transform: scaleX(0); opacity: 0.35; }
+  55% { transform: scaleX(0.72); opacity: 1; }
+  100% { transform: scaleX(1); opacity: 0.1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shader-waves-layer,
+  .ai-orb-core,
+  .ai-orb-ring,
+  .data-preloader-mark span,
+  .data-preloader-progress,
+  .fm-typing-dot {
+    animation: none !important;
+  }
 }

@@ -17,7 +17,7 @@ function formatPlayerMeta(p) {
 }
 
 const POS_META = {
-  GK:  { label: "GK",  bg: "#B8860B", fg: "#08120F" },
+  GK:  { label: "GK",  bg: "#B8860B", fg: "#003919" },
   DEF: { label: "DEF", bg: "#1A6B47", fg: "#E8F5EE" },
   CB:  { label: "CB",  bg: "#1A6B47", fg: "#E8F5EE" },
   LB:  { label: "LB",  bg: "#1E7A52", fg: "#E8F5EE" },
@@ -50,7 +50,7 @@ export function SidebarModeToggle({ mode, setMode }) {
           className="flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors"
           style={{
             background: mode === key ? C.home : "transparent",
-            color: mode === key ? "#08120F" : C.mute,
+            color: mode === key ? "#003919" : C.mute,
           }}>
           {label}
         </button>
@@ -135,7 +135,7 @@ function PlayerCard({ p, onSelect, compact }) {
 function PredictedPitch({ rows, formation, compact = false, label = "Predicted XI" }) {
   const displayRows = [...(rows ?? [])].reverse();
   return (
-    <div className="rounded-xl border overflow-hidden" style={{ borderColor: "#2a5c3e", background: "linear-gradient(180deg, #1a4d35 0%, #143d2a 100%)" }}>
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: "#2a5c3e", background: "linear-gradient(180deg, #1a4d35 0%, #143d2a 100%)" }}>
       <div className="px-3 py-2 flex items-center justify-between border-b" style={{ borderColor: "#2a5c3e55" }}>
         <span className="text-[11px] font-bold tracking-wider" style={{ color: "#b8e6c8" }}>{formation}</span>
         <span className="text-[9px] uppercase tracking-wider" style={{ color: "#7ab896" }}>{label}</span>
@@ -347,7 +347,7 @@ function AvailabilityAdminPanel({ team, comp, apiBase, adminKey, onUpdated }) {
           </select>
           <button type="submit" disabled={busy}
             className="shrink-0 rounded-md px-3 py-1.5 text-[10px] font-semibold disabled:opacity-50"
-            style={{ background: C.home, color: "#08120F" }}>
+            style={{ background: C.home, color: "#003919" }}>
             Save
           </button>
         </div>
@@ -495,7 +495,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
   const squadByPos = squad?.by_position ?? {};
 
   return (
-    <div className="rounded-xl border flex flex-col max-h-[calc(100vh-8rem)]" style={{ borderColor: C.line, background: C.panel }}>
+    <div className="rounded-lg border flex flex-col max-h-[calc(100vh-8rem)]" style={{ borderColor: C.line, background: C.panel }}>
       <div className="border-b px-4 py-2.5 shrink-0" style={{ borderColor: C.line }}>
         <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.mute }}>
           Players & Squads
@@ -510,7 +510,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
           {COMP_OPTIONS.map(([c, lbl]) => (
             <button key={c} onClick={() => pickComp(c)}
               className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-              style={{ background: c === comp ? C.home : C.line, color: c === comp ? "#08120F" : C.mute }}>
+              style={{ background: c === comp ? C.home : C.line, color: c === comp ? "#003919" : C.mute }}>
               {lbl}
             </button>
           ))}
@@ -519,7 +519,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
           {[["standouts", "⚡ Standouts"], ["scorers", "🥅 Scorers"], ["lineup", "⚽ Predicted XI"], ["squad", "📋 Squad"]].map(([k, lbl]) => (
             <button key={k} onClick={() => setTab(k)}
               className="flex-1 min-w-[45%] rounded-md px-2 py-1 text-[11px] font-semibold transition-colors"
-              style={{ background: tab === k ? C.home : C.line, color: tab === k ? "#08120F" : C.mute }}>
+              style={{ background: tab === k ? C.home : C.line, color: tab === k ? "#003919" : C.mute }}>
               {lbl}
             </button>
           ))}
@@ -533,7 +533,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
               {POS_TABS.map(({ key, label }) => (
                 <button key={key} onClick={() => setPosTab(key)}
                   className="shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold transition-colors"
-                  style={{ background: key === posTab ? C.home : C.line, color: key === posTab ? "#08120F" : C.mute }}>
+                  style={{ background: key === posTab ? C.home : C.line, color: key === posTab ? "#003919" : C.mute }}>
                   {label}
                 </button>
               ))}
@@ -603,7 +603,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
               {team && (
                 <button type="button" onClick={() => askTeamLineup(team)}
                   className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] font-semibold"
-                  style={{ background: C.home, color: "#08120F" }}>
+                  style={{ background: C.home, color: "#003919" }}>
                   Ask AI
                 </button>
               )}
@@ -621,7 +621,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
                         className="flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold transition-colors"
                         style={{
                           background: lineupView === k ? C.home : "transparent",
-                          color: lineupView === k ? "#08120F" : C.mute,
+                          color: lineupView === k ? "#003919" : C.mute,
                         }}>
                         {lbl}
                       </button>
@@ -740,7 +740,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
               {team && (
                 <button type="button" onClick={() => askTeamSquad(team)}
                   className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] font-semibold"
-                  style={{ background: C.home, color: "#08120F" }}>
+                  style={{ background: C.home, color: "#003919" }}>
                   Ask AI
                 </button>
               )}

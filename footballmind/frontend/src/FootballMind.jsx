@@ -8,6 +8,8 @@ import StandingsPanel from "./components/StandingsPanel.jsx";
 import RankingsPanel from "./components/RankingsPanel.jsx";
 import MobileTabBar, { mobilePanelClass } from "./components/MobileTabBar.jsx";
 import ShareMeta from "./components/ShareMeta.jsx";
+import DataPreloader from "./components/visuals/DataPreloader.jsx";
+import ShaderWaves from "./components/visuals/ShaderWaves.jsx";
 import { C } from "./fm/theme.js";
 import { DEMO_FIXTURES } from "./fm/demo.js";
 import { getApiBase } from "./fm/api.js";
@@ -26,6 +28,8 @@ export default function FootballMind() {
   const [sidebarLoaded, setSidebarLoaded] = useState(false);
   const [adminKey, setAdminKey] = useState(() => getAdminKey());
   const [mobileTab, setMobileTab] = useState("chat");
+  const [initialLoading, setInitialLoading] = useState(Boolean(API_BASE));
+  const [initialLoaderMinDone, setInitialLoaderMinDone] = useState(!API_BASE);
   const sidebarToggleRef = useRef(null);
   const sidebarTopRef = useRef(null);
   const [chatStretchHeight, setChatStretchHeight] = useState(null);
@@ -97,6 +101,7 @@ export default function FootballMind() {
     fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
       .then((d) => setSummary(d.summary)).catch(() => {});
     loadSidebarData();
+    const reveal = setTimeout(() => setInitialLoaderMinDone(true), 1400);
     const t1 = setTimeout(loadSidebarData, 4000);
     const t2 = setTimeout(loadSidebarData, 12000);
     const poll = setInterval(() => {
@@ -104,18 +109,32 @@ export default function FootballMind() {
       fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
         .then((d) => setSummary(d.summary)).catch(() => {});
     }, 90000);
-    return () => { clearTimeout(t1); clearTimeout(t2); clearInterval(poll); };
+    return () => { clearTimeout(reveal); clearTimeout(t1); clearTimeout(t2); clearInterval(poll); };
   }, []);
+
+  useEffect(() => {
+    if (!API_BASE) return;
+    if (initialLoaderMinDone && sidebarLoaded) setInitialLoading(false);
+  }, [initialLoaderMinDone, sidebarLoaded]);
 
   const showTablesBelowChat = sidebarMode === "matches";
 
   return (
-    <div className="flex min-h-screen w-full flex-col font-sans" style={{ background: C.bg, color: C.chalk }}>
+    <div className="flex min-h-screen w-full flex-col font-sans"
+      style={{
+        background: `radial-gradient(circle at 16% 0%, ${C.blueGlow}, transparent 32rem), ${C.bg}`,
+        color: C.chalk,
+      }}>
       <ShareMeta />
+      <ShaderWaves />
+      <DataPreloader
+        loading={initialLoading}
+        loadingText="Loading match intelligence"
+      />
       <AppHeader offline={chat.offline} backendStatus={chat.backendStatus} />
 
-      <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 pb-0 md:flex-row md:items-start md:pb-4">
-        <div className="flex min-w-0 flex-1 flex-col gap-4 md:basis-[60%]">
+      <div className="relative z-10 mx-auto flex w-full max-w-[1680px] min-w-0 flex-1 flex-col gap-4 p-4 pb-0 md:flex-row md:items-start md:pb-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-4 md:basis-[64%]">
           <div className={mobilePanelClass(mobileTab, "chat")}>
             <ChatPanel
               messages={chat.messages}
@@ -147,7 +166,7 @@ export default function FootballMind() {
 
         <aside className={`${sidebarMode === "players"
           ? mobilePanelClass(mobileTab, "players")
-          : mobilePanelClass(mobileTab, "fixtures")} md:max-w-[40%] md:basis-[40%] md:shrink-0 flex flex-col gap-4`}>
+          : mobilePanelClass(mobileTab, "fixtures")} md:max-w-[36%] md:basis-[36%] md:shrink-0 flex flex-col gap-4`}>
           <div ref={sidebarToggleRef}>
             <SidebarModeToggle mode={sidebarMode} setMode={(m) => { setSidebarMode(m); setMobileTab("chat"); }} />
           </div>
