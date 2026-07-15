@@ -3,7 +3,7 @@ import { pct, outcomeColor, localDayKey, dayHeaderLabel, fixtureTeamStyle, fixtu
 import { C, flagCode } from "./theme.js";
 import { parseVs, buildPredictUrl } from "./deeplink.js";
 import { zoneForRank, rowZone, standingLegend } from "./standings.js";
-import { bracketDisplayTeam, bracketDisplayWinner } from "../components/BracketPanel.jsx";
+import { bracketDisplayTeam, bracketDisplayWinner, normaliseBracket } from "../components/BracketPanel.jsx";
 
 describe("format", () => {
   it("pct rounds to whole percent", () => {
@@ -105,5 +105,15 @@ describe("bracket projection", () => {
     expect(bracketDisplayTeam(match, "home", true)).toBe("Spain");
     expect(bracketDisplayTeam(match, "away", true)).toBe("Brazil");
     expect(bracketDisplayWinner(match, "Spain", "Brazil", true)).toBe("Spain");
+  });
+
+  it("does not render third-place as part of the main bracket tree", () => {
+    const rounds = normaliseBracket([
+      { round: "semi_final", matches: [{ home: "Spain", away: "France" }] },
+      { round: "final", matches: [{ home: "Spain", away: "Argentina" }] },
+      { round: "third_place", matches: [{ home: "France", away: "England" }] },
+    ]);
+
+    expect(rounds.map((r) => r.round)).toEqual(["semi_final", "final"]);
   });
 });

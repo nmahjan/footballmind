@@ -8,7 +8,7 @@ from datetime import date
 KNOCKOUT_STAGES = frozenset({
     "round_of_32", "round_of_16", "quarter_final", "semi_final", "final", "third_place",
 })
-BRACKET_DISPLAY_ORDER = ["round_of_32", "round_of_16", "quarter_final", "semi_final", "final"]
+BRACKET_DISPLAY_ORDER = ["round_of_32", "round_of_16", "quarter_final", "semi_final", "final", "third_place"]
 # football-data.org's kickoff order does not match the vertical tournament bracket.
 # The 2026 WC R32/R16 display is fixed from FIFA match-number feeder order; later
 # rounds can then be derived from the winners feeding forward.
@@ -22,7 +22,7 @@ WC_BRACKET_INDEX_ORDER = {
 BRACKET_SIZES_BY_COMP = {
     "WC": {
         "round_of_32": 16, "round_of_16": 8, "quarter_final": 4,
-        "semi_final": 2, "final": 1,
+        "semi_final": 2, "final": 1, "third_place": 1,
     },
     "CL": {
         "round_of_16": 8, "quarter_final": 4, "semi_final": 2, "final": 1,
@@ -1621,6 +1621,21 @@ def _bracket_winner(f: dict) -> str | None:
         return adv
     if hg is not None and ag is not None and hg != ag:
         return f["home"] if hg > ag else f["away"]
+    hp, ap = f.get("home_pens"), f.get("away_pens")
+    if hp is not None and ap is not None and hp != ap:
+        return f["home"] if hp > ap else f["away"]
+    return None
+
+
+def _bracket_loser(f: dict) -> str | None:
+    winner = _bracket_winner(f)
+    if not winner:
+        return None
+    home, away = f.get("home"), f.get("away")
+    if winner == home and away and away != "TBD":
+        return away
+    if winner == away and home and home != "TBD":
+        return home
     return None
 
 
@@ -1677,6 +1692,8 @@ def _add_bracket_projection(conn, rounds: list[dict], comp: str) -> None:
             projected = f.get("projected_winner")
             if not projected or ri >= len(rounds) - 1:
                 continue
+            if rounds[ri + 1]["round"] == "third_place":
+                continue
             ni, slot = divmod(mi, 2)
             nxt = rounds[ri + 1]["matches"]
             if ni >= len(nxt):
@@ -1692,6 +1709,8 @@ def _propagate_bracket_winners(rounds: list[dict]) -> None:
     for ri in range(len(rounds) - 1):
         feeders = rounds[ri]["matches"]
         nxt = rounds[ri + 1]["matches"]
+        if rounds[ri + 1]["round"] == "third_place":
+            continue
         for i, f in enumerate(feeders):
             winner = _bracket_winner(f)
             if not winner:
@@ -1702,6 +1721,22 @@ def _propagate_bracket_winners(rounds: list[dict]) -> None:
             cur = nxt[ni].get("home" if slot == 0 else "away")
             if cur in (None, "TBD"):
                 nxt[ni]["home" if slot == 0 else "away"] = winner
+
+
+def _propagate_third_place_losers(rounds: list[dict]) -> None:
+    """Fill third-place slots from semifinal losers."""
+    semis = next((r for r in rounds if r["round"] == "semi_final"), None)
+    third = next((r for r in rounds if r["round"] == "third_place"), None)
+    if not semis or not third or not third.get("matches"):
+        return
+    match = third["matches"][0]
+    for i, f in enumerate(semis.get("matches", [])[:2]):
+        loser = _bracket_loser(f)
+        if not loser:
+            continue
+        key = "home" if i == 0 else "away"
+        if match.get(key) in (None, "TBD"):
+            match[key] = loser
 
 
 def _winner_slot_map(prev_matches: list[dict]) -> dict:
@@ -1756,7 +1791,7 @@ def get_bracket(conn, comp: str = "WC") -> list:
         cur.execute(
             "SELECT m.stage, th.name AS home, ta.name AS away, "
             "       m.match_date, m.home_goals, m.away_goals, m.matchday, "
-            "       tw.name AS advances "
+            "       tw.name AS advances, m.went_to_pens, m.home_pens, m.away_pens "
             "FROM matches m "
             "JOIN competition_editions e ON e.id = m.edition_id "
             "JOIN competitions c ON c.id = e.competition_id "
@@ -1764,7 +1799,7 @@ def get_bracket(conn, comp: str = "WC") -> list:
             "JOIN teams ta ON ta.id = m.away_team_id "
             "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
             "WHERE c.code = %s "
-            "  AND m.stage NOT IN ('regular_season', 'group', 'third_place') "
+            "  AND m.stage NOT IN ('regular_season', 'group') "
             "ORDER BY m.stage, COALESCE(m.matchday, 9999), "
             "         m.match_date ASC NULLS LAST, m.id",
             (comp,))
@@ -1805,6 +1840,7 @@ def get_bracket(conn, comp: str = "WC") -> list:
             })
         out.append({"round": stage, "matches": padded})
     _propagate_bracket_winners(out)
+    _propagate_third_place_losers(out)
     _add_bracket_projection(conn, out, comp)
     return out
 
