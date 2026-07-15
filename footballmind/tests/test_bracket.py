@@ -5,6 +5,7 @@ from footballmind_services import (
     _bracket_team_label,
     _enrich_fixture_display,
     _propagate_bracket_winners,
+    _propagate_third_place_losers,
     get_bracket,
 )
 from footballmind_sync import upsert_match
@@ -17,7 +18,7 @@ class _FakeCur:
         self.description = [
             ("stage",), ("home",), ("away",), ("match_date",),
             ("home_goals",), ("away_goals",), ("matchday",),
-            ("advances",),
+            ("advances",), ("went_to_pens",), ("home_pens",), ("away_pens",),
         ]
 
     def execute(self, sql, params=None):
@@ -168,6 +169,48 @@ def test_propagate_bracket_winners():
     r16 = rounds[1]["matches"][0]
     assert r16["home"] == "Canada"
     assert r16["away"] == "Morocco"
+
+
+def test_propagate_bracket_penalty_winner():
+    rounds = [
+        {"round": "round_of_16", "matches": [
+            {"home": "France", "away": "Portugal", "home_goals": 2, "away_goals": 1},
+            {
+                "home": "England", "away": "Italy", "home_goals": 1, "away_goals": 1,
+                "went_to_pens": True, "home_pens": 4, "away_pens": 3,
+            },
+        ]},
+        {"round": "quarter_final", "matches": [
+            {"home": "France", "away": "TBD", "home_goals": None, "away_goals": None},
+        ]},
+    ]
+
+    _propagate_bracket_winners(rounds)
+
+    qf = rounds[1]["matches"][0]
+    assert qf["home"] == "France"
+    assert qf["away"] == "England"
+
+
+def test_propagate_third_place_uses_semifinal_losers():
+    rounds = [
+        {"round": "semi_final", "matches": [
+            {"home": "Spain", "away": "France", "home_goals": 2, "away_goals": 1},
+            {"home": "England", "away": "Argentina", "home_goals": 0, "away_goals": 2},
+        ]},
+        {"round": "final", "matches": [
+            {"home": "Spain", "away": "Argentina", "home_goals": None, "away_goals": None},
+        ]},
+        {"round": "third_place", "matches": [
+            {"home": "France", "away": "TBD", "home_goals": None, "away_goals": None},
+        ]},
+    ]
+
+    _propagate_third_place_losers(rounds)
+
+    third = rounds[2]["matches"][0]
+    assert third["home"] == "France"
+    assert third["away"] == "England"
 
 
 def test_add_bracket_projection_carries_model_winners_forward(monkeypatch):
