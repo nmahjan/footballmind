@@ -531,6 +531,27 @@ def _current_season_for_comp(conn, comp: str) -> str | None:
 def _player_stats_in_comp(conn, player_id: int, comp: str) -> dict | None:
     """Stats for a player in a competition: current synced season first, else best past."""
     current_edition = _edition_id_for_comp(conn, comp)
+    if current_edition and _prefer_match_derived_stats(conn, comp, current_edition):
+        match_stats = _edition_player_stats_from_matches(conn, current_edition).get(player_id)
+        if match_stats:
+            team = None
+            if match_stats.get("team_id"):
+                with conn.cursor() as cur:
+                    cur.execute("SELECT name FROM teams WHERE id = %s", (match_stats["team_id"],))
+                    team_row = cur.fetchone()
+                team = team_row[0] if team_row else None
+            return {
+                "goals": match_stats.get("goals", 0),
+                "assists": match_stats.get("assists", 0),
+                "appearances": match_stats.get("appearances", 0),
+                "penalties": None,
+                "stats_team": team,
+                "comp": comp,
+                "comp_season": _current_season_for_comp(conn, comp),
+                "comp_stats_are_historical": False,
+                "comp_stats_source": "match_events",
+            }
+
     with conn.cursor() as cur:
         cur.execute(
             "SELECT pes.goals, pes.assists, pes.appearances, pes.penalties, "
