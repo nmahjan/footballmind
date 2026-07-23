@@ -741,8 +741,16 @@ def _api_match_has_lineup(m: dict) -> bool:
     )
 
 
+def _api_match_has_events(m: dict) -> bool:
+    """True when football-data.org returned goals, bookings, or substitutions."""
+    return bool(m.get("goals") or m.get("bookings") or m.get("substitutions"))
+
+
 def _sync_match_events(cur, match_id, m, team_type, kind):
-    cur.execute("DELETE FROM match_events WHERE match_id = %s", (match_id,))
+    # Lineup-only responses are common on the free tier (e.g. WC). Do not wipe
+    # goals synced from ESPN or other sources when the API omits scoring data.
+    if _api_match_has_events(m):
+        cur.execute("DELETE FROM match_events WHERE match_id = %s", (match_id,))
 
     _team_cache: dict = {}
 
