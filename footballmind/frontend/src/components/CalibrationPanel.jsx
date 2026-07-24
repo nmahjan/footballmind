@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { C } from "../fm/theme.js";
+import { cachedJson } from "../fm/cache.js";
 import { pct } from "../fm/format.js";
 
 export default function CalibrationPanel({ summary, apiBase, offline }) {
@@ -7,8 +8,7 @@ export default function CalibrationPanel({ summary, apiBase, offline }) {
 
   useEffect(() => {
     if (!apiBase || offline) { setCal(null); return; }
-    fetch(`${apiBase}/api/predictions/calibration`)
-      .then((r) => (r.ok ? r.json() : null))
+    cachedJson(`${apiBase}/api/predictions/calibration`, { ttlMs: 60_000 })
       .then((d) => setCal(d))
       .catch(() => setCal(null));
   }, [apiBase, offline, summary?.graded]);

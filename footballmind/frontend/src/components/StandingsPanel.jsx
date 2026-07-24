@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { C } from "../fm/theme.js";
+import { cachedJson } from "../fm/cache.js";
 import { LEAGUES, DEMO_STANDINGS, standingLegend, rowZone, standingsSections } from "../fm/standings.js";
 
 function StandingsTableBody({ compCode, rows, teamCount }) {
@@ -58,8 +59,7 @@ export default function StandingsPanel({ apiBase, offline, onCompChange }) {
   useEffect(() => {
     if (!apiBase || offline) { setRows(DEMO_STANDINGS); return; }
     setLoading(true);
-    fetch(`${apiBase}/api/standings?comp=${activeComp}`)
-      .then((r) => r.json())
+    cachedJson(`${apiBase}/api/standings?comp=${activeComp}`, { ttlMs: 5 * 60_000 })
       .then((d) => { if (Array.isArray(d) && d.length) setRows(d); else setRows([]); })
       .catch(() => setRows([]))
       .finally(() => setLoading(false));

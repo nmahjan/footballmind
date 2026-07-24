@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { C, Flag } from "../fm/theme.js";
+import { cachedJson } from "../fm/cache.js";
 import { pct } from "../fm/format.js";
 
 function fmtBracketTime(iso) {
@@ -229,8 +230,7 @@ export default function BracketPanel({ apiBase, offline, defaultComp = "WC" }) {
 
   function load(c) {
     if (!apiBase || offline) return;
-    fetch(`${apiBase}/api/bracket?comp=${c}`)
-      .then((r) => r.json())
+    cachedJson(`${apiBase}/api/bracket?comp=${c}`, { ttlMs: 90_000 })
       .then((d) => setBracket(normaliseBracket(d.bracket)))
       .catch(() => setBracket([]));
   }

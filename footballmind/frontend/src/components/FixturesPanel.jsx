@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { C, Flag, TeamLabel } from "../fm/theme.js";
+import { cachedJson } from "../fm/cache.js";
 import { pct, outcomeColor, fmtDate, localDayKey, dayHeaderLabel, fixtureTeamStyle, fixturePreviewLabel } from "../fm/format.js";
 import { STAGE_BADGE, FIXTURE_TABS, COMP_LABELS, demoPredict } from "../fm/demo.js";
 
@@ -103,8 +104,8 @@ function PredictionResultsView({ apiBase, comp = "WC", onSummary }) {
     if (!apiBase) { setRows([]); return; }
     setRows(null);
     Promise.all([
-      fetch(`${apiBase}/api/results?comp=${comp}&limit=40`).then((r) => r.json()),
-      fetch(`${apiBase}/api/predictions?finished=1&limit=40`).then((r) => r.json()),
+      cachedJson(`${apiBase}/api/results?comp=${comp}&limit=40`, { ttlMs: 60_000 }),
+      cachedJson(`${apiBase}/api/predictions?finished=1&limit=40`, { ttlMs: 60_000 }),
     ])
       .then(([resultsPayload, predsPayload]) => {
         setRows(resultsPayload.results ?? []);
@@ -206,8 +207,7 @@ export default function FixturesPanel({ initialWc, initialPl, sidebarLoaded, onC
     onCompChange?.(code);
     if (code === "WC" || code === "PL" || loaded.has(code) || !apiBase) return;
     setLoading(true);
-    fetch(`${apiBase}/api/fixtures?comp=${code}&limit=16&preview=1`)
-      .then((r) => r.json())
+    cachedJson(`${apiBase}/api/fixtures?comp=${code}&limit=16&preview=1`, { ttlMs: 90_000 })
       .then((d) => setCache((c) => ({ ...c, [code]: d.fixtures ?? [] })))
       .catch(() => setCache((c) => ({ ...c, [code]: [] })))
       .finally(() => { setLoaded((s) => new Set(s).add(code)); setLoading(false); });

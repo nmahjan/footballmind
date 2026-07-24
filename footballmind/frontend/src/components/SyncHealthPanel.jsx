@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { C } from "../fm/theme.js";
+import { cachedJson } from "../fm/cache.js";
 
 const JOB_LABELS = {
   matchday: "Matchday sync",
@@ -31,8 +32,7 @@ export default function SyncHealthPanel({ apiBase, offline }) {
       setHealth(null);
       return;
     }
-    fetch(`${apiBase}/api/sync-health`)
-      .then((r) => (r.ok ? r.json() : null))
+    cachedJson(`${apiBase}/api/sync-health`, { ttlMs: 30_000 })
       .then((d) => setHealth(d))
       .catch(() => setHealth(null));
   }, [apiBase, offline]);

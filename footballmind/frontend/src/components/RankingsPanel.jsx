@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { C, TeamLabel } from "../fm/theme.js";
+import { cachedJson } from "../fm/cache.js";
 
 export default function RankingsPanel({ apiBase, offline, defaultOpen = false }) {
   const [rows, setRows] = useState([]);
@@ -8,8 +9,7 @@ export default function RankingsPanel({ apiBase, offline, defaultOpen = false })
 
   function load() {
     if (loaded || offline || !apiBase) return;
-    fetch(`${apiBase}/api/rankings?comp=WC&limit=48`)
-      .then((r) => r.json())
+    cachedJson(`${apiBase}/api/rankings?comp=WC&limit=48`, { ttlMs: 10 * 60_000 })
       .then((d) => { setRows(d.rankings ?? []); setLoaded(true); })
       .catch(() => setLoaded(true));
   }
