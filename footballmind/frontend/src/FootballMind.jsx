@@ -13,6 +13,7 @@ import ShaderWaves from "./components/visuals/ShaderWaves.jsx";
 import { C } from "./fm/theme.js";
 import { DEMO_FIXTURES } from "./fm/demo.js";
 import { getApiBase } from "./fm/api.js";
+import { cachedJson } from "./fm/cache.js";
 import { getAdminKey } from "./fm/session.js";
 import { useFootballMindChat } from "./hooks/useFootballMindChat.js";
 
@@ -65,16 +66,13 @@ export default function FootballMind() {
   async function loadSidebarData() {
     if (!API_BASE) return;
     try {
-      const [healthRes, wcRes, plRes, grpRes] = await Promise.all([
-        fetch(`${API_BASE}/api/health`),
-        fetch(`${API_BASE}/api/fixtures?comp=WC&limit=32&preview=1`),
-        fetch(`${API_BASE}/api/fixtures?comp=PL&limit=10&preview=1`),
-        fetch(`${API_BASE}/api/groups?comp=WC`),
+      const [healthData, wcData, plData, grpData] = await Promise.all([
+        cachedJson(`${API_BASE}/api/health`, { ttlMs: 20_000 }),
+        cachedJson(`${API_BASE}/api/fixtures?comp=WC&limit=32&preview=1`, { ttlMs: 60_000 }),
+        cachedJson(`${API_BASE}/api/fixtures?comp=PL&limit=10&preview=1`, { ttlMs: 60_000 }),
+        cachedJson(`${API_BASE}/api/groups?comp=WC`, { ttlMs: 10 * 60_000 }),
       ]);
-      if (!healthRes.ok) throw new Error("health");
-      const wcData = await wcRes.json();
-      const plData = await plRes.json();
-      const grpData = await grpRes.json();
+      if (!healthData) throw new Error("health");
       if (wcData.fixtures) setWcFixtures(wcData.fixtures);
       if (plData.fixtures) setPlFixtures(plData.fixtures);
       if (grpData.groups) setGroups(grpData.groups);
@@ -98,7 +96,7 @@ export default function FootballMind() {
       setSummary({ graded: 0, correct: 0, hit_rate: null });
       return;
     }
-    fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
+    cachedJson(`${API_BASE}/api/predictions`, { ttlMs: 60_000 })
       .then((d) => setSummary(d.summary)).catch(() => {});
     loadSidebarData();
     const reveal = setTimeout(() => setInitialLoaderMinDone(true), 1400);
@@ -106,7 +104,7 @@ export default function FootballMind() {
     const t2 = setTimeout(loadSidebarData, 12000);
     const poll = setInterval(() => {
       loadSidebarData();
-      fetch(`${API_BASE}/api/predictions`).then((r) => r.json())
+      cachedJson(`${API_BASE}/api/predictions`, { ttlMs: 60_000 })
         .then((d) => setSummary(d.summary)).catch(() => {});
     }, 90000);
     return () => { clearTimeout(reveal); clearTimeout(t1); clearTimeout(t2); clearInterval(poll); };

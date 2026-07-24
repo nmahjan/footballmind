@@ -1,9 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { cachedJson, clearCachedJson } from "./cache.js";
 import { pct, outcomeColor, localDayKey, dayHeaderLabel, fixtureTeamStyle, fixturePreviewLabel } from "./format.js";
 import { C, flagCode } from "./theme.js";
 import { parseVs, buildPredictUrl } from "./deeplink.js";
 import { zoneForRank, rowZone, standingLegend } from "./standings.js";
 import { bracketDisplayTeam, bracketDisplayWinner, normaliseBracket } from "../components/BracketPanel.jsx";
+
+beforeEach(() => {
+  sessionStorage.clear();
+  vi.restoreAllMocks();
+});
 
 describe("format", () => {
   it("pct rounds to whole percent", () => {
@@ -115,5 +121,38 @@ describe("bracket projection", () => {
     ]);
 
     expect(rounds.map((r) => r.round)).toEqual(["semi_final", "final"]);
+  });
+});
+
+describe("cachedJson", () => {
+  it("reuses a fresh response without refetching", async () => {
+    const url = "/api/cache-test";
+    clearCachedJson(url);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ rows: [1] }),
+    });
+
+    await expect(cachedJson(url, { ttlMs: 60_000 })).resolves.toEqual({ rows: [1] });
+    await expect(cachedJson(url, { ttlMs: 60_000 })).resolves.toEqual({ rows: [1] });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedupes matching in-flight requests", async () => {
+    const url = "/api/cache-inflight";
+    clearCachedJson(url);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true }),
+    });
+
+    const [a, b] = await Promise.all([
+      cachedJson(url, { ttlMs: 60_000 }),
+      cachedJson(url, { ttlMs: 60_000 }),
+    ]);
+
+    expect(a).toEqual(b);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 });

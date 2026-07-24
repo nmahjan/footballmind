@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { cachedJson, clearCachedJson } from "../fm/cache.js";
 import { C, TeamLabel } from "../fm/theme.js";
 
 const COMP_OPTIONS = [
@@ -212,10 +213,10 @@ export function CardPredictedLineups({ home, away, comp, apiBase }) {
     setAwayLineup(null);
     const c = comp || "WC";
     Promise.all([
-      fetch(`${apiBase}/api/players/predicted-lineup?team=${encodeURIComponent(home)}&comp=${c}`)
-        .then((r) => (r.ok ? r.json() : null)),
-      fetch(`${apiBase}/api/players/predicted-lineup?team=${encodeURIComponent(away)}&comp=${c}`)
-        .then((r) => (r.ok ? r.json() : null)),
+      cachedJson(`${apiBase}/api/players/predicted-lineup?team=${encodeURIComponent(home)}&comp=${c}`, { ttlMs: 5 * 60_000 })
+        .catch(() => null),
+      cachedJson(`${apiBase}/api/players/predicted-lineup?team=${encodeURIComponent(away)}&comp=${c}`, { ttlMs: 5 * 60_000 })
+        .catch(() => null),
     ])
       .then(([h, a]) => {
         if (cancelled) return;
@@ -273,8 +274,8 @@ function AvailabilityAdminPanel({ team, comp, apiBase, adminKey, onUpdated }) {
 
   useEffect(() => {
     if (!adminKey || !apiBase || !team) return;
-    fetch(`${apiBase}/api/players/availability?team=${encodeURIComponent(team)}&comp=${comp}`)
-      .then((r) => (r.ok ? r.json() : null))
+    cachedJson(`${apiBase}/api/players/availability?team=${encodeURIComponent(team)}&comp=${comp}`, { ttlMs: 30_000 })
+      .catch(() => null)
       .then((d) => setFlags(d?.flags ?? []))
       .catch(() => setFlags([]));
   }, [team, comp, apiBase, adminKey, msg]);
@@ -393,24 +394,30 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
   const [lineup, setLineup] = useState(null);
   const [lineupView, setLineupView] = useState("predicted");
 
-  function loadPredictedLineup(t, c) {
+  function lineupUrl(t, c) {
+    return `${apiBase}/api/players/predicted-lineup?team=${encodeURIComponent(t)}&comp=${c}`;
+  }
+
+  function loadPredictedLineup(t, c, { force = false } = {}) {
     if (!apiBase || offline || !t) { setLineup(null); return; }
     setLineup(null);
-    fetch(`${apiBase}/api/players/predicted-lineup?team=${encodeURIComponent(t)}&comp=${c}`)
-      .then((r) => r.json())
+    cachedJson(lineupUrl(t, c), { ttlMs: 5 * 60_000, force })
       .then((d) => (d.error ? setLineup({ error: d.error }) : setLineup(d)))
       .catch(() => setLineup({ error: "Failed to load predicted lineup" }));
   }
 
   function reloadLineup() {
-    if (team) loadPredictedLineup(team, comp);
+    if (team) {
+      clearCachedJson(lineupUrl(team, comp));
+      clearCachedJson(`${apiBase}/api/players/availability?team=${encodeURIComponent(team)}&comp=${comp}`);
+      loadPredictedLineup(team, comp, { force: true });
+    }
   }
 
   function loadScorers(c) {
     if (!apiBase || offline) { setScorers([]); return; }
     setScorers(null);
-    fetch(`${apiBase}/api/players/scorers?comp=${c}&limit=25`)
-      .then((r) => r.json())
+    cachedJson(`${apiBase}/api/players/scorers?comp=${c}&limit=25`, { ttlMs: 5 * 60_000 })
       .then((d) => setScorers(d.scorers ?? []))
       .catch(() => setScorers([]));
   }
@@ -418,16 +425,14 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
   function loadStandouts(c) {
     if (!apiBase || offline) { setStandouts([]); return; }
     setStandouts(null);
-    fetch(`${apiBase}/api/standouts?comp=${c}&limit=40`)
-      .then((r) => r.json())
+    cachedJson(`${apiBase}/api/standouts?comp=${c}&limit=40`, { ttlMs: 5 * 60_000 })
       .then((d) => setStandouts(d.standouts ?? []))
       .catch(() => setStandouts([]));
   }
 
   function loadTeams(c) {
     if (!apiBase || offline) { setTeams([]); return; }
-    fetch(`${apiBase}/api/players/teams?comp=${c}`)
-      .then((r) => r.json())
+    cachedJson(`${apiBase}/api/players/teams?comp=${c}`, { ttlMs: 10 * 60_000 })
       .then((d) => {
         const list = d.teams ?? [];
         setTeams(list);
@@ -440,8 +445,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
   function loadSquad(t, c) {
     if (!apiBase || offline || !t) { setSquad(null); return; }
     setSquad(null);
-    fetch(`${apiBase}/api/players/squad?team=${encodeURIComponent(t)}&comp=${c}`)
-      .then((r) => r.json())
+    cachedJson(`${apiBase}/api/players/squad?team=${encodeURIComponent(t)}&comp=${c}`, { ttlMs: 5 * 60_000 })
       .then((d) => (d.error ? setSquad({ error: d.error }) : setSquad(d)))
       .catch(() => setSquad({ error: "Failed to load squad" }));
   }
@@ -481,8 +485,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
     const q = search.trim();
     if (!q || !apiBase || offline) return;
     setSearchHits(null);
-    fetch(`${apiBase}/api/players/search?q=${encodeURIComponent(q)}&comp=${comp}`)
-      .then((r) => r.json())
+    cachedJson(`${apiBase}/api/players/search?q=${encodeURIComponent(q)}&comp=${comp}`, { ttlMs: 2 * 60_000 })
       .then((d) => setSearchHits(d.players ?? []))
       .catch(() => setSearchHits([]));
   }
