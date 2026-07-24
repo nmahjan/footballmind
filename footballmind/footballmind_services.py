@@ -1184,14 +1184,15 @@ def get_team_squad(conn, team_name: str, comp: str | None = None) -> dict:
 
     squad = []
     for pid, name, pos, line_role, shirt, dob, nationality in rows:
+        position = normalize_position(pos) or "?"
         tactical = resolve_player_line_role(
             name=name,
             db_line_role=line_role,
-            db_position=pos,
+            db_position=position,
         )
         entry = {
             "name": name,
-            "position": pos or "?",
+            "position": position,
             "line_role": tactical,
             "shirt_number": shirt,
             "age": _player_age(dob),
