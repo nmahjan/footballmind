@@ -2,7 +2,7 @@ const memoryCache = new Map();
 const inflight = new Map();
 
 const DEFAULT_TTL_MS = 90_000;
-const STORAGE_PREFIX = "fm:http:";
+const STORAGE_PREFIX = "fm:http:v2:";
 
 function cacheKey(url) {
   return `${STORAGE_PREFIX}${url}`;

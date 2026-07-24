@@ -496,6 +496,10 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
 
   const squadList = squad?.squad ?? [];
   const squadByPos = squad?.by_position ?? {};
+  const squadPositionGroups = [
+    "GK", "DEF", "MID", "FWD",
+    ...Object.keys(squadByPos).filter((pos) => !["GK", "DEF", "MID", "FWD"].includes(pos)).sort(),
+  ];
 
   return (
     <div className="rounded-lg border flex flex-col max-h-[calc(100vh-8rem)]" style={{ borderColor: C.line, background: C.panel }}>
@@ -760,10 +764,10 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
                   <span><TeamLabel name={squad.team} /></span>
                   <span>{squad.squad_size} players{squad.team_rating ? ` · Elo ${squad.team_rating}` : ""}</span>
                 </div>
-                {["GK", "DEF", "MID", "FWD"].map((pos) => {
+                {squadPositionGroups.map((pos) => {
                   const group = squadByPos[pos];
                   if (!group?.length) return null;
-                  const pm = POS_META[pos];
+                  const pm = POS_META[pos] ?? POS_META["?"];
                   return (
                     <div key={pos}>
                       <div className="mb-1 text-[10px] font-bold uppercase tracking-wider"
