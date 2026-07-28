@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from footballmind_sync import (
     FootballDataClient,
     TokenBucket,
+    _api_match_has_events,
     _api_match_has_lineup,
     _sync_match_events,
 )
@@ -50,6 +51,30 @@ def test_api_match_has_lineup_true_when_xi_present():
         "awayTeam": {"name": "Germany"},
     }
     assert _api_match_has_lineup(m) is True
+
+
+def test_api_match_has_events_false_when_only_lineup():
+    m = {
+        "homeTeam": {"name": "Spain", "lineup": [{"name": "Simon"}]},
+        "awayTeam": {"name": "Germany"},
+    }
+    assert _api_match_has_events(m) is False
+
+
+def test_sync_match_events_skips_event_delete_without_api_events():
+    """Lineup-only FDO payloads must not wipe ESPN goal timelines."""
+    cur = MagicMock()
+    m = {
+        "homeTeam": {"name": "Spain", "id": 1, "lineup": [{"name": "Simon"}]},
+        "awayTeam": {"name": "Germany", "id": 2, "lineup": [{"name": "Neuer"}]},
+    }
+    with patch("footballmind_sync.upsert_team", return_value=1), \
+         patch("footballmind_sync._resolve_player_id", return_value=None):
+        _sync_match_events(cur, 42, m, "national", "national")
+
+    delete_sql = [call[0][0] for call in cur.execute.call_args_list]
+    assert not any("DELETE FROM match_events" in s for s in delete_sql)
+    assert any("DELETE FROM match_lineup_players" in s for s in delete_sql)
 
 
 def test_sync_match_events_skips_lineup_delete_without_api_lineup():
