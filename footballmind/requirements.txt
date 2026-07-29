@@ -11,7 +11,7 @@ gunicorn>=21.0            # production WSGI server (legacy; see footballmind_asg
 uvicorn>=0.30             # ASGI server (Flask + MCP on Render)
 starlette>=0.37,<1.0      # ASGI wrapper for Flask + MCP on Render
 litellm>=1.40             # LLM gateway (footballmind_llm.py, needs ANTHROPIC_API_KEY)
-mcp>=1.0                  # MCP server SDK (server.py)
+mcp>=1.0,<2.0             # MCP server SDK (server.py uses mcp.server.fastmcp)
 lxml>=5.0                 # SoFIFA profile HTML parsing (footballmind_sofifa.py)
 pytest>=8.0               # intent parser unit tests (tests/test_intent_parser.py)
 # Fuller app (add when you build those layers):
