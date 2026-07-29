@@ -1955,6 +1955,10 @@ def get_prediction_history(
         filters.append("e.season = %s")
         params.append(season)
     where = "WHERE " + " AND ".join(filters) if filters else ""
+    if where:
+        where += " AND m.id IS NOT NULL "
+    else:
+        where = "WHERE m.id IS NOT NULL "
 
     with conn.cursor() as cur:
         cur.execute(
@@ -1967,9 +1971,23 @@ def get_prediction_history(
             "       p.created_at, m.match_date, m.stage, "
             "       m.home_goals, m.away_goals, m.went_to_pens, "
             "       m.home_pens, m.away_pens, tw.name AS advances, "
-            "       c.code AS comp, c.name AS comp_name, e.season "
+            "       c.code AS comp, c.name AS comp_name, e.season, "
+            "       thm.name AS match_home, tam.name AS match_away "
             "FROM predictions p "
-            "LEFT JOIN matches m ON m.id = p.match_id "
+            "LEFT JOIN LATERAL ("
+            "  SELECT m0.* "
+            "  FROM matches m0 "
+            "  WHERE m0.id = p.match_id "
+            "     OR (p.match_id IS NULL "
+            "         AND p.home_team_id IS NOT NULL "
+            "         AND p.away_team_id IS NOT NULL "
+            "         AND ((m0.home_team_id = p.home_team_id AND m0.away_team_id = p.away_team_id) "
+            "              OR (m0.home_team_id = p.away_team_id AND m0.away_team_id = p.home_team_id)) "
+            "         AND abs(extract(epoch FROM (m0.match_date - p.created_at))) < 86400 * 21)"
+            "  ORDER BY CASE WHEN m0.id = p.match_id THEN 0 ELSE 1 END, "
+            "           abs(extract(epoch FROM (m0.match_date - p.created_at))) "
+            "  LIMIT 1"
+            ") m ON true "
             "LEFT JOIN competition_editions e ON e.id = m.edition_id "
             "LEFT JOIN competitions c ON c.id = e.competition_id "
             "LEFT JOIN teams thp ON thp.id = p.home_team_id "
@@ -2005,12 +2023,17 @@ def get_prediction_history(
         advances = _bracket_team_label(r.get("advances"))
         actual = None
         if r.get("home_goals") is not None and r.get("away_goals") is not None:
+            match_home = r.get("match_home") or home
+            match_away = r.get("match_away") or away
             actual = _match_actual_outcome(
-                home, away, r["home_goals"], r["away_goals"], r.get("stage"),
+                match_home, match_away, r["home_goals"], r["away_goals"], r.get("stage"),
                 advances=advances, went_to_pens=bool(r.get("went_to_pens")),
                 home_pens=r.get("home_pens"), away_pens=r.get("away_pens"))
         created = r.get("created_at")
         match_date = r.get("match_date")
+        was_correct = r.get("was_correct")
+        if actual is not None:
+            was_correct = predicted == actual
         predictions.append({
             "id": r["id"],
             "home": home,
@@ -2027,11 +2050,11 @@ def get_prediction_history(
             "home_advance_prob": r.get("home_advance_prob"),
             "actual": actual,
             "score": (
-                f"{r['home_goals']}–{r['away_goals']}"
+                f"{r.get('match_home') or home} {r['home_goals']}–{r['away_goals']} {r.get('match_away') or away}"
                 if r.get("home_goals") is not None and r.get("away_goals") is not None
                 else None
             ),
-            "was_correct": r.get("was_correct"),
+            "was_correct": was_correct,
             "created_at": created.isoformat() if created else None,
             "match_date": match_date.isoformat() if match_date else None,
         })

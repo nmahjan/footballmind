@@ -4,6 +4,9 @@ import { COMP_LABELS, FIXTURE_TABS } from "../fm/demo.js";
 import { fmtDate, outcomeColor, pct } from "../fm/format.js";
 import { C, TeamLabel } from "../fm/theme.js";
 
+const WORLD_CUP_CODE = "WC";
+const LEAGUE_CODES = ["PL", "PD", "BL1", "SA", "FL1", "CL", "MLS", "DED"];
+
 function stageLabel(stage) {
   return {
     group: "Group",
@@ -18,7 +21,8 @@ function stageLabel(stage) {
 }
 
 function PredictionCard({ row }) {
-  const predColor = outcomeColor(row.prediction, row.home, row.away);
+  const prediction = row.prediction || "No pick";
+  const predColor = outcomeColor(prediction, row.home, row.away);
   const graded = row.was_correct !== null && row.was_correct !== undefined;
   return (
     <div className="rounded-lg border p-3" style={{ borderColor: C.line, background: C.panel2 }}>
@@ -52,7 +56,7 @@ function PredictionCard({ row }) {
       <div className="mt-3 flex items-center justify-between gap-3 text-[11px]">
         <span style={{ color: C.mute }}>Pick</span>
         <span className="font-semibold tabular-nums" style={{ color: predColor }}>
-          {row.prediction} · {pct(row.confidence)}
+          {prediction} · {pct(row.confidence)}
         </span>
       </div>
       {row.score && (
@@ -82,12 +86,17 @@ function optionsFromPayload(filters) {
 }
 
 export default function PredictionsSidebar({ apiBase, offline, onCompChange }) {
-  const [comp, setComp] = useState("");
+  const [mode, setMode] = useState("wc");
+  const [comp, setComp] = useState(WORLD_CUP_CODE);
   const [season, setSeason] = useState("");
   const [rows, setRows] = useState(null);
   const [filters, setFilters] = useState({ competitions: [] });
 
   const compOptions = useMemo(() => optionsFromPayload(filters), [filters]);
+  const leagueOptions = useMemo(
+    () => compOptions.filter((opt) => LEAGUE_CODES.includes(opt.code)),
+    [compOptions],
+  );
   const activeComp = compOptions.find((opt) => opt.code === comp);
   const seasons = activeComp?.seasons ?? [];
 
@@ -97,8 +106,7 @@ export default function PredictionsSidebar({ apiBase, offline, onCompChange }) {
       return;
     }
     setRows(null);
-    const params = new URLSearchParams({ history: "1", limit: "60" });
-    if (nextComp) params.set("comp", nextComp);
+    const params = new URLSearchParams({ history: "1", limit: "60", comp: nextComp || WORLD_CUP_CODE });
     if (nextSeason) params.set("season", nextSeason);
     cachedJson(`${apiBase}/api/predictions?${params.toString()}`, { ttlMs: 60_000 })
       .then((d) => {
@@ -112,11 +120,22 @@ export default function PredictionsSidebar({ apiBase, offline, onCompChange }) {
     load(comp, season);
   }, [apiBase, offline]);
 
+  function pickMode(nextMode) {
+    const nextComp = nextMode === "wc"
+      ? WORLD_CUP_CODE
+      : (leagueOptions.find((opt) => opt.code === comp)?.code ?? leagueOptions[0]?.code ?? "PL");
+    setMode(nextMode);
+    setComp(nextComp);
+    setSeason("");
+    onCompChange?.(nextComp);
+    load(nextComp, "");
+  }
+
   function pickComp(code) {
-    const next = code === comp ? "" : code;
+    const next = code || comp;
     setComp(next);
     setSeason("");
-    onCompChange?.(next || "WC");
+    onCompChange?.(next);
     load(next, "");
   }
 
@@ -132,18 +151,22 @@ export default function PredictionsSidebar({ apiBase, offline, onCompChange }) {
           Prediction History
         </div>
         <p className="mt-1 text-[10px] leading-snug" style={{ color: C.mute }}>
-          Past model picks by competition and season. Finished matches show whether the pick graded correct.
+          Past match-linked model picks by competition and season. Finished matches show whether the pick graded correct.
         </p>
       </div>
 
       <div className="shrink-0 space-y-2 border-b px-3 py-2" style={{ borderColor: C.line }}>
+        <div className="grid grid-cols-2 gap-1">
+          {[["wc", "🌍 World Cup"], ["leagues", "🏟 Leagues"]].map(([key, label]) => (
+            <button key={key} type="button" onClick={() => pickMode(key)}
+              className="rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition-colors"
+              style={{ background: mode === key ? C.home : C.line, color: mode === key ? "#003919" : C.mute }}>
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
-          <button type="button" onClick={() => pickComp("")}
-            className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-            style={{ background: !comp ? C.home : C.line, color: !comp ? "#003919" : C.mute }}>
-            All
-          </button>
-          {compOptions.map((opt) => (
+          {(mode === "wc" ? compOptions.filter((opt) => opt.code === WORLD_CUP_CODE) : leagueOptions).map((opt) => (
             <button key={opt.code} type="button" onClick={() => pickComp(opt.code)}
               className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
               style={{ background: comp === opt.code ? C.home : C.line, color: comp === opt.code ? "#003919" : C.mute }}>
@@ -155,7 +178,7 @@ export default function PredictionsSidebar({ apiBase, offline, onCompChange }) {
           disabled={!comp || seasons.length === 0}
           className="w-full rounded-md px-2 py-1.5 text-xs outline-none disabled:opacity-50"
           style={{ background: C.bg, color: C.chalk, border: `1px solid ${C.line}` }}>
-          <option value="">{comp ? "All years / seasons" : "Pick a competition for years"}</option>
+          <option value="">All years / seasons</option>
           {seasons.map((yr) => <option key={yr} value={yr}>{yr}</option>)}
         </select>
       </div>
