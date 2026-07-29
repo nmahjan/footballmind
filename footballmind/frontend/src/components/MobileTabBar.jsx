@@ -11,8 +11,17 @@ const PLAYER_TABS = [
   { id: "players", label: "Players" },
 ];
 
+const PREDICTION_TABS = [
+  { id: "chat", label: "Chat" },
+  { id: "predictions", label: "Predictions" },
+];
+
 export default function MobileTabBar({ mode, tab, setTab }) {
-  const tabs = mode === "players" ? PLAYER_TABS : MATCH_TABS;
+  const tabs = mode === "players"
+    ? PLAYER_TABS
+    : mode === "predictions"
+      ? PREDICTION_TABS
+      : MATCH_TABS;
   return (
     <nav
       className="sticky bottom-0 z-20 flex border-t md:hidden"

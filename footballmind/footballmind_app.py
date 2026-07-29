@@ -36,6 +36,7 @@ from footballmind_services import (
     get_groups,
     get_match_lineup,
     get_player_profile,
+    get_prediction_history,
     get_prediction_results,
     get_prediction_summary,
     get_prediction_calibration,
@@ -711,6 +712,15 @@ def api_predictions():
     if request.args.get("finished") in ("1", "true", "yes"):
         results = get_prediction_results(conn, limit)
         return jsonify({"results": results, "summary": get_prediction_summary(conn)})
+    if request.args.get("history") in ("1", "true", "yes"):
+        payload = get_prediction_history(
+            conn,
+            comp=request.args.get("comp") or None,
+            season=request.args.get("season") or request.args.get("year") or None,
+            limit=limit,
+        )
+        payload["summary"] = get_prediction_summary(conn)
+        return jsonify(payload)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT p.id, "

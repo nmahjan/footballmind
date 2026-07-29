@@ -45,6 +45,7 @@ export function SidebarModeToggle({ mode, setMode }) {
     <div className="flex rounded-lg border p-0.5" style={{ borderColor: C.line, background: C.panel2 }}>
       {[
         { key: "matches", label: "⚽ Matches" },
+        { key: "predictions", label: "📈 Predictions" },
         { key: "players", label: "👤 Players" },
       ].map(({ key, label }) => (
         <button key={key} onClick={() => setMode(key)}

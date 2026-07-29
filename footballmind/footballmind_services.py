@@ -1935,6 +1935,125 @@ def get_prediction_results(conn, limit: int = 30) -> list[dict]:
     return out
 
 
+def get_prediction_history(
+    conn,
+    *,
+    comp: str | None = None,
+    season: str | None = None,
+    limit: int = 50,
+) -> dict:
+    """Saved prediction history with competition/season filters for the UI."""
+    limit = min(max(limit, 1), 100)
+    comp = (comp or "").strip().upper() or None
+    season = (season or "").strip() or None
+    params: list = []
+    filters = []
+    if comp:
+        filters.append("c.code = %s")
+        params.append(comp)
+    if season:
+        filters.append("e.season = %s")
+        params.append(season)
+    where = "WHERE " + " AND ".join(filters) if filters else ""
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT p.id, "
+            "       COALESCE(thm.name, thp.name) AS home, "
+            "       COALESCE(tam.name, tap.name) AS away, "
+            "       p.home_win_prob, p.draw_prob, p.away_win_prob, "
+            "       p.home_advance_prob, p.confidence, "
+            "       p.actual_home_goals, p.actual_away_goals, p.was_correct, "
+            "       p.created_at, m.match_date, m.stage, "
+            "       m.home_goals, m.away_goals, m.went_to_pens, "
+            "       m.home_pens, m.away_pens, tw.name AS advances, "
+            "       c.code AS comp, c.name AS comp_name, e.season "
+            "FROM predictions p "
+            "LEFT JOIN matches m ON m.id = p.match_id "
+            "LEFT JOIN competition_editions e ON e.id = m.edition_id "
+            "LEFT JOIN competitions c ON c.id = e.competition_id "
+            "LEFT JOIN teams thp ON thp.id = p.home_team_id "
+            "LEFT JOIN teams tap ON tap.id = p.away_team_id "
+            "LEFT JOIN teams thm ON thm.id = m.home_team_id "
+            "LEFT JOIN teams tam ON tam.id = m.away_team_id "
+            "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
+            f"{where} "
+            "ORDER BY p.created_at DESC LIMIT %s",
+            [*params, limit],
+        )
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        cur.execute(
+            "SELECT DISTINCT c.code, c.name, e.season "
+            "FROM predictions p "
+            "JOIN matches m ON m.id = p.match_id "
+            "JOIN competition_editions e ON e.id = m.edition_id "
+            "JOIN competitions c ON c.id = e.competition_id "
+            "ORDER BY c.code, e.season DESC")
+        option_rows = cur.fetchall()
+
+    predictions = []
+    for r in rows:
+        home, away = r.get("home"), r.get("away")
+        if not home or not away:
+            continue
+        predicted, confidence, _idx = _prediction_outcome_for_match(
+            home, away, r.get("stage"), r.get("home_win_prob"),
+            r.get("draw_prob"), r.get("away_win_prob"),
+            r.get("home_advance_prob"))
+        advances = _bracket_team_label(r.get("advances"))
+        actual = None
+        if r.get("home_goals") is not None and r.get("away_goals") is not None:
+            actual = _match_actual_outcome(
+                home, away, r["home_goals"], r["away_goals"], r.get("stage"),
+                advances=advances, went_to_pens=bool(r.get("went_to_pens")),
+                home_pens=r.get("home_pens"), away_pens=r.get("away_pens"))
+        created = r.get("created_at")
+        match_date = r.get("match_date")
+        predictions.append({
+            "id": r["id"],
+            "home": home,
+            "away": away,
+            "comp": r.get("comp"),
+            "comp_name": r.get("comp_name"),
+            "season": r.get("season"),
+            "stage": r.get("stage"),
+            "prediction": predicted,
+            "confidence": round(float(confidence or r.get("confidence") or 0), 3),
+            "home_win_prob": r.get("home_win_prob"),
+            "draw_prob": r.get("draw_prob"),
+            "away_win_prob": r.get("away_win_prob"),
+            "home_advance_prob": r.get("home_advance_prob"),
+            "actual": actual,
+            "score": (
+                f"{r['home_goals']}–{r['away_goals']}"
+                if r.get("home_goals") is not None and r.get("away_goals") is not None
+                else None
+            ),
+            "was_correct": r.get("was_correct"),
+            "created_at": created.isoformat() if created else None,
+            "match_date": match_date.isoformat() if match_date else None,
+        })
+
+    competitions = {}
+    for code, name, yr in option_rows:
+        if not code:
+            continue
+        bucket = competitions.setdefault(code, {"code": code, "name": name, "seasons": []})
+        if yr and yr not in bucket["seasons"]:
+            bucket["seasons"].append(yr)
+
+    return {
+        "predictions": predictions,
+        "filters": {
+            "competitions": list(competitions.values()),
+            "active_comp": comp,
+            "active_season": season,
+        },
+    }
+
+
 def get_prediction_summary(conn) -> dict:
     """Hit rate counting one result per match (not every duplicate chat prediction)."""
     with conn.cursor() as cur:

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useLayoutEffect } from "react";
 import AppHeader from "./components/AppHeader.jsx";
 import ChatPanel from "./components/ChatPanel.jsx";
 import MatchesSidebar from "./components/MatchesSidebar.jsx";
+import PredictionsSidebar from "./components/PredictionsSidebar.jsx";
 import PlayersSidebar, { SidebarModeToggle } from "./components/PlayersSidebar.jsx";
 import GroupsPanel from "./components/GroupsPanel.jsx";
 import StandingsPanel from "./components/StandingsPanel.jsx";
@@ -46,7 +47,7 @@ export default function FootballMind() {
         ? (sidebarTopRef.current?.offsetHeight ?? 0)
         : 0;
       const gap = 16;
-      const fallbackTop = sidebarMode === "players" ? 320 : 0;
+      const fallbackTop = sidebarMode === "players" || sidebarMode === "predictions" ? 320 : 0;
       const total = toggleH + gap + (topH || fallbackTop);
       if (total > 0) setChatStretchHeight(total);
     };
@@ -164,7 +165,9 @@ export default function FootballMind() {
 
         <aside className={`${sidebarMode === "players"
           ? mobilePanelClass(mobileTab, "players")
-          : mobilePanelClass(mobileTab, "fixtures")} md:max-w-[36%] md:basis-[36%] md:shrink-0 flex flex-col gap-4`}>
+          : sidebarMode === "predictions"
+            ? mobilePanelClass(mobileTab, "predictions")
+            : mobilePanelClass(mobileTab, "fixtures")} md:max-w-[36%] md:basis-[36%] md:shrink-0 flex flex-col gap-4`}>
           <div ref={sidebarToggleRef}>
             <SidebarModeToggle mode={sidebarMode} setMode={(m) => { setSidebarMode(m); setMobileTab("chat"); }} />
           </div>
@@ -181,6 +184,12 @@ export default function FootballMind() {
               onCompChange={chat.handleCompChange}
               chatComp={chat.chatComp}
               topSectionRef={sidebarTopRef}
+            />
+          ) : sidebarMode === "predictions" ? (
+            <PredictionsSidebar
+              apiBase={API_BASE}
+              offline={chat.offline}
+              onCompChange={chat.handleCompChange}
             />
           ) : (
             <PlayersSidebar apiBase={API_BASE} offline={chat.offline} onAsk={chat.handlePlayerAsk} onCompChange={chat.handleCompChange} adminKey={adminKey} />
