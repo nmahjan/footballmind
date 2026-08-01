@@ -220,3 +220,23 @@ def test_grade_two_leg_aggregate_uses_advancing_team():
     assert n == 1
     updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
     assert updates[0][1][2] is True  # home predicted, home advanced on aggregate
+
+
+def test_grade_third_place_uses_advance_probability_and_pens():
+    class _ThirdPlaceCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            self.executed.append((sql.strip(), params))
+            if "SELECT p.id" in sql and "DISTINCT FROM" in sql:
+                self._fetch = [
+                    # Third-place playoff: home favored to advance (68%) but
+                    # regulation is 1-1; away wins on pens.
+                    (10, 0.30, 0.35, 0.35, 0.68, 1, 1, "third_place", None, 10,
+                     True, 3, 4, 20),
+                ]
+
+    conn = _FakeConn()
+    conn.cur = _ThirdPlaceCursor()
+    n = grade_predictions(conn)
+    assert n == 1
+    updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
+    assert updates[0][1] == (1, 1, False, 10)  # predicted home, away won pens
