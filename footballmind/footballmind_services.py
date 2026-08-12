@@ -806,7 +806,6 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
                 act_idx = 0 if r["home_pens"] > r["away_pens"] else 2
             else:
                 act_idx = 0 if hg > ag else (1 if hg == ag else 2)
-            pred_idx = probs.index(max(probs))
             item.update({
                 "id": r["prediction_id"],
                 "predicted": predicted,
