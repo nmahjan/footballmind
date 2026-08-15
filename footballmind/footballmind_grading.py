@@ -80,7 +80,8 @@ def grade_predictions(conn, *, force: bool = False):
             f"{stale_filter}")
         rows = cur.fetchall()
         knockout = {
-            "round_of_32", "round_of_16", "quarter_final", "semi_final", "final",
+            "round_of_32", "round_of_16", "quarter_final", "semi_final",
+            "third_place", "final",
         }
         for (pid, hw, dw, aw, ha, hg, ag, stage, adv_id, home_tid,
              went_to_pens, home_pens, away_pens, away_tid) in rows:
