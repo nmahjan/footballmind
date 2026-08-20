@@ -11,15 +11,32 @@ from footballmind_sync import (
 )
 
 
-def test_matches_date_from_does_not_cap_at_today():
-    """Future knockout fixtures must be included when only dateFrom is set."""
+def test_matches_pairs_date_to_with_date_from():
+    """football-data.org returns 400 when dateFrom is sent without dateTo."""
     client = FootballDataClient("test-key", TokenBucket(10))
     with patch.object(client, "_get", return_value={"matches": []}) as get:
         client.matches("WC", status=None, date_from="2026-06-02")
     params = get.call_args[0][1]
     assert params["dateFrom"] == "2026-06-02"
-    assert "dateTo" not in params
+    assert "dateTo" in params
+    assert params["dateTo"] >= "2026-06-02"
     assert "status" not in params
+
+
+def test_matches_respects_explicit_date_to():
+    client = FootballDataClient("test-key", TokenBucket(10))
+    with patch.object(client, "_get", return_value={"matches": []}) as get:
+        client.matches("PL", date_from="2026-08-10", date_to="2026-08-20")
+    params = get.call_args[0][1]
+    assert params["dateFrom"] == "2026-08-10"
+    assert params["dateTo"] == "2026-08-20"
+
+
+def test_matches_passes_season_year():
+    client = FootballDataClient("test-key", TokenBucket(10))
+    with patch.object(client, "_get", return_value={"matches": []}) as get:
+        client.matches("PL", season=2026)
+    assert get.call_args[0][1]["season"] == 2026
 
 
 def test_scorers_default_limit_is_500():

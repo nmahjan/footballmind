@@ -10,7 +10,7 @@ and players(external_id) -- applied by migrations/003_external_unique_indexes.sq
 """
 
 import time
-from datetime import date
+from datetime import date, timedelta
 from threading import Lock
 
 import requests
@@ -100,14 +100,18 @@ class FootballDataClient:
             self._throttle_from_headers(r.headers)
             return r.json()
 
-    def matches(self, comp, status=None, date_from=None, date_to=None):
+    def matches(self, comp, status=None, date_from=None, date_to=None, season=None):
         params = {}
         if status:
             params["status"] = status
         if date_from:
             params["dateFrom"] = date_from
-        if date_to:
+            # football-data.org returns 400 if dateFrom is set without dateTo.
+            params["dateTo"] = date_to or (date.today() + timedelta(days=400)).isoformat()
+        elif date_to:
             params["dateTo"] = date_to
+        if season is not None:
+            params["season"] = season
         return self._get(f"/competitions/{comp}/matches", params).get("matches", [])
 
     def teams(self, comp):
@@ -509,10 +513,13 @@ def apply_pending_ratings(conn, comp_code):
 
 
 def sync_competition(conn, client, comp_code, comp_name, comp_type, season,
-                     team_type="club", since=None):
+                     team_type="club", since=None, until=None):
     """Full sync for one competition: matches (results AND upcoming fixtures,
     so predictions can link to real fixtures) -> upsert -> rate finished ones."""
-    fetched = client.matches(comp_code, status=None, date_from=since)
+    season_year = int(season.split("/")[0]) if "/" in str(season) else int(season)
+    fetched = client.matches(
+        comp_code, status=None, date_from=since, date_to=until, season=season_year,
+    )
     with conn.cursor() as cur:
         edition_id = get_or_create_edition(cur, comp_code, comp_name, comp_type, season)
         for m in fetched:

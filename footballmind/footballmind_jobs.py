@@ -41,13 +41,13 @@ from footballmind_sofifa import sync_sofifa_attributes, SOFIFA_CLUB_LEAGUES
 # football-data.org free-tier competitions available without a paid plan:
 #   PL, CL, FL1, BL1, SA, PD, DED  (WC is free during tournament year)
 COMPETITIONS = [
-    ("PL",  "Premier League",        "domestic_league",   "club",     "2025/26"),
-    ("CL",  "UEFA Champions League", "continental_club",  "club",     "2025/26"),
-    ("PD",  "La Liga",               "domestic_league",   "club",     "2025/26"),
-    ("BL1", "Bundesliga",            "domestic_league",   "club",     "2025/26"),
-    ("SA",  "Serie A",               "domestic_league",   "club",     "2025/26"),
-    ("FL1", "Ligue 1",               "domestic_league",   "club",     "2025/26"),
-    ("DED", "Eredivisie",            "domestic_league",   "club",     "2025/26"),
+    ("PL",  "Premier League",        "domestic_league",   "club",     "2026/27"),
+    ("CL",  "UEFA Champions League", "continental_club",  "club",     "2026/27"),
+    ("PD",  "La Liga",               "domestic_league",   "club",     "2026/27"),
+    ("BL1", "Bundesliga",            "domestic_league",   "club",     "2026/27"),
+    ("SA",  "Serie A",               "domestic_league",   "club",     "2026/27"),
+    ("FL1", "Ligue 1",               "domestic_league",   "club",     "2026/27"),
+    ("DED", "Eredivisie",            "domestic_league",   "club",     "2026/27"),
     ("WC",  "FIFA World Cup",        "international",     "national", "2026"),
     ("MLS", "MLS",                   "domestic_league",   "club",     "2026"),
 ]
@@ -101,6 +101,7 @@ def cmd_sync_matchday(force=False):
     bucket = TokenBucket(10)
     client = FootballDataClient(os.environ["FOOTBALL_DATA_API_KEY"], bucket)
     since = (date.today() - timedelta(days=3)).isoformat()
+    until = (date.today() + timedelta(days=45)).isoformat()
     with _connect() as conn:
         active = _comps_with_activity(conn)
         if not active and not force:
@@ -116,10 +117,13 @@ def cmd_sync_matchday(force=False):
             if code not in active:
                 continue
             try:
+                # WC/CL: season-scoped pull (no date window) so knockouts aren't clipped.
                 comp_since = None if code in ("WC", "CL") else since
+                comp_until = None if code in ("WC", "CL") else until
                 print(f"[sync-matchday] {code} matches...", flush=True)
                 sync_competition(conn, client, code, name, ctype, season,
-                                 team_type=team_type, since=comp_since)
+                                 team_type=team_type, since=comp_since,
+                                 until=comp_until)
             except Exception as e:        # one bad competition shouldn't kill the run
                 conn.rollback()
                 print(f"[sync-matchday] {code} FAILED: {e}", file=sys.stderr,
@@ -169,6 +173,7 @@ def cmd_sync(full=False):
     bucket = TokenBucket(10)
     client = FootballDataClient(os.environ["FOOTBALL_DATA_API_KEY"], bucket)
     since = None if full else (date.today() - timedelta(days=10)).isoformat()
+    until = None if full else (date.today() + timedelta(days=400)).isoformat()
     with _connect() as conn:
         for code, name, ctype, team_type, season in COMPETITIONS:
             try:
@@ -195,7 +200,7 @@ def cmd_sync(full=False):
                     continue
                 print(f"[sync] {code} matches...", flush=True)
                 sync_competition(conn, client, code, name, ctype, season,
-                                 team_type=team_type, since=since)
+                                 team_type=team_type, since=since, until=until)
                 print(f"[sync] {code} squads...", flush=True)
                 n = sync_teams_and_squads(conn, client, code, team_type=team_type)
                 print(f"[sync] {code} scorers...", flush=True)
