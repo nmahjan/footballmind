@@ -105,6 +105,7 @@ COMP_PHRASES = (
 )
 _POS_WEIGHT = {"FWD": 1.0, "MID": 0.9, "DEF": 0.75, "GK": 0.65, "?": 0.8}
 _STANDOUT_TEAM_CAP = 2          # max players per team in one standouts list
+_STANDOUT_POS_ORDER = ("GK", "DEF", "MID", "FWD")
 _LIVE_WINDOW_MINUTES = 115
 
 
@@ -453,6 +454,10 @@ def _has_standout_signal(pos: str | None, goals: int, assists: int,
                           apps: int, saves: int | None) -> bool:
     if (goals or 0) > 0 or (assists or 0) > 0 or (saves or 0) > 0:
         return True
+    # DEF/GK can stand out on minutes + team defensive form without G/A.
+    coarse = normalize_position(pos) or (pos or "?").upper()
+    if coarse in ("DEF", "GK") and (apps or 0) >= 3:
+        return True
     return False
 
 
@@ -477,6 +482,125 @@ def _cap_players_per_team(players: list, cap: int = _STANDOUT_TEAM_CAP) -> list:
         counts[team] = counts.get(team, 0) + 1
         out.append(p)
     return out
+
+
+def _standout_sort_key(player: dict):
+    return (-(player.get("standout_rating") or 0), player.get("name") or "")
+
+
+def _balance_standouts_by_position(players: list, limit: int) -> list:
+    """Take roughly equal top players from GK/DEF/MID/FWD, then fill by rating.
+
+    Absolute standout_rating is not comparable across positions: DEF/GK lean on
+    shared team clean sheets and GA, while FWD/MID need individual G/A. A global
+    top-N therefore floods Standouts with defenders from stingy clubs (especially
+    early season). Quota-by-position keeps the list fair across roles.
+
+    Round-robin picks (with a global per-team cap) so a club's defenders cannot
+    consume the team quota before its midfielders/forwards are considered.
+    """
+    if limit <= 0:
+        return []
+
+    buckets: dict[str, list] = {pos: [] for pos in _STANDOUT_POS_ORDER}
+    other: list = []
+    for player in players:
+        pos = (player.get("position") or "?").upper()
+        if pos in buckets:
+            buckets[pos].append(player)
+        else:
+            other.append(player)
+
+    for pos in _STANDOUT_POS_ORDER:
+        buckets[pos].sort(key=_standout_sort_key)
+        buckets[pos] = _cap_players_per_team(buckets[pos])
+    other.sort(key=_standout_sort_key)
+
+    active = [pos for pos in _STANDOUT_POS_ORDER if buckets[pos]]
+    if not active:
+        return _cap_players_per_team(other)[:limit]
+
+    base, rem = divmod(limit, len(active))
+    quotas = {
+        pos: base + (1 if i < rem else 0)
+        for i, pos in enumerate(active)
+    }
+
+    picked: list = []
+    team_counts: dict[str, int] = {}
+    taken = {pos: 0 for pos in active}
+    idx = {pos: 0 for pos in active}
+
+    def _try_take(pos: str) -> bool:
+        while idx[pos] < len(buckets[pos]):
+            player = buckets[pos][idx[pos]]
+            idx[pos] += 1
+            team = player.get("team") or "?"
+            if team_counts.get(team, 0) >= _STANDOUT_TEAM_CAP:
+                continue
+            picked.append(player)
+            team_counts[team] = team_counts.get(team, 0) + 1
+            taken[pos] += 1
+            return True
+        return False
+
+    # Round-robin so each position gets a turn before any position takes seconds.
+    progressed = True
+    while len(picked) < limit and progressed:
+        progressed = False
+        for pos in active:
+            if len(picked) >= limit:
+                break
+            if taken[pos] >= quotas[pos]:
+                continue
+            if _try_take(pos):
+                progressed = True
+
+    leftovers: list = []
+    for pos in active:
+        leftovers.extend(buckets[pos][idx[pos]:])
+    leftovers.extend(other)
+    leftovers.sort(key=_standout_sort_key)
+    picked_keys = {(p.get("name"), p.get("team")) for p in picked}
+    for player in leftovers:
+        if len(picked) >= limit:
+            break
+        key = (player.get("name"), player.get("team"))
+        if key in picked_keys:
+            continue
+        team = player.get("team") or "?"
+        if team_counts.get(team, 0) >= _STANDOUT_TEAM_CAP:
+            continue
+        picked.append(player)
+        picked_keys.add(key)
+        team_counts[team] = team_counts.get(team, 0) + 1
+
+    picked.sort(key=_standout_sort_key)
+    return picked[:limit]
+
+
+def _finalize_standouts(
+    players: list, limit: int, pos_filter: str | None = None,
+) -> list:
+    """Sort, team-cap, and (when unfiltered) balance across positions."""
+    if pos_filter:
+        want = pos_filter.upper()
+        players = [
+            p for p in players
+            if (p.get("position") or "").upper() == want
+            or (want == "GK" and (p.get("saves") or 0) > 0)
+        ]
+    if pos_filter == "GK":
+        players = sorted(
+            players,
+            key=lambda x: (-(x.get("saves") or 0), -(x.get("standout_rating") or 0),
+                           x.get("name") or ""),
+        )
+        return _cap_players_per_team(players)[:limit]
+    players = sorted(players, key=_standout_sort_key)
+    if pos_filter:
+        return _cap_players_per_team(players)[:limit]
+    return _balance_standouts_by_position(players, limit)
 
 
 def parse_comp_from_text(text: str) -> str | None:
@@ -967,31 +1091,19 @@ def _get_standouts_from_match_stats(
         saves = st.get("saves")
         team_id = st.get("team_id") or aff_team_id
         pos_ok = _position_matches(pos, pos_filter)
-        if pos_filter == "GK" and not pos_ok and not saves:
-            continue
-        if pos_filter and pos_filter != "GK" and not pos_ok:
-            continue
-        if not pos_filter and _position_matches(pos, "GK"):
-            continue
         if pos_filter == "GK":
-            if not (saves or _position_matches(pos, "GK")):
+            if not (saves or pos_ok):
                 continue
-        elif pos_filter == "DEF":
-            if not _position_matches(pos, "DEF"):
+        elif pos_filter:
+            if not pos_ok:
                 continue
         elif not _has_standout_signal(pos, goals, ast, apps, saves):
-            continue
-        if not pos_filter and not _has_standout_signal(pos, goals, ast, apps, saves):
             continue
         standouts.append(_standout_from_row(
             name, team, pos, rating, dob, nat,
             goals or None, ast or None, apps or None, team_id, team_defense,
             saves=saves))
-    if pos_filter == "GK":
-        standouts.sort(key=lambda x: (-(x.get("saves") or 0), -(x.get("standout_rating") or 0), x["name"]))
-    else:
-        standouts.sort(key=lambda x: (-(x.get("standout_rating") or 0), x["name"]))
-    return _cap_players_per_team(standouts)[:limit]
+    return _finalize_standouts(standouts, limit, pos_filter)
 
 
 def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: int = 20) -> list:
@@ -999,6 +1111,8 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
 
     Forwards lean on goals; midfielders on assists; defenders on clean sheets
     and low goals against; GKs on saves (when synced) and team GA rate.
+    Unfiltered lists take a fair quota from each position so one role cannot
+    dominate when raw scores are not cross-position comparable.
     """
     limit = min(limit, 60)
     pos_filter = (position or "").upper() or None
@@ -1029,8 +1143,11 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
             if pos_filter:
                 sql += " AND p.position = %s "
                 params.append(pos_filter)
+            # Wide candidate pool so position balancing still has FWD/MID/GK
+            # after DEF ratings (team GA/CS) dominate a narrow ORDER BY LIMIT.
+            pool = limit * 4 if pos_filter else max(limit * 12, 120)
             sql += f" ORDER BY {_standout_sql_order()} DESC, p.name LIMIT %s"
-            params.append(limit * 4)
+            params.append(pool)
             cur.execute(sql, params)
             rows = cur.fetchall()
 
@@ -1039,8 +1156,7 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
             standouts.append(_standout_from_row(
                 name, team, pos, rating, dob, nat, goals, ast, apps,
                 team_id, team_defense))
-        standouts.sort(key=lambda x: (-(x.get("standout_rating") or 0), x["name"]))
-        return _cap_players_per_team(standouts)[:limit]
+        return _finalize_standouts(standouts, limit, pos_filter)
 
     with conn.cursor() as cur:
         sql = (
@@ -1087,8 +1203,7 @@ def get_standouts(conn, comp: str = "WC", position: str | None = None, limit: in
             name, team, pos, rating, dob, nat, goals or None, ast or None,
             apps or None, team_id, team_defense, club))
 
-    standouts.sort(key=lambda x: (-(x.get("standout_rating") or 0), x["name"]))
-    return _cap_players_per_team(standouts)[:limit]
+    return _finalize_standouts(standouts, limit, pos_filter)
 
 
 def search_players(conn, query: str, comp: str | None = None, limit: int = 15) -> list:
