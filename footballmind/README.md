@@ -138,7 +138,7 @@ frontend/  (Vite + React → GitHub Pages)
 | GET | `/api/groups?comp=WC` | Tournament group standings |
 | GET | `/api/bracket?comp=CL` | Knockout bracket |
 | GET | `/api/rankings?comp=WC` | National Elo power rankings |
-| GET | `/api/standouts?comp=WC` | Notable players ranked by form + team strength (max 2 per nation) |
+| GET | `/api/standouts?comp=WC` | Notable players ranked by form + team strength; All view balances GK/DEF/MID/FWD (max 2 per team) |
 | GET | `/api/players/scorers?comp=PL` | Top scorers with goals, assists, appearances |
 | GET | `/api/players/squad?team=…&comp=…` | Full squad by position |
 | GET | `/api/players/search?q=…` | Player name search |

@@ -509,7 +509,7 @@ export default function PlayersSidebar({ apiBase, offline, onAsk, onCompChange, 
           Players & Squads
         </div>
         <p className="mt-1 text-[10px]" style={{ color: C.mute }}>
-          Tap a player to ask the chat. Standouts use stats from the selected competition only — goals/assists for attackers, clean sheets and low GA for defenders, saves for keepers (max 2 per nation).
+          Tap a player to ask the chat. Standouts use stats from the selected competition only — goals/assists for attackers, clean sheets and low GA for defenders, saves for keepers. The All list balances top players across GK/DEF/MID/FWD (max 2 per team).
         </p>
       </div>
 
