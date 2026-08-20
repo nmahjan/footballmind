@@ -614,6 +614,11 @@ def compute_standings(rows):
 def get_standings(conn, comp_code: str = "PL", season: str | None = None) -> list:
     from footballmind_standings_zones import annotate_standings, finalize_mls_standings
 
+    # Default to the latest competition edition so a new campaign does not
+    # keep showing last season's final table (all finished rows across years).
+    if not season:
+        season = _current_season_for_comp(conn, comp_code)
+
     with conn.cursor() as cur:
         cur.execute(
             "SELECT th.name, ta.name, m.home_goals, m.away_goals FROM matches m "
