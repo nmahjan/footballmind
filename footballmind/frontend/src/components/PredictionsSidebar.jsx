@@ -76,13 +76,35 @@ function PredictionCard({ row }) {
 }
 
 function optionsFromPayload(filters) {
+  // Always show every fixture tab (PL, La Liga, …) — not only comps that already
+  // have saved predictions. Season lists come from the API when available.
   const byCode = new Map();
   for (const opt of filters?.competitions ?? []) {
     byCode.set(opt.code, opt);
   }
-  return FIXTURE_TABS
-    .filter((tab) => byCode.has(tab.code))
-    .map((tab) => ({ ...tab, ...byCode.get(tab.code) }));
+  return FIXTURE_TABS.map((tab) => {
+    const fromApi = byCode.get(tab.code);
+    return {
+      ...tab,
+      name: fromApi?.name ?? COMP_LABELS[tab.code] ?? tab.label,
+      seasons: fromApi?.seasons ?? [],
+    };
+  });
+}
+
+/** Prefer one card per match when chat/history saved multiple picks. */
+function dedupePredictions(rows) {
+  const seen = new Set();
+  const out = [];
+  for (const row of rows ?? []) {
+    const key = row.match_id != null
+      ? `id:${row.match_id}`
+      : `fx:${row.home}|${row.away}|${row.match_date ?? ""}|${row.comp ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
 }
 
 export default function PredictionsSidebar({ apiBase, offline, onCompChange }) {
@@ -110,7 +132,7 @@ export default function PredictionsSidebar({ apiBase, offline, onCompChange }) {
     if (nextSeason) params.set("season", nextSeason);
     cachedJson(`${apiBase}/api/predictions?${params.toString()}`, { ttlMs: 60_000 })
       .then((d) => {
-        setRows(d.predictions ?? []);
+        setRows(dedupePredictions(d.predictions ?? []));
         setFilters(d.filters ?? { competitions: [] });
       })
       .catch(() => setRows([]));
