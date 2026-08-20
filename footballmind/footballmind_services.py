@@ -1940,6 +1940,12 @@ def get_prediction_results(conn, limit: int = 30) -> list[dict]:
     return out
 
 
+# Competition codes always exposed in prediction-history filter tabs (UI).
+_PREDICTION_FILTER_CODES = (
+    "WC", "PL", "PD", "BL1", "SA", "FL1", "CL", "MLS", "DED",
+)
+
+
 def get_prediction_history(
     conn,
     *,
@@ -1947,8 +1953,14 @@ def get_prediction_history(
     season: str | None = None,
     limit: int = 50,
 ) -> dict:
-    """Saved prediction history with competition/season filters for the UI."""
+    """Saved prediction history with competition/season filters for the UI.
+
+    Returns at most one row per resolved match (latest prediction wins) so chat
+    re-asks do not flood the sidebar with duplicates.
+    """
     limit = min(max(limit, 1), 100)
+    # Over-fetch before per-match dedupe so LIMIT still fills after collapsing.
+    fetch_limit = min(max(limit * 8, limit), 400)
     comp = (comp or "").strip().upper() or None
     season = (season or "").strip() or None
     params: list = []
@@ -1968,6 +1980,7 @@ def get_prediction_history(
     with conn.cursor() as cur:
         cur.execute(
             "SELECT p.id, "
+            "       COALESCE(p.match_id, m.id) AS match_id, "
             "       COALESCE(thm.name, thp.name) AS home, "
             "       COALESCE(tam.name, tap.name) AS away, "
             "       p.home_win_prob, p.draw_prob, p.away_win_prob, "
@@ -2002,25 +2015,41 @@ def get_prediction_history(
             "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
             f"{where} "
             "ORDER BY p.created_at DESC LIMIT %s",
-            [*params, limit],
+            [*params, fetch_limit],
         )
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
 
+        # Always list known comps (so PL/La Liga tabs appear even with no history),
+        # and attach seasons from any edition we have synced.
         cur.execute(
-            "SELECT DISTINCT c.code, c.name, e.season "
-            "FROM predictions p "
-            "JOIN matches m ON m.id = p.match_id "
-            "JOIN competition_editions e ON e.id = m.edition_id "
-            "JOIN competitions c ON c.id = e.competition_id "
-            "ORDER BY c.code, e.season DESC")
+            "SELECT c.code, c.name, e.season "
+            "FROM competitions c "
+            "LEFT JOIN competition_editions e ON e.competition_id = c.id "
+            "WHERE c.code = ANY(%s) "
+            "ORDER BY c.code, e.season DESC NULLS LAST",
+            (list(_PREDICTION_FILTER_CODES),),
+        )
         option_rows = cur.fetchall()
 
     predictions = []
+    seen_matches: set = set()
     for r in rows:
         home, away = r.get("home"), r.get("away")
         if not home or not away:
             continue
+        match_key = r.get("match_id")
+        if match_key is None:
+            match_date = r.get("match_date")
+            match_key = (
+                home,
+                away,
+                match_date.isoformat() if match_date else None,
+                r.get("comp"),
+            )
+        if match_key in seen_matches:
+            continue
+        seen_matches.add(match_key)
         predicted, confidence, _idx = _prediction_outcome_for_match(
             home, away, r.get("stage"), r.get("home_win_prob"),
             r.get("draw_prob"), r.get("away_win_prob"),
@@ -2041,6 +2070,7 @@ def get_prediction_history(
             was_correct = predicted == actual
         predictions.append({
             "id": r["id"],
+            "match_id": r.get("match_id"),
             "home": home,
             "away": away,
             "comp": r.get("comp"),
@@ -2063,6 +2093,8 @@ def get_prediction_history(
             "created_at": created.isoformat() if created else None,
             "match_date": match_date.isoformat() if match_date else None,
         })
+        if len(predictions) >= limit:
+            break
 
     competitions = {}
     for code, name, yr in option_rows:
@@ -2071,11 +2103,17 @@ def get_prediction_history(
         bucket = competitions.setdefault(code, {"code": code, "name": name, "seasons": []})
         if yr and yr not in bucket["seasons"]:
             bucket["seasons"].append(yr)
+    # Preserve stable tab order matching the UI FIXTURE_TABS list.
+    ordered = [
+        competitions[code]
+        for code in _PREDICTION_FILTER_CODES
+        if code in competitions
+    ]
 
     return {
         "predictions": predictions,
         "filters": {
-            "competitions": list(competitions.values()),
+            "competitions": ordered,
             "active_comp": comp,
             "active_season": season,
         },
