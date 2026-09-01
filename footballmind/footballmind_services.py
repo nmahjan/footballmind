@@ -947,6 +947,9 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
 
 
 def get_groups(conn, comp: str = "WC") -> dict:
+    # Same edition scoping as get_standings — without it, group tables mix
+    # finished matches from prior tournaments/seasons.
+    season = _current_season_for_comp(conn, comp)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT g, team, SUM(W) W, SUM(D) D, SUM(L) L, "
@@ -963,7 +966,8 @@ def get_groups(conn, comp: str = "WC") -> dict:
             "  JOIN competition_editions e ON e.id = m.edition_id"
             "  JOIN competitions c ON c.id = e.competition_id"
             "  JOIN teams th ON th.id = m.home_team_id"
-            "  WHERE c.code = %s AND m.home_goals IS NOT NULL AND m.group_name IS NOT NULL"
+            "  WHERE c.code = %s AND m.home_goals IS NOT NULL AND m.group_name IS NOT NULL "
+            "    AND (%s::text IS NULL OR e.season = %s)"
             "  GROUP BY m.group_name, th.name"
             "  UNION ALL"
             "  SELECT m.group_name, ta.name,"
@@ -977,10 +981,11 @@ def get_groups(conn, comp: str = "WC") -> dict:
             "  JOIN competition_editions e ON e.id = m.edition_id"
             "  JOIN competitions c ON c.id = e.competition_id"
             "  JOIN teams ta ON ta.id = m.away_team_id"
-            "  WHERE c.code = %s AND m.home_goals IS NOT NULL AND m.group_name IS NOT NULL"
+            "  WHERE c.code = %s AND m.home_goals IS NOT NULL AND m.group_name IS NOT NULL "
+            "    AND (%s::text IS NULL OR e.season = %s)"
             "  GROUP BY m.group_name, ta.name"
             ") s GROUP BY g, team ORDER BY g, Pts DESC, (SUM(GF)-SUM(GA)) DESC",
-            (comp, comp))
+            (comp, season, season, comp, season, season))
         rows = cur.fetchall()
 
     groups = {}
@@ -1907,6 +1912,7 @@ def _reorder_wc_round_by_seed(stage: str, matches: list[dict]) -> list[dict]:
 
 
 def get_bracket(conn, comp: str = "WC") -> list:
+    season = _current_season_for_comp(conn, comp)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT m.stage, th.name AS home, ta.name AS away, "
@@ -1919,10 +1925,11 @@ def get_bracket(conn, comp: str = "WC") -> list:
             "JOIN teams ta ON ta.id = m.away_team_id "
             "LEFT JOIN teams tw ON tw.id = m.advancing_team_id "
             "WHERE c.code = %s "
+            "  AND (%s::text IS NULL OR e.season = %s) "
             "  AND m.stage NOT IN ('regular_season', 'group') "
             "ORDER BY m.stage, COALESCE(m.matchday, 9999), "
             "         m.match_date ASC NULLS LAST, m.id",
-            (comp,))
+            (comp, season, season))
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
 
