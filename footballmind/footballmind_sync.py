@@ -451,7 +451,7 @@ def upsert_match(cur, edition_id, m, team_type):
 # ----------------------------------------------------------------------
 # The two correctness-critical steps
 # ----------------------------------------------------------------------
-def apply_pending_ratings(conn, comp_code):
+def apply_pending_ratings(conn, comp_code, season=None):
     """Apply finished-but-not-yet-rated matches for one competition, oldest first.
 
     Batched replay: instead of 2 SELECT + 2 upsert + 2 insert + commit *per match*
@@ -459,6 +459,10 @@ def apply_pending_ratings(conn, comp_code):
     single seed read, so each match still sees the rating produced by every earlier
     match, then written with two bulk statements and a single commit. Numerically
     identical to the per-match path; O(1) commits instead of O(matches)."""
+    from footballmind_services import _current_season_for_comp
+
+    if not season:
+        season = _current_season_for_comp(conn, comp_code)
     importance = IMPORTANCE_BY_COMP.get(comp_code, "league")
     with conn.cursor() as cur:
         # Held until this function's single commit -> the read-compute-write below is
@@ -470,10 +474,11 @@ def apply_pending_ratings(conn, comp_code):
             "JOIN competition_editions e ON e.id = m.edition_id "
             "JOIN competitions c ON c.id = e.competition_id "
             "WHERE c.code = %s AND m.home_goals IS NOT NULL "
+            "  AND (%s::text IS NULL OR e.season = %s) "
             "  AND NOT EXISTS (SELECT 1 FROM rating_history rh "
             "                  WHERE rh.match_id = m.id) "
             "ORDER BY m.match_date ASC",
-            (comp_code,))
+            (comp_code, season, season))
         pending = cur.fetchall()
     if not pending:
         conn.commit()                     # release the advisory lock; nothing to do
@@ -525,7 +530,7 @@ def sync_competition(conn, client, comp_code, comp_name, comp_type, season,
         for m in fetched:
             upsert_match(cur, edition_id, m, team_type)
     conn.commit()
-    apply_pending_ratings(conn, comp_code)               # chronological + once
+    apply_pending_ratings(conn, comp_code, season)               # chronological + once
 
 
 def sync_teams_and_squads(conn, client, comp_code, team_type="club"):
