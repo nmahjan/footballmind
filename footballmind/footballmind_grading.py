@@ -36,7 +36,16 @@ def find_fixture(
         sql += "AND m.edition_id = %s "
         params.append(edition_id)
     elif comp_code:
-        sql += "AND c.code = %s "
+        sql += (
+            "AND c.code = %s "
+            "AND e.season = ("
+            "  SELECT e2.season FROM competition_editions e2 "
+            "  JOIN competitions c2 ON c2.id = e2.competition_id "
+            "  WHERE c2.code = %s "
+            "  ORDER BY e2.start_date DESC NULLS LAST, e2.season DESC LIMIT 1"
+            ") "
+        )
+        params.append(comp_code)
         params.append(comp_code)
     sql += (
         "ORDER BY "
