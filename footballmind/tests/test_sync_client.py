@@ -8,6 +8,7 @@ from footballmind_sync import (
     _api_match_has_events,
     _api_match_has_lineup,
     _sync_match_events,
+    apply_pending_ratings,
 )
 
 
@@ -114,3 +115,39 @@ def test_sync_match_events_skips_lineup_delete_without_api_lineup():
     assert any("DELETE FROM match_events" in s for s in delete_sql)
     assert not any("DELETE FROM match_lineup_players" in s for s in delete_sql)
     assert not any("DELETE FROM match_team_lineups" in s for s in delete_sql)
+
+
+def test_apply_pending_ratings_scopes_to_season(monkeypatch):
+    class _RatingsCur:
+        def __init__(self):
+            self.executes = []
+
+        def execute(self, sql, params=None):
+            self.executes.append((sql, params))
+
+        def fetchall(self):
+            return []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class _Conn:
+        def __init__(self):
+            self.cur = _RatingsCur()
+            self.committed = False
+
+        def cursor(self):
+            return self.cur
+
+        def commit(self):
+            self.committed = True
+
+    conn = _Conn()
+    apply_pending_ratings(conn, "PL", "2026/27")
+    sql, params = conn.cur.executes[1]
+    assert "e.season = %s" in sql
+    assert params == ("PL", "2026/27", "2026/27")
+    assert conn.committed
