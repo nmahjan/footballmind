@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import requests
 
-from footballmind_grading import _bulk_link_predictions_by_teams, grade_predictions
+from footballmind_grading import _bulk_link_predictions_by_teams, find_fixture, grade_predictions
 
 
 class _FakeCursor:
@@ -60,6 +60,19 @@ def test_grade_predictions_regrades_when_scores_differ():
     updates = [q for q in conn.cur.executed if q[0].startswith("UPDATE predictions")]
     assert updates
     assert updates[0][1] == (1, 1, True, 1)
+
+
+def test_find_fixture_scopes_to_current_season_when_comp_code():
+    class _FixtureCursor(_FakeCursor):
+        def fetchone(self):
+            return None
+
+    cur = _FixtureCursor()
+    find_fixture(cur, 10, 20, comp_code="PL")
+    sql, params = cur.executed[0]
+    assert "e.season" in sql
+    assert params[:2] == [10, 20]
+    assert params[2:] == ["PL", "PL"]
 
 
 def test_bulk_link_predictions_skips_duplicate_session_match_links():
