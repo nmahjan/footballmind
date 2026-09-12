@@ -27,6 +27,9 @@ class _FakeCur:
     def fetchall(self):
         return self._fetch
 
+    def fetchone(self):
+        return None
+
 
 def test_bracket_team_label_strips_placeholder():
     assert _bracket_team_label("TBD (123-h)") == "TBD"
@@ -261,3 +264,55 @@ def test_enrich_fixture_display_uses_bracket_labels():
     _enrich_fixture_display(f, labels)
     assert f["home"] == "Canada"
     assert f["away"] == "Morocco"
+
+
+def _conn_with_cursor(fake):
+    class _Ctx:
+        def __enter__(self):
+            return fake
+
+        def __exit__(self, *a):
+            return False
+
+    class Conn:
+        def cursor(self):
+            return _Ctx()
+
+    return Conn()
+
+
+def test_get_bracket_scopes_to_current_season(monkeypatch):
+    season = "2026"
+    monkeypatch.setattr(
+        "footballmind_services._current_season_for_comp",
+        lambda conn, comp: season,
+    )
+    fake = _FakeCur([])
+    get_bracket(_conn_with_cursor(fake), "WC")
+    sql, params = fake.executes[0]
+    assert "e.season = %s" in sql
+    assert params == ("WC", season, season)
+
+
+def test_get_groups_scopes_to_current_season(monkeypatch):
+    from footballmind_services import get_groups
+
+    season = "2026"
+    monkeypatch.setattr(
+        "footballmind_services._current_season_for_comp",
+        lambda conn, comp: season,
+    )
+
+    class _GroupsCur(_FakeCur):
+        def __init__(self):
+            super().__init__()
+            self.description = [
+                ("g",), ("team",), ("W",), ("D",), ("L",),
+                ("GF",), ("GA",), ("Pts",),
+            ]
+
+    fake = _GroupsCur()
+    get_groups(_conn_with_cursor(fake), "WC")
+    sql, params = fake.executes[0]
+    assert "e.season = %s" in sql
+    assert params == ("WC", season, season, "WC", season, season)
