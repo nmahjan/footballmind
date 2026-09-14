@@ -511,7 +511,7 @@ def sync_api_football_competition(conn, client: ApiFootballClient,
                 (edition_id, fix.get("date"), home_id, away_id, hg, ag, ext))
             n += 1
     conn.commit()
-    apply_pending_ratings(conn, comp_code)
+    apply_pending_ratings(conn, comp_code, season_label)
     return n
 
 
