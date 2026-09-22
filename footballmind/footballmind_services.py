@@ -844,6 +844,7 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
     ensure_result_predictions(conn, comp, backfill_limit=40)
     grade_predictions(conn)
     limit = min(limit, 100)
+    season = _current_season_for_comp(conn, comp)
     labels = _bracket_fixture_labels(conn, comp)
     with conn.cursor() as cur:
         cur.execute(
@@ -868,19 +869,22 @@ def get_recent_match_results(conn, comp: str = "WC", limit: int = 40) -> list[di
             "  WHERE p2.match_id = m.id "
             "     OR (p2.match_id IS NULL "
             "         AND p2.home_team_id = m.home_team_id "
-            "         AND p2.away_team_id = m.away_team_id) "
+            "         AND p2.away_team_id = m.away_team_id "
+            "         AND abs(extract(epoch FROM (m.match_date - p2.created_at))) "
+            "             < 86400 * 21) "
             "  ORDER BY "
             "    CASE WHEN p2.match_id = m.id THEN 0 ELSE 1 END, "
-            "    p2.created_at DESC "
+            "    abs(extract(epoch FROM (m.match_date - p2.created_at))) "
             "  LIMIT 1"
             ") p ON TRUE "
             "WHERE c.code = %s "
+            "  AND (%s::text IS NULL OR e.season = %s) "
             "  AND m.home_goals IS NOT NULL "
             "  AND m.away_goals IS NOT NULL "
             "  AND m.match_date >= (CURRENT_DATE - INTERVAL '14 days') "
             "ORDER BY m.match_date DESC "
             "LIMIT %s",
-            (comp, limit),
+            (comp, season, season, limit),
         )
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
