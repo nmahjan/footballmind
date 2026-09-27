@@ -96,7 +96,46 @@ def test_get_recent_match_results_with_prediction_does_not_crash():
 
         conn = MagicMock()
         conn.cursor.return_value = _Cur()
-        out = get_recent_match_results(conn, "WC", 10)
+        with patch(
+            "footballmind_services._current_season_for_comp",
+            return_value="2026",
+        ):
+            out = get_recent_match_results(conn, "WC", 10)
         assert len(out) == 1
         assert out[0]["was_correct"] is True
         assert out[0]["predicted"] == "Spain"
+
+
+def test_get_recent_match_results_scopes_to_current_season():
+    from unittest.mock import MagicMock, patch
+
+    with patch("footballmind_grading.ensure_result_predictions", return_value={}), \
+         patch("footballmind_grading.grade_predictions", return_value=0), \
+         patch("footballmind_services._bracket_fixture_labels", return_value={}), \
+         patch("footballmind_services._current_season_for_comp", return_value="2026"):
+        from footballmind_services import get_recent_match_results
+
+        class _Cur:
+            description = []
+            executes = []
+
+            def execute(self, sql, params=None):
+                self.executes.append((sql, params))
+
+            def fetchall(self):
+                return []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        cur = _Cur()
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        get_recent_match_results(conn, "PL", 10)
+        sql, params = cur.executes[0]
+        assert "e.season = %s" in sql
+        assert params == ("PL", "2026", "2026", 10)
+        assert "abs(extract(epoch FROM (m.match_date - p2.created_at)))" in sql
